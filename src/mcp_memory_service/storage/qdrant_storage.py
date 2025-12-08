@@ -33,6 +33,8 @@ from qdrant_client.models import (
     HnswConfigDiff,
     MatchAny,
     MatchValue,
+    OrderBy,
+    PayloadSchemaType,
     PointStruct,
     Range,
     ScalarQuantization,
@@ -1317,41 +1319,40 @@ class QdrantStorage(MemoryStorage):
         try:
             loop = asyncio.get_event_loop()
 
-            while True:
-                scroll_result = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.scroll(
-                        collection_name=self.collection_name, limit=100, offset=offset, with_payload=True, with_vectors=False
-                    ),
+            # Use server-side sorting - requires payload index on created_at
+            # Request n+1 to account for potential metadata point
+            scroll_result = await loop.run_in_executor(
+                None,
+                lambda: self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=n + 1,
+                    with_payload=True,
+                    with_vectors=False,
+                    order_by=OrderBy(key="created_at", direction="desc"),
+                ),
+            )
+
+            points, _ = scroll_result
+            memories = []
+
+            for point in points:
+                if point.id == self.METADATA_POINT_ID:
+                    continue
+
+                payload = point.payload
+                memory = Memory(
+                    content=payload.get("content", ""),
+                    content_hash=payload.get("content_hash", str(point.id)),
+                    tags=self._normalize_tags(payload.get("tags", [])),
+                    memory_type=payload.get("memory_type"),
+                    metadata=payload.get("metadata", {}),
+                    created_at=payload.get("created_at"),
+                    updated_at=payload.get("updated_at"),
                 )
                 memories.append(memory)
 
-                points, next_offset = scroll_result
-
-                for point in points:
-                    if point.id == self.METADATA_POINT_ID:
-                        continue
-
-                    payload = point.payload
-                    memory = Memory(
-                        content=payload.get("content", ""),
-                        content_hash=payload.get("content_hash", str(point.id)),
-                        tags=self._normalize_tags(payload.get("tags", [])),
-                        memory_type=payload.get("memory_type"),
-                        metadata=payload.get("metadata", {}),
-                        created_at=payload.get("created_at"),
-                        updated_at=payload.get("updated_at"),
-                    )
-                    all_memories.append(memory)
-
-                if next_offset is None:
+                if len(memories) >= n:
                     break
-
-                offset = next_offset
-
-            # Sort by created_at descending and take top n
-            all_memories.sort(key=lambda m: self._normalize_timestamp(m.created_at), reverse=True)
-            recent = all_memories[:n]
 
             self._record_success()
             return memories
@@ -1416,12 +1417,14 @@ class QdrantStorage(MemoryStorage):
             scroll_filter = Filter(must=conditions) if conditions else None
 
             loop = asyncio.get_event_loop()
-            all_memories = []
-            scroll_offset = None
-            collected = 0
-            # For proper chronological sorting, we need to collect ALL memories,
-            # not just the paginated amount. Set a reasonable upper limit.
-            target_limit = min(50000, (limit or 10000) + offset + 1000)
+            memories = []
+            skipped = 0
+            start_from = None
+            target_count = limit if limit else 10000  # Reasonable upper bound if no limit
+
+            # Server-side sorted scroll with pagination via start_from
+            while len(memories) < target_count:
+                batch_size = min(100, target_count - len(memories) + (offset - skipped if skipped < offset else 0) + 1)
 
                 scroll_result = await loop.run_in_executor(
                     None,
@@ -1431,6 +1434,7 @@ class QdrantStorage(MemoryStorage):
                         limit=bs,
                         with_payload=True,
                         with_vectors=False,
+                        order_by=OrderBy(key="created_at", direction="desc", start_from=sf),
                     ),
                 )
 
@@ -1473,16 +1477,6 @@ class QdrantStorage(MemoryStorage):
 
                 if limit and len(memories) >= limit:
                     break
-
-                scroll_offset = next_offset
-
-            # Sort by created_at descending
-            all_memories.sort(key=lambda m: self._normalize_timestamp(m.created_at), reverse=True)
-
-            # Apply offset and limit
-            result = all_memories[offset:]
-            if limit is not None:
-                result = result[:limit]
 
             self._record_success()
             return memories
