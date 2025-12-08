@@ -978,7 +978,7 @@ class QdrantStorage(MemoryStorage):
             # Convert hash to UUID format (must match how points are stored)
             point_id = self._hash_to_uuid(content_hash)
             points = await loop.run_in_executor(
-                None, lambda: self.client.retrieve(collection_name=self.collection_name, ids=[content_hash])
+                None, lambda: self.client.retrieve(collection_name=self.collection_name, ids=[point_id])
             )
 
             if not points or len(points) == 0:
@@ -1204,7 +1204,7 @@ class QdrantStorage(MemoryStorage):
             await loop.run_in_executor(
                 None,
                 lambda: self.client.set_payload(
-                    collection_name=self.collection_name, payload=updated_payload, points=[content_hash]
+                    collection_name=self.collection_name, payload=updated_payload, points=[point_id]
                 ),
             )
 
