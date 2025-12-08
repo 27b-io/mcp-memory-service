@@ -20,7 +20,7 @@ COPY pyproject.toml uv.lock README.md ./
 
 # Install CPU-only PyTorch first, then rest of deps
 RUN uv venv && \
-    .venv/bin/pip install --no-cache-dir \
+    uv pip install --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu && \
     uv sync --frozen --no-dev --no-install-project
 
