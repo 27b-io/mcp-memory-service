@@ -25,6 +25,20 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    VectorParams,
+    Distance,
+    HnswConfigDiff,
+    ScalarQuantization,
+    ScalarQuantizationConfig,
+    ScalarType,
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchAny,
+    MatchValue,
+    Range,
+)
 from qdrant_client.http import exceptions as qdrant_exceptions
 from qdrant_client.models import (
     Distance,
@@ -116,8 +130,8 @@ class QdrantStorage(MemoryStorage):
         collection_name: str = "memories",
         quantization_enabled: bool = False,
         distance_metric: str = "Cosine",
-        storage_path: str | None = None,
-        url: str | None = None,
+        storage_path: Optional[str] = None,
+        url: Optional[str] = None,
     ):
         """
         Initialize Qdrant storage backend in embedded or server mode.
@@ -167,6 +181,7 @@ class QdrantStorage(MemoryStorage):
         self.embedding_service = None
 
         # Thread-safe model loading (prevents race condition)
+        import threading
 
         self._model_lock = threading.Lock()
 
@@ -576,20 +591,23 @@ class QdrantStorage(MemoryStorage):
         if isinstance(ts, (int, float)):
             return float(ts)
         if isinstance(ts, str):
-            if DATEUTIL_AVAILABLE:
-                try:
-                    parsed_dt = dateutil_parser.isoparse(ts)
-                    return parsed_dt.timestamp()
-                except (ValueError, TypeError):
-                    pass
-            else:
+            try:
+                # Try parsing ISO format
+                from dateutil import parser as dateutil_parser
+                parsed_dt = dateutil_parser.isoparse(ts)
+                return parsed_dt.timestamp()
+            except ImportError:
                 # Fallback without dateutil
                 try:
-                    # Replace 'Z' with '+00:00' for UTC timezone before parsing
-                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    if ts.endswith('Z'):
+                        dt = datetime.fromisoformat(ts[:-1].replace('Z', '+00:00'))
+                    else:
+                        dt = datetime.fromisoformat(ts)
                     return dt.timestamp()
                 except (ValueError, TypeError):
                     pass
+            except (ValueError, TypeError):
+                pass
         return 0.0
 
     @retry(
@@ -683,11 +701,11 @@ class QdrantStorage(MemoryStorage):
         self,
         query: str,
         n_results: int = 5,
-        tags: list[str] | None = None,
-        memory_type: str | None = None,
-        min_similarity: float | None = None,
+        tags: Optional[List[str]] = None,
+        memory_type: Optional[str] = None,
+        min_similarity: Optional[float] = None,
         offset: int = 0,
-    ) -> list[MemoryQueryResult]:
+    ) -> List[MemoryQueryResult]:
         """
         Retrieve memories by semantic search with optional filtering and retry logic.
 
@@ -859,9 +877,9 @@ class QdrantStorage(MemoryStorage):
         limit: int = 10,
         offset: int = 0,
         match_all: bool = False,
-        start_timestamp: float | None = None,
-        end_timestamp: float | None = None,
-    ) -> list[Memory]:
+        start_timestamp: Optional[float] = None,
+        end_timestamp: Optional[float] = None,
+    ) -> List[Memory]:
         """
         Search memories by tags with optional date filtering and retry logic.
 
@@ -978,7 +996,7 @@ class QdrantStorage(MemoryStorage):
             # Convert hash to UUID format (must match how points are stored)
             point_id = self._hash_to_uuid(content_hash)
             points = await loop.run_in_executor(
-                None, lambda: self.client.retrieve(collection_name=self.collection_name, ids=[point_id])
+                None, lambda: self.client.retrieve(collection_name=self.collection_name, ids=[content_hash])
             )
 
             if not points or len(points) == 0:
@@ -1159,8 +1177,8 @@ class QdrantStorage(MemoryStorage):
             return 0, error_msg
 
     async def update_memory_metadata(
-        self, content_hash: str, updates: dict[str, Any], preserve_timestamps: bool = True
-    ) -> tuple[bool, str]:
+        self, content_hash: str, updates: Dict[str, Any], preserve_timestamps: bool = True
+    ) -> Tuple[bool, str]:
         """
         Update memory metadata without recreating the entire memory entry.
 
@@ -1204,7 +1222,7 @@ class QdrantStorage(MemoryStorage):
             await loop.run_in_executor(
                 None,
                 lambda: self.client.set_payload(
-                    collection_name=self.collection_name, payload=updated_payload, points=[point_id]
+                    collection_name=self.collection_name, payload=updated_payload, points=[content_hash]
                 ),
             )
 
@@ -1319,40 +1337,41 @@ class QdrantStorage(MemoryStorage):
         try:
             loop = asyncio.get_event_loop()
 
-            # Use server-side sorting - requires payload index on created_at
-            # Request n+1 to account for potential metadata point
-            scroll_result = await loop.run_in_executor(
-                None,
-                lambda: self.client.scroll(
-                    collection_name=self.collection_name,
-                    limit=n + 1,
-                    with_payload=True,
-                    with_vectors=False,
-                    order_by=OrderBy(key="created_at", direction="desc"),
-                ),
-            )
-
-            points, _ = scroll_result
-            memories = []
-
-            for point in points:
-                if point.id == self.METADATA_POINT_ID:
-                    continue
-
-                payload = point.payload
-                memory = Memory(
-                    content=payload.get("content", ""),
-                    content_hash=payload.get("content_hash", str(point.id)),
-                    tags=self._normalize_tags(payload.get("tags", [])),
-                    memory_type=payload.get("memory_type"),
-                    metadata=payload.get("metadata", {}),
-                    created_at=payload.get("created_at"),
-                    updated_at=payload.get("updated_at"),
+            while True:
+                scroll_result = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.scroll(
+                        collection_name=self.collection_name, limit=100, offset=offset, with_payload=True, with_vectors=False
+                    ),
                 )
                 memories.append(memory)
 
-                if len(memories) >= n:
+                points, next_offset = scroll_result
+
+                for point in points:
+                    if point.id == self.METADATA_POINT_ID:
+                        continue
+
+                    payload = point.payload
+                    memory = Memory(
+                        content=payload.get("content", ""),
+                        content_hash=payload.get("content_hash", str(point.id)),
+                        tags=self._normalize_tags(payload.get("tags", [])),
+                        memory_type=payload.get("memory_type"),
+                        metadata=payload.get("metadata", {}),
+                        created_at=payload.get("created_at"),
+                        updated_at=payload.get("updated_at"),
+                    )
+                    all_memories.append(memory)
+
+                if next_offset is None:
                     break
+
+                offset = next_offset
+
+            # Sort by created_at descending and take top n
+            all_memories.sort(key=lambda m: self._normalize_timestamp(m.created_at), reverse=True)
+            recent = all_memories[:n]
 
             self._record_success()
             return memories
@@ -1366,10 +1385,10 @@ class QdrantStorage(MemoryStorage):
         self,
         query: str,
         n_results: int = 5,
-        tags: list[str] | None = None,
-        memory_type: str | None = None,
-        min_similarity: float | None = None,
-    ) -> list[Memory]:
+        tags: Optional[List[str]] = None,
+        memory_type: Optional[str] = None,
+        min_similarity: Optional[float] = None,
+    ) -> List[Memory]:
         """
         Recall memories based on natural language time expression.
 
@@ -1387,8 +1406,8 @@ class QdrantStorage(MemoryStorage):
         return [r.memory for r in results]
 
     async def get_all_memories(
-        self, limit: int = None, offset: int = 0, memory_type: str | None = None, tags: list[str] | None = None
-    ) -> list[Memory]:
+        self, limit: int = None, offset: int = 0, memory_type: Optional[str] = None, tags: Optional[List[str]] = None
+    ) -> List[Memory]:
         """
         Get all memories in storage ordered by creation time (newest first).
 
@@ -1417,14 +1436,12 @@ class QdrantStorage(MemoryStorage):
             scroll_filter = Filter(must=conditions) if conditions else None
 
             loop = asyncio.get_event_loop()
-            memories = []
-            skipped = 0
-            start_from = None
-            target_count = limit if limit else 10000  # Reasonable upper bound if no limit
-
-            # Server-side sorted scroll with pagination via start_from
-            while len(memories) < target_count:
-                batch_size = min(100, target_count - len(memories) + (offset - skipped if skipped < offset else 0) + 1)
+            all_memories = []
+            scroll_offset = None
+            collected = 0
+            # For proper chronological sorting, we need to collect ALL memories,
+            # not just the paginated amount. Set a reasonable upper limit.
+            target_limit = min(50000, (limit or 10000) + offset + 1000)
 
                 scroll_result = await loop.run_in_executor(
                     None,
@@ -1434,7 +1451,6 @@ class QdrantStorage(MemoryStorage):
                         limit=bs,
                         with_payload=True,
                         with_vectors=False,
-                        order_by=OrderBy(key="created_at", direction="desc", start_from=sf),
                     ),
                 )
 
@@ -1477,6 +1493,16 @@ class QdrantStorage(MemoryStorage):
 
                 if limit and len(memories) >= limit:
                     break
+
+                scroll_offset = next_offset
+
+            # Sort by created_at descending
+            all_memories.sort(key=lambda m: self._normalize_timestamp(m.created_at), reverse=True)
+
+            # Apply offset and limit
+            result = all_memories[offset:]
+            if limit is not None:
+                result = result[:limit]
 
             self._record_success()
             return memories
@@ -1527,7 +1553,7 @@ class QdrantStorage(MemoryStorage):
             logger.error(f"Failed to get memory by hash {content_hash}: {e}")
             return None
 
-    async def count_all_memories(self, memory_type: str | None = None, tags: list[str] | None = None) -> int:
+    async def count_all_memories(self, memory_type: Optional[str] = None, tags: Optional[List[str]] = None) -> int:
         """
         Get total count of memories in storage.
 
@@ -1560,7 +1586,7 @@ class QdrantStorage(MemoryStorage):
             logger.error(f"Failed to count memories: {e}")
             return 0
 
-    async def get_memories_by_time_range(self, start_time: float, end_time: float) -> list[Memory]:
+    async def get_memories_by_time_range(self, start_time: float, end_time: float) -> List[Memory]:
         """
         Get memories within a time range.
 
@@ -1652,9 +1678,9 @@ class QdrantStorage(MemoryStorage):
     async def count_semantic_search(
         self,
         query: str,
-        tags: list[str] | None = None,
-        memory_type: str | None = None,
-        min_similarity: float | None = None,
+        tags: Optional[List[str]] = None,
+        memory_type: Optional[str] = None,
+        min_similarity: Optional[float] = None,
     ) -> int:
         """
         Count memories matching semantic search criteria.
@@ -1690,8 +1716,8 @@ class QdrantStorage(MemoryStorage):
         self,
         tags: list[str],
         match_all: bool = False,
-        start_timestamp: float | None = None,
-        end_timestamp: float | None = None,
+        start_timestamp: Optional[float] = None,
+        end_timestamp: Optional[float] = None,
     ) -> int:
         """
         Count memories matching tag search with optional date filtering.
@@ -1772,10 +1798,10 @@ class QdrantStorage(MemoryStorage):
 
     async def count_time_range(
         self,
-        start_timestamp: float | None = None,
-        end_timestamp: float | None = None,
-        tags: list[str] | None = None,
-        memory_type: str | None = None,
+        start_timestamp: Optional[float] = None,
+        end_timestamp: Optional[float] = None,
+        tags: Optional[List[str]] = None,
+        memory_type: Optional[str] = None,
     ) -> int:
         """
         Count memories within time range with optional filters.
