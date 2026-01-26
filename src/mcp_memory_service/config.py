@@ -22,12 +22,11 @@ Sensitive values use SecretStr for security.
 import logging
 import os
 import secrets
-import sys
 import threading
 import time
-from pathlib import Path
 from typing import Literal
 
+from platformdirs import user_data_dir
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -91,15 +90,15 @@ def validate_and_create_path(path: str) -> str:
 
 
 def get_default_base_directory() -> str:
-    """Get platform-specific default base directory."""
-    home = str(Path.home())
-    if sys.platform == "darwin":  # macOS
-        base = os.path.join(home, "Library", "Application Support", "mcp-memory")
-    elif sys.platform == "win32":  # Windows
-        base = os.path.join(os.getenv("LOCALAPPDATA", ""), "mcp-memory")
-    else:  # Linux and others
-        base = os.path.join(home, ".local", "share", "mcp-memory")
+    """
+    Get platform-specific default base directory using platformdirs.
 
+    Uses XDG-compliant paths:
+    - Linux: ~/.local/share/mcp-memory (XDG_DATA_HOME)
+    - macOS: ~/Library/Application Support/mcp-memory
+    - Windows: C:\\Users\\<user>\\AppData\\Local\\mcp-memory
+    """
+    base = user_data_dir("mcp-memory", ensure_exists=True)
     return validate_and_create_path(base)
 
 
@@ -362,17 +361,10 @@ class QdrantSettings(BaseSettings):
             self.storage_path = None
             return self
 
-        # Embedded mode - set up storage path
+        # Embedded mode - set up storage path using platformdirs
         if not self.storage_path:
-            home = str(Path.home())
-            if sys.platform == "darwin":  # macOS
-                base = os.path.join(home, "Library", "Application Support", "mcp-memory", "qdrant")
-            elif sys.platform == "win32":  # Windows
-                base = os.path.join(os.getenv("LOCALAPPDATA", ""), "mcp-memory", "qdrant")
-            else:  # Linux and others
-                base = os.path.join(home, ".local", "share", "mcp-memory", "qdrant")
-
-            self.storage_path = base
+            base = user_data_dir("mcp-memory", ensure_exists=True)
+            self.storage_path = os.path.join(base, "qdrant")
 
         # Create directory with secure permissions (0o700 - owner only)
         abs_path = os.path.abspath(os.path.expanduser(self.storage_path))
