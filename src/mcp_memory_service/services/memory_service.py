@@ -6,20 +6,29 @@ between mcp_server.py and server.py. It provides a single source of truth for
 all memory operations, eliminating the DRY violation and ensuring consistent behavior.
 """
 
+import asyncio
 import logging
-from typing import Dict, List, Optional, Any, Union, Tuple, TypedDict
+import time
 from datetime import datetime
+from typing import Dict, List, Optional, Any, Union, Tuple, TypedDict
 
 from ..config import (
     INCLUDE_HOSTNAME,
     CONTENT_PRESERVE_BOUNDARIES,
     CONTENT_SPLIT_OVERLAP,
-    ENABLE_AUTO_SPLIT
+    ENABLE_AUTO_SPLIT,
+    settings,
 )
 from ..storage.base import MemoryStorage
 from ..models.memory import Memory
 from ..utils.content_splitter import split_content
 from ..utils.hashing import generate_content_hash
+from ..utils.hybrid_search import (
+    extract_query_keywords,
+    combine_results_rrf,
+    get_adaptive_alpha,
+    apply_recency_decay,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +55,69 @@ class MemoryService:
     code duplication and potential inconsistencies.
     """
 
+    # Tag cache TTL in seconds
+    _TAG_CACHE_TTL = 60
+
     def __init__(self, storage: MemoryStorage):
         self.storage = storage
+        self._tag_cache: Optional[Tuple[float, set[str]]] = None
+
+    async def _get_cached_tags(self) -> set[str]:
+        """Get all tags with 60-second TTL caching for performance."""
+        now = time.time()
+        if self._tag_cache is not None:
+            cache_time, cached_tags = self._tag_cache
+            if now - cache_time < self._TAG_CACHE_TTL:
+                return cached_tags
+
+        # Cache miss - fetch from storage
+        all_tags = await self.storage.get_all_tags()
+        self._tag_cache = (now, set(all_tags))
+        return self._tag_cache[1]
+
+    async def _retrieve_vector_only(
+        self,
+        query: str,
+        page: int,
+        page_size: int,
+        tags: Optional[List[str]],
+        memory_type: Optional[str],
+        min_similarity: Optional[float],
+    ) -> Dict[str, Any]:
+        """Fallback to pure vector search (original behavior)."""
+        offset = (page - 1) * page_size
+
+        # Use a reasonable limit for count to avoid sqlite-vec k limit (4096)
+        try:
+            total = await self.storage.count_semantic_search(
+                query=query, tags=tags, memory_type=memory_type, min_similarity=min_similarity
+            )
+        except Exception:
+            # Fallback: estimate based on page_size if count fails
+            total = page_size * 10  # Reasonable estimate
+
+        memories = await self.storage.retrieve(
+            query=query,
+            n_results=page_size,
+            tags=tags,
+            memory_type=memory_type,
+            min_similarity=min_similarity,
+            offset=offset,
+        )
+        results = []
+        for item in memories:
+            if hasattr(item, 'memory'):
+                memory_dict = self._format_memory_response(item.memory)
+                memory_dict['similarity_score'] = item.similarity_score
+                results.append(memory_dict)
+            else:
+                results.append(self._format_memory_response(item))
+        return {
+            "memories": results,
+            "query": query,
+            "hybrid_enabled": False,
+            **self._build_pagination_metadata(total, page, page_size),
+        }
 
     def _build_pagination_metadata(
         self,
@@ -265,13 +335,21 @@ class MemoryService:
         min_similarity: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        Retrieve memories by semantic search with optional filtering and pagination.
+        Retrieve memories using hybrid search (semantic + tag matching).
+
+        Combines vector similarity with automatic tag extraction for improved retrieval.
+        When query terms match existing tags, those memories receive a score boost.
+        This solves the "rathole problem" where project-specific queries return
+        semantically similar but categorically unrelated results.
+
+        Hybrid search is enabled by default. To opt-out to pure vector search:
+        - Set environment variable MCP_MEMORY_HYBRID_ALPHA=1.0
 
         Args:
-            query: Search query string
+            query: Search query string (tags extracted automatically)
             page: Page number (1-indexed)
             page_size: Number of results per page
-            tags: Optional tag filtering
+            tags: Optional explicit tag filtering (bypasses hybrid, uses vector only)
             memory_type: Optional memory type filtering
             min_similarity: Optional minimum similarity threshold (0.0 to 1.0)
 
@@ -279,43 +357,83 @@ class MemoryService:
             Dictionary with search results and pagination metadata
         """
         try:
-            # Calculate offset for pagination
-            offset = (page - 1) * page_size
+            config = settings.hybrid_search
 
-            # Get total count for pagination (expensive but accurate as per user requirement)
-            total = await self.storage.count_semantic_search(
-                query=query,
-                tags=tags,
-                memory_type=memory_type,
-                min_similarity=min_similarity
-            )
+            # If explicit tags provided, skip hybrid and use pure vector search
+            if tags:
+                return await self._retrieve_vector_only(
+                    query, page, page_size, tags, memory_type, min_similarity
+                )
 
-            # Pass filters directly to storage backend for database-level filtering
-            memories = await self.storage.retrieve(
+            # Get cached tags for keyword extraction
+            existing_tags = await self._get_cached_tags()
+
+            # Extract potential tag keywords from query
+            keywords = extract_query_keywords(query, existing_tags)
+
+            # If no keywords match existing tags, fall back to vector-only
+            if not keywords:
+                return await self._retrieve_vector_only(
+                    query, page, page_size, None, memory_type, min_similarity
+                )
+
+            # Determine alpha (explicit > env > adaptive)
+            corpus_size = await self.storage.count()
+            alpha = get_adaptive_alpha(corpus_size, len(keywords), config)
+
+            # If alpha is 1.0, pure vector search (opt-out)
+            if alpha >= 1.0:
+                return await self._retrieve_vector_only(
+                    query, page, page_size, None, memory_type, min_similarity
+                )
+
+            # Fetch larger result set for RRF combination
+            fetch_size = min(page_size * 3, 100)  # Fetch 3x for better fusion
+
+            # Parallel fetch: vector results + tag-matching memories
+            vector_task = self.storage.retrieve(
                 query=query,
-                n_results=page_size,
-                tags=tags,
+                n_results=fetch_size,
+                tags=None,
                 memory_type=memory_type,
                 min_similarity=min_similarity,
-                offset=offset
+                offset=0,
+            )
+            tag_task = self.storage.search_by_tags(
+                tags=keywords,
+                match_all=False,  # ANY tag matches
+                limit=fetch_size,
             )
 
+            vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+
+            # Combine using RRF
+            combined = combine_results_rrf(vector_results, tag_matches, alpha)
+
+            # Apply recency decay
+            if config.recency_decay > 0:
+                combined = apply_recency_decay(combined, config.recency_decay)
+
+            # Apply pagination to combined results
+            offset = (page - 1) * page_size
+            total = len(combined)
+            paginated = combined[offset : offset + page_size]
+
+            # Format results
             results = []
-            for item in memories:
-                # Handle both Memory and MemoryQueryResult objects
-                if hasattr(item, 'memory'):
-                    # MemoryQueryResult - unwrap and add similarity score
-                    memory_dict = self._format_memory_response(item.memory)
-                    memory_dict['similarity_score'] = item.similarity_score
-                    results.append(memory_dict)
-                else:
-                    # Plain Memory object
-                    results.append(self._format_memory_response(item))
+            for memory, score, debug_info in paginated:
+                memory_dict = self._format_memory_response(memory)
+                memory_dict['similarity_score'] = score
+                memory_dict['hybrid_debug'] = debug_info
+                results.append(memory_dict)
 
             return {
                 "memories": results,
                 "query": query,
-                **self._build_pagination_metadata(total, page, page_size)
+                "hybrid_enabled": True,
+                "alpha_used": alpha,
+                "keywords_extracted": keywords,
+                **self._build_pagination_metadata(total, page, page_size),
             }
 
         except Exception as e:

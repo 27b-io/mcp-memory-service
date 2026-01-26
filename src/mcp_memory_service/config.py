@@ -487,6 +487,43 @@ class DebugSettings(BaseSettings):
     include_hostname: bool = Field(default=False)
 
 
+class HybridSearchSettings(BaseSettings):
+    """Hybrid search configuration for combining vector and tag search."""
+
+    model_config = SettingsConfigDict(
+        env_prefix='MCP_MEMORY_',
+        env_file='.env',
+        env_file_encoding='utf-8',
+        case_sensitive=False,
+        extra='ignore'
+    )
+
+    hybrid_alpha: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Weight for vector vs tag results (0=tags only, 1=vector only, None=adaptive)"
+    )
+
+    recency_decay: float = Field(
+        default=0.01,
+        ge=0.0,
+        description="Exponential decay rate for recency boost (0=disabled, 0.01=~70 day half-life)"
+    )
+
+    adaptive_threshold_small: int = Field(
+        default=500,
+        ge=1,
+        description="Corpus size below which alpha=0.5 (balanced)"
+    )
+
+    adaptive_threshold_large: int = Field(
+        default=5000,
+        ge=1,
+        description="Corpus size above which alpha=0.8 (strong semantic)"
+    )
+
+
 # =============================================================================
 # Main Settings Class
 # =============================================================================
@@ -517,6 +554,7 @@ class Settings(BaseSettings):
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
+    hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
 
     @model_validator(mode='after')
     def validate_backend_requirements(self) -> 'Settings':
@@ -678,6 +716,10 @@ def __getattr__(name: str):
         # Debug
         'EXPOSE_DEBUG_TOOLS': lambda: _settings.debug.expose_debug_tools,
         'INCLUDE_HOSTNAME': lambda: _settings.debug.include_hostname,
+
+        # Hybrid Search
+        'HYBRID_ALPHA': lambda: _settings.hybrid_search.hybrid_alpha,
+        'RECENCY_DECAY': lambda: _settings.hybrid_search.recency_decay,
 
         # ONNX - uses lazy cache creation
         'ONNX_MODEL_CACHE': lambda: _ensure_onnx_cache(),

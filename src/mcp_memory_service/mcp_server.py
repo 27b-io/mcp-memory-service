@@ -237,13 +237,18 @@ async def retrieve_memory(
     min_similarity: float = 0.6
 ) -> str:
     """
-    Retrieve memories using semantic similarity search with automatic quality filtering.
+    Retrieve memories using hybrid search (semantic + tag matching).
 
-    Uses vector embeddings to find memories with similar meaning to the query.
-    Default min_similarity of 0.6 filters out low-quality matches.
+    Combines vector similarity with automatic tag extraction for improved retrieval.
+    When query terms match existing tags, those memories receive a score boost.
+    This solves the "rathole problem" where project-specific queries return
+    semantically similar but categorically unrelated results.
+
+    Hybrid search is enabled by default. To opt-out to pure vector search:
+    - Set environment variable MCP_MEMORY_HYBRID_ALPHA=1.0
 
     Args:
-        query: Natural language search query
+        query: Natural language search query (tags extracted automatically)
         page: Page number (1-indexed, default: 1)
         page_size: Results per page (default: 10, max: 100)
         min_similarity: Quality threshold (0.0-1.0, default: 0.6)
