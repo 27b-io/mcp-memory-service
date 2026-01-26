@@ -18,11 +18,12 @@
 import os
 import platform
 
+
 # Setup cache paths for HuggingFace models - this MUST be done before any ML library imports
 def setup_offline_mode():
     """Setup cache paths for HuggingFace models without forcing offline mode."""
     # Configure cache paths (but don't force offline - let sentence-transformers auto-detect cache)
-    username = os.environ.get('USERNAME', os.environ.get('USER', ''))
+    username = os.environ.get("USERNAME", os.environ.get("USER", ""))
     if platform.system() == "Windows" and username:
         default_hf_home = f"C:\\Users\\{username}\\.cache\\huggingface"
         default_transformers_cache = f"C:\\Users\\{username}\\.cache\\huggingface\\transformers"
@@ -33,37 +34,33 @@ def setup_offline_mode():
         default_sentence_transformers_home = os.path.expanduser("~/.cache/torch/sentence_transformers")
 
     # Set cache paths if not already set
-    if 'HF_HOME' not in os.environ:
-        os.environ['HF_HOME'] = default_hf_home
-    if 'TRANSFORMERS_CACHE' not in os.environ:
-        os.environ['TRANSFORMERS_CACHE'] = default_transformers_cache
-    if 'SENTENCE_TRANSFORMERS_HOME' not in os.environ:
-        os.environ['SENTENCE_TRANSFORMERS_HOME'] = default_sentence_transformers_home
+    if "HF_HOME" not in os.environ:
+        os.environ["HF_HOME"] = default_hf_home
+    if "TRANSFORMERS_CACHE" not in os.environ:
+        os.environ["TRANSFORMERS_CACHE"] = default_transformers_cache
+    if "SENTENCE_TRANSFORMERS_HOME" not in os.environ:
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = default_sentence_transformers_home
 
     # Only force offline mode if explicitly requested (respects user/Docker env vars)
     # sentence-transformers automatically uses cache if model exists - no need to force offline
+
 
 # Setup offline mode immediately when this module is imported
 setup_offline_mode()
 
 __version__ = "9.0.0"
 
-from .models import Memory, MemoryQueryResult
-from .storage import MemoryStorage
-from .utils import generate_content_hash
+from .models import Memory, MemoryQueryResult  # noqa: E402
+from .storage import MemoryStorage  # noqa: E402
+from .utils import generate_content_hash  # noqa: E402
 
 # Conditional imports
-__all__ = [
-    'Memory',
-    'MemoryQueryResult', 
-    'MemoryStorage',
-    'generate_content_hash'
-]
+__all__ = ["Memory", "MemoryQueryResult", "MemoryStorage", "generate_content_hash"]
 
 # Import storage backends conditionally
 try:
     from .storage import SqliteVecMemoryStorage
-    __all__.append('SqliteVecMemoryStorage')
+
+    __all__.append("SqliteVecMemoryStorage")
 except ImportError:
     SqliteVecMemoryStorage = None
-
