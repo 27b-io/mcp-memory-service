@@ -4,11 +4,9 @@ Integration tests for API endpoints using MemoryService.
 These tests verify that the API layer correctly integrates with
 MemoryService for all memory operations and maintains consistent behavior.
 
-NOTE: These tests are currently skipped due to:
-1. Mock storage fixtures need comprehensive update for hybrid search
-2. HTTP tests have threading issues with SQLite connection
-
-TODO: Fix tests in a dedicated PR
+Environment Variables:
+- SKIP_INTEGRATION_TESTS: Set to "1" to skip all tests in this module
+- SKIP_HTTP_INTEGRATION: Set to "1" to skip HTTP TestClient tests (SQLite threading issues)
 """
 
 import os
@@ -23,8 +21,16 @@ from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
 from mcp_memory_service.web.dependencies import get_memory_service, set_storage
 
-# Skip entire module - tests need comprehensive refactoring
-pytestmark = pytest.mark.skip(reason="Test module needs refactoring for hybrid search and SQLite threading fixes")
+# Conditional module-level skip based on environment variable
+if os.environ.get("SKIP_INTEGRATION_TESTS", "").lower() in ("1", "true", "yes"):
+    pytestmark = pytest.mark.skip(reason="SKIP_INTEGRATION_TESTS is set")
+
+# Helper for HTTP tests that have SQLite threading issues
+# Set SKIP_HTTP_INTEGRATION=1 to skip these tests
+skip_http_integration = pytest.mark.skipif(
+    os.environ.get("SKIP_HTTP_INTEGRATION", "").lower() in ("1", "true", "yes"),
+    reason="SKIP_HTTP_INTEGRATION is set - HTTP tests have SQLite threading issues",
+)
 
 # Test Fixtures
 
@@ -554,6 +560,7 @@ async def test_end_to_end_workflow_with_real_storage(temp_db):
 # Real HTTP API Integration Tests with TestClient
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_store_memory_endpoint(temp_db):
@@ -592,6 +599,7 @@ async def test_http_api_store_memory_endpoint(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_list_memories_endpoint(temp_db):
@@ -629,6 +637,7 @@ async def test_http_api_list_memories_endpoint(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_search_endpoint(temp_db):
@@ -665,6 +674,7 @@ async def test_http_api_search_endpoint(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_search_by_tag_endpoint(temp_db):
@@ -700,6 +710,7 @@ async def test_http_api_search_by_tag_endpoint(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_get_memory_by_hash_endpoint(temp_db):
@@ -735,6 +746,7 @@ async def test_http_api_get_memory_by_hash_endpoint(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_delete_memory_endpoint(temp_db):
@@ -773,6 +785,7 @@ async def test_http_api_delete_memory_endpoint(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_pagination_with_real_data(temp_db):
@@ -820,6 +833,7 @@ async def test_http_api_pagination_with_real_data(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_error_handling_invalid_json(temp_db):
@@ -852,6 +866,7 @@ async def test_http_api_error_handling_invalid_json(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_client_hostname_header(temp_db):
@@ -887,6 +902,7 @@ async def test_http_api_client_hostname_header(temp_db):
         storage.close()
 
 
+@skip_http_integration
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_http_api_complete_crud_workflow(temp_db):
