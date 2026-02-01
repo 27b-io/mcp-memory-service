@@ -9,29 +9,26 @@ Run with: uv run pytest tests/integration/test_hybrid_retrieve.py -v
 """
 
 import os
-import pytest
 import shutil
 import tempfile
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import patch
+
+import pytest
 
 # Force CPU mode for tests
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+import importlib.util
 
 from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.utils.hashing import generate_content_hash
 
-
-# =============================================================================
-# Fixtures
-# =============================================================================
-
-try:
-    import sqlite_vec
-    SQLITE_VEC_AVAILABLE = True
-except ImportError:
-    SQLITE_VEC_AVAILABLE = False
+SQLITE_VEC_AVAILABLE = importlib.util.find_spec("sqlite_vec") is not None
 
 if SQLITE_VEC_AVAILABLE:
     from mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
@@ -51,7 +48,7 @@ async def storage() -> AsyncGenerator["SqliteVecMemoryStorage", None]:
 
     yield storage
 
-    storage.close()
+    await storage.close()
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -77,33 +74,33 @@ async def seeded_service(service, storage) -> MemoryService:
             content="Rathole project architecture uses reverse proxy tunneling",
             content_hash=generate_content_hash("Rathole project architecture uses reverse proxy tunneling"),
             tags=["rathole", "project", "architecture"],
-            memory_type="note"
+            memory_type="note",
         ),
         Memory(
             content="Rathole tunnel configuration with TOML files",
             content_hash=generate_content_hash("Rathole tunnel configuration with TOML files"),
             tags=["rathole", "config"],
-            memory_type="note"
+            memory_type="note",
         ),
         # Cachekit memories - semantically similar (also "architecture") but different project
         Memory(
             content="Cachekit architecture uses decorator pattern for caching",
             content_hash=generate_content_hash("Cachekit architecture uses decorator pattern for caching"),
             tags=["cachekit", "architecture"],
-            memory_type="note"
+            memory_type="note",
         ),
         Memory(
             content="Cachekit Redis backend implementation details",
             content_hash=generate_content_hash("Cachekit Redis backend implementation details"),
             tags=["cachekit", "redis"],
-            memory_type="note"
+            memory_type="note",
         ),
         # Generic memories
         Memory(
             content="Python best practices for async programming",
             content_hash=generate_content_hash("Python best practices for async programming"),
             tags=["python", "async"],
-            memory_type="note"
+            memory_type="note",
         ),
     ]
 
@@ -117,6 +114,7 @@ async def seeded_service(service, storage) -> MemoryService:
 # Hybrid Search Tests
 # =============================================================================
 
+
 @pytest.mark.skipif(not SQLITE_VEC_AVAILABLE, reason="sqlite-vec not available")
 class TestHybridRetrieval:
     """Integration tests for hybrid search behavior."""
@@ -124,11 +122,7 @@ class TestHybridRetrieval:
     @pytest.mark.asyncio
     async def test_hybrid_enabled_by_default(self, seeded_service):
         """Default behavior should use hybrid search or gracefully fallback."""
-        result = await seeded_service.retrieve_memories(
-            query="rathole project architecture",
-            page=1,
-            page_size=10
-        )
+        result = await seeded_service.retrieve_memories(query="rathole project architecture", page=1, page_size=10)
 
         assert "memories" in result
         assert len(result["memories"]) > 0
@@ -141,18 +135,13 @@ class TestHybridRetrieval:
     @pytest.mark.asyncio
     async def test_tag_extraction_boosts_results(self, seeded_service):
         """Query containing tag keywords should boost matching memories."""
-        result = await seeded_service.retrieve_memories(
-            query="rathole project architecture",
-            page=1,
-            page_size=10
-        )
+        result = await seeded_service.retrieve_memories(query="rathole project architecture", page=1, page_size=10)
 
         assert len(result["memories"]) > 0
 
         # First result should be from rathole project (tag match boost)
         first_memory = result["memories"][0]
-        assert "rathole" in first_memory["content"].lower() or \
-               "rathole" in [t.lower() for t in first_memory["tags"]]
+        assert "rathole" in first_memory["content"].lower() or "rathole" in [t.lower() for t in first_memory["tags"]]
 
     @pytest.mark.asyncio
     async def test_opt_out_with_empty_tags(self, seeded_service):
@@ -161,41 +150,58 @@ class TestHybridRetrieval:
             query="rathole project architecture",
             page=1,
             page_size=10,
-            tags=[]  # Explicit opt-out
+            tags=[],  # Explicit opt-out
         )
 
         assert result.get("hybrid_enabled") is False
 
     @pytest.mark.asyncio
     async def test_opt_out_with_alpha_env(self, seeded_service):
-        """Setting HYBRID_ALPHA=1.0 should use pure vector search."""
-        # Patch the settings to simulate alpha=1.0
-        with patch.object(
-            seeded_service._get_cached_tags.__self__,
-            '_tag_cache',
-            None
-        ):
-            # We can't easily patch env vars for pydantic settings, but we can
-            # verify the logic by checking the API contract
+        """Setting HYBRID_ALPHA=1.0 via config should use pure vector search.
+
+        This test verifies that when hybrid_alpha is set to 1.0 (pure vector),
+        the hybrid search is disabled and only vector similarity is used.
+        """
+        # First, verify hybrid IS enabled without the opt-out (baseline check)
+        baseline_result = await seeded_service.retrieve_memories(
+            query="rathole project architecture",
+            page=1,
+            page_size=10,
+        )
+        # Baseline should have hybrid enabled (or at least be a valid result)
+        assert "memories" in baseline_result
+
+        # Now test alpha=1.0 opt-out by patching the config
+        from mcp_memory_service.config import HybridSearchSettings
+
+        mock_config = HybridSearchSettings(
+            hybrid_alpha=1.0,  # Pure vector search (hybrid disabled)
+            recency_decay=0.0,
+            adaptive_threshold_small=500,
+            adaptive_threshold_large=5000,
+        )
+
+        # Patch the settings.hybrid_search attribute
+        with patch("mcp_memory_service.services.memory_service.settings") as mock_settings:
+            mock_settings.hybrid_search = mock_config
             result = await seeded_service.retrieve_memories(
                 query="rathole project architecture",
                 page=1,
                 page_size=10,
-                tags=[]  # This triggers opt-out path
             )
 
+            # With alpha=1.0, hybrid should be disabled (pure vector search)
             assert result.get("hybrid_enabled") is False
+
+            # If baseline had hybrid enabled, this confirms the patch worked
+            if baseline_result.get("hybrid_enabled") is True:
+                assert result.get("hybrid_enabled") != baseline_result.get("hybrid_enabled")
 
     @pytest.mark.asyncio
     async def test_backward_compatibility_api_unchanged(self, seeded_service):
         """API should remain backward compatible - same parameters work."""
         # Standard retrieve call should work
-        result = await seeded_service.retrieve_memories(
-            query="architecture patterns",
-            page=1,
-            page_size=5,
-            memory_type="note"
-        )
+        result = await seeded_service.retrieve_memories(query="architecture patterns", page=1, page_size=5, memory_type="note")
 
         assert "memories" in result
         assert "total" in result
@@ -208,24 +214,12 @@ class TestHybridRetrieval:
     async def test_pagination_with_hybrid(self, seeded_service):
         """Pagination should work correctly with hybrid search."""
         # Get all results
-        all_results = await seeded_service.retrieve_memories(
-            query="architecture",
-            page=1,
-            page_size=100
-        )
-        total = all_results["total"]
+        all_results = await seeded_service.retrieve_memories(query="architecture", page=1, page_size=100)
+        all_results["total"]
 
         # Test pagination with page_size=2
-        page1 = await seeded_service.retrieve_memories(
-            query="architecture",
-            page=1,
-            page_size=2
-        )
-        page2 = await seeded_service.retrieve_memories(
-            query="architecture",
-            page=2,
-            page_size=2
-        )
+        page1 = await seeded_service.retrieve_memories(query="architecture", page=1, page_size=2)
+        page2 = await seeded_service.retrieve_memories(query="architecture", page=2, page_size=2)
 
         # Verify pagination metadata
         assert page1["page"] == 1
@@ -246,7 +240,7 @@ class TestHybridRetrieval:
             query="rathole architecture",
             page=1,
             page_size=10,
-            min_similarity=0.5  # High threshold
+            min_similarity=0.5,  # High threshold
         )
 
         # Low threshold - more results
@@ -254,7 +248,7 @@ class TestHybridRetrieval:
             query="rathole architecture",
             page=1,
             page_size=10,
-            min_similarity=0.0  # No threshold
+            min_similarity=0.0,  # No threshold
         )
 
         # High threshold should return fewer or equal results
@@ -263,28 +257,20 @@ class TestHybridRetrieval:
     @pytest.mark.asyncio
     async def test_debug_info_in_response(self, seeded_service):
         """Hybrid search should include debug info in results."""
-        result = await seeded_service.retrieve_memories(
-            query="rathole project",
-            page=1,
-            page_size=5
-        )
+        result = await seeded_service.retrieve_memories(query="rathole project", page=1, page_size=5)
 
         if result.get("hybrid_enabled") and result["memories"]:
             first_memory = result["memories"][0]
             # Debug info should be present
-            assert "_hybrid_debug" in first_memory
-            debug = first_memory["_hybrid_debug"]
+            assert "hybrid_debug" in first_memory
+            debug = first_memory["hybrid_debug"]
             assert "final_score" in debug
             assert "alpha_used" in debug
 
     @pytest.mark.asyncio
     async def test_no_tag_matches_falls_back_gracefully(self, seeded_service):
         """Query with no matching tags should still return results."""
-        result = await seeded_service.retrieve_memories(
-            query="completely unrelated query about elephants",
-            page=1,
-            page_size=10
-        )
+        result = await seeded_service.retrieve_memories(query="completely unrelated query about elephants", page=1, page_size=10)
 
         # Should not error, should return whatever vector search finds
         assert "memories" in result
@@ -294,6 +280,7 @@ class TestHybridRetrieval:
 # =============================================================================
 # Tag Cache Tests
 # =============================================================================
+
 
 @pytest.mark.skipif(not SQLITE_VEC_AVAILABLE, reason="sqlite-vec not available")
 class TestTagCaching:
@@ -305,11 +292,7 @@ class TestTagCaching:
         # Clear any existing cache
         seeded_service._tag_cache = None
 
-        await seeded_service.retrieve_memories(
-            query="test query",
-            page=1,
-            page_size=5
-        )
+        await seeded_service.retrieve_memories(query="test query", page=1, page_size=5)
 
         # Cache should now be populated
         assert seeded_service._tag_cache is not None
@@ -321,20 +304,12 @@ class TestTagCaching:
     async def test_tag_cache_reused_on_subsequent_calls(self, seeded_service):
         """Subsequent calls should reuse cached tags."""
         # First call to populate cache
-        await seeded_service.retrieve_memories(
-            query="first query",
-            page=1,
-            page_size=5
-        )
+        await seeded_service.retrieve_memories(query="first query", page=1, page_size=5)
 
         cache_time_1, _ = seeded_service._tag_cache
 
         # Second call should reuse cache
-        await seeded_service.retrieve_memories(
-            query="second query",
-            page=1,
-            page_size=5
-        )
+        await seeded_service.retrieve_memories(query="second query", page=1, page_size=5)
 
         cache_time_2, _ = seeded_service._tag_cache
 
