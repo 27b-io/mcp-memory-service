@@ -223,9 +223,17 @@ class HTTPSettings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
-        """Parse comma-separated CORS origins."""
+        """Parse and normalize CORS origins.
+
+        Handles comma-separated strings or lists, trimming whitespace
+        and filtering empty entries for exact CORS matching.
+        """
         if isinstance(v, str):
-            return v.split(",")
+            # Split on comma, strip whitespace, filter empty
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        if isinstance(v, list):
+            # Strip whitespace from each, filter empty
+            return [origin.strip() for origin in v if isinstance(origin, str) and origin.strip()]
         return v
 
 
