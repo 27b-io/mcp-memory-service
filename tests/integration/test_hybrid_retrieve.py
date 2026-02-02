@@ -213,10 +213,6 @@ class TestHybridRetrieval:
     @pytest.mark.asyncio
     async def test_pagination_with_hybrid(self, seeded_service):
         """Pagination should work correctly with hybrid search."""
-        # Get all results
-        all_results = await seeded_service.retrieve_memories(query="architecture", page=1, page_size=100)
-        all_results["total"]
-
         # Test pagination with page_size=2
         page1 = await seeded_service.retrieve_memories(query="architecture", page=1, page_size=2)
         page2 = await seeded_service.retrieve_memories(query="architecture", page=2, page_size=2)
