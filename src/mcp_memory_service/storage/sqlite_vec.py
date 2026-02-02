@@ -2473,8 +2473,15 @@ SOLUTIONS:
             logger.error(f"Unexpected error getting tags with counts: {str(e)}")
             raise
 
-    def close(self):
-        """Close the database connection."""
+    async def close(self) -> None:
+        """Close the database connection.
+
+        Safe to call multiple times. Idempotent operation.
+
+        Note: SQLite connections must be closed from the same thread where
+        they were created. We close synchronously since sqlite3 close()
+        is fast and doesn't involve network I/O.
+        """
         if self.conn:
             self.conn.close()
             self.conn = None

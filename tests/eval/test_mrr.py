@@ -6,14 +6,15 @@ Measures how quickly the first relevant result appears.
 """
 
 import os
+
 import pytest
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from .conftest import (
     SQLITE_VEC_AVAILABLE,
-    get_test_cases,
     calculate_mrr,
+    get_test_cases,
 )
 
 
@@ -28,11 +29,7 @@ class TestMRR:
         mrr_scores = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
             mrr = calculate_mrr(result["memories"], tc["expected_hashes"])
             mrr_scores.append(mrr)
 
@@ -49,16 +46,16 @@ class TestMRR:
         mrr_scores = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
             mrr = calculate_mrr(result["memories"], tc["expected_hashes"])
             mrr_scores.append(mrr)
 
         avg_mrr = sum(mrr_scores) / len(mrr_scores) if mrr_scores else 0.0
         print(f"\nMRR (semantic): {avg_mrr:.3f} ({len(mrr_scores)} queries)")
+
+        # Semantic MRR should be non-zero for valid test data
+        assert len(mrr_scores) > 0, "Should have evaluated at least one semantic test case"
+        assert avg_mrr > 0.0, "Semantic MRR should be non-zero"
 
     @pytest.mark.asyncio
     async def test_mrr_overall(self, eval_service):
@@ -67,11 +64,7 @@ class TestMRR:
         mrr_scores = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
             mrr = calculate_mrr(result["memories"], tc["expected_hashes"])
             mrr_scores.append(mrr)
 
@@ -93,13 +86,13 @@ class TestMRR:
 
             mrr_scores = []
             for tc in test_cases:
-                result = await eval_service.retrieve_memories(
-                    query=tc["query"],
-                    page=1,
-                    page_size=10
-                )
+                result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
                 mrr = calculate_mrr(result["memories"], tc["expected_hashes"])
                 mrr_scores.append(mrr)
 
             avg_mrr = sum(mrr_scores) / len(mrr_scores) if mrr_scores else 0.0
             print(f"MRR ({category}): {avg_mrr:.3f} ({len(mrr_scores)} queries)")
+
+            # Each category should have at least one test case and non-negative MRR
+            assert len(mrr_scores) > 0, f"Should have evaluated at least one {category} test case"
+            assert avg_mrr >= 0.0, f"MRR for {category} should be non-negative"

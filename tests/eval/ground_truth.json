@@ -700,6 +700,46 @@
       "expected_hashes": ["oauth_jwt_017", "cors_security_018", "cachekit_encrypt_006"],
       "expected_tags": ["security", "authentication"],
       "category": "mixed"
+    },
+    {
+      "id": "tc_056",
+      "query": "",
+      "expected_hashes": [],
+      "expected_tags": [],
+      "category": "edge_case",
+      "notes": "Empty query should return empty or handle gracefully"
+    },
+    {
+      "id": "tc_057",
+      "query": "a",
+      "expected_hashes": [],
+      "expected_tags": [],
+      "category": "edge_case",
+      "notes": "Single character query - should be filtered as stop word or handled gracefully"
+    },
+    {
+      "id": "tc_058",
+      "query": "the and or but",
+      "expected_hashes": [],
+      "expected_tags": [],
+      "category": "edge_case",
+      "notes": "Query with only stop words - should fall back to vector search"
+    },
+    {
+      "id": "tc_059",
+      "query": "nonexistent-tag-xyz-12345",
+      "expected_hashes": [],
+      "expected_tags": [],
+      "category": "edge_case",
+      "notes": "Query with no matching tags in corpus - pure vector search"
+    },
+    {
+      "id": "tc_060",
+      "query": "rathole rathole rathole architecture",
+      "expected_hashes": ["rathole_arch_001"],
+      "expected_tags": ["rathole", "architecture"],
+      "category": "edge_case",
+      "notes": "Duplicate keywords in query - should dedupe and still match"
     }
   ]
 }

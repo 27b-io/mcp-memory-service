@@ -8,8 +8,8 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
 
 import pytest
 
@@ -18,12 +18,11 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.services.memory_service import MemoryService
-from mcp_memory_service.utils.hashing import generate_content_hash
-
 
 # =============================================================================
 # Ground Truth Utilities
 # =============================================================================
+
 
 def load_ground_truth() -> dict:
     """Load ground truth test cases from JSON."""
@@ -47,6 +46,7 @@ def get_test_cases(category: str = None) -> list[dict]:
 
 try:
     import sqlite_vec
+
     SQLITE_VEC_AVAILABLE = True
 except ImportError:
     SQLITE_VEC_AVAILABLE = False
@@ -74,13 +74,13 @@ async def eval_storage() -> AsyncGenerator["SqliteVecMemoryStorage", None]:
             content=memory_data["content"],
             content_hash=memory_data["content_hash"],
             tags=memory_data.get("tags", []),
-            memory_type=memory_data.get("memory_type", "note")
+            memory_type=memory_data.get("memory_type", "note"),
         )
         await storage.store(memory)
 
     yield storage
 
-    storage.close()
+    await storage.close()
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -93,6 +93,7 @@ async def eval_service(eval_storage) -> MemoryService:
 # =============================================================================
 # Metrics Utilities
 # =============================================================================
+
 
 def calculate_hit_rate(results: list[dict], expected_hashes: list[str], k: int = 10) -> float:
     """
@@ -122,11 +123,7 @@ def calculate_mrr(results: list[dict], expected_hashes: list[str]) -> float:
     return 0.0
 
 
-def calculate_ndcg(
-    results: list[dict],
-    expected_hashes: list[str],
-    k: int = 10
-) -> float:
+def calculate_ndcg(results: list[dict], expected_hashes: list[str], k: int = 10) -> float:
     """
     Calculate Normalized Discounted Cumulative Gain @K.
 

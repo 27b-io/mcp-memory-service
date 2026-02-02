@@ -21,7 +21,6 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 # Force CPU mode
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -29,10 +28,10 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from mcp_memory_service.config import settings
 from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
-from mcp_memory_service.config import settings
 
 
 def load_ground_truth():
@@ -99,7 +98,7 @@ async def run_sweep():
                 content=memory_data["content"],
                 content_hash=memory_data["content_hash"],
                 tags=memory_data.get("tags", []),
-                memory_type=memory_data.get("memory_type", "note")
+                memory_type=memory_data.get("memory_type", "note"),
             )
             await storage.store(memory)
 
@@ -124,16 +123,9 @@ async def run_sweep():
             ndcg_scores = []
 
             for tc in test_cases:
-                result = await service.retrieve_memories(
-                    query=tc["query"],
-                    page=1,
-                    page_size=10
-                )
+                result = await service.retrieve_memories(query=tc["query"], page=1, page_size=10)
 
-                hr, mrr, ndcg = calculate_metrics(
-                    result["memories"],
-                    tc["expected_hashes"]
-                )
+                hr, mrr, ndcg = calculate_metrics(result["memories"], tc["expected_hashes"])
                 hit_rates.append(hr)
                 mrr_scores.append(mrr)
                 ndcg_scores.append(ndcg)
@@ -145,12 +137,7 @@ async def run_sweep():
             avg_mrr = sum(mrr_scores) / len(mrr_scores)
             avg_ndcg = sum(ndcg_scores) / len(ndcg_scores)
 
-            results.append({
-                "alpha": alpha,
-                "hit_rate": avg_hr,
-                "mrr": avg_mrr,
-                "ndcg": avg_ndcg
-            })
+            results.append({"alpha": alpha, "hit_rate": avg_hr, "mrr": avg_mrr, "ndcg": avg_ndcg})
 
             mode = "Pure Vector" if alpha == 1.0 else "Hybrid" if alpha < 1.0 else "Pure Tags"
             print(f"Alpha {alpha:.1f} ({mode}): Hit@10={avg_hr:.2%}, MRR={avg_mrr:.3f}, NDCG={avg_ndcg:.3f}")

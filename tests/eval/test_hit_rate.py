@@ -6,14 +6,15 @@ This is the primary retrieval quality metric.
 """
 
 import os
+
 import pytest
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from .conftest import (
     SQLITE_VEC_AVAILABLE,
-    get_test_cases,
     calculate_hit_rate,
+    get_test_cases,
 )
 
 
@@ -28,16 +29,8 @@ class TestHitRate:
         hits = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
-            hr = calculate_hit_rate(
-                result["memories"],
-                tc["expected_hashes"],
-                k=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
+            hr = calculate_hit_rate(result["memories"], tc["expected_hashes"], k=10)
             hits.append(hr)
 
         avg_hit_rate = sum(hits) / len(hits) if hits else 0.0
@@ -54,20 +47,15 @@ class TestHitRate:
         hits = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
-            hr = calculate_hit_rate(
-                result["memories"],
-                tc["expected_hashes"],
-                k=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
+            hr = calculate_hit_rate(result["memories"], tc["expected_hashes"], k=10)
             hits.append(hr)
 
         avg_hit_rate = sum(hits) / len(hits) if hits else 0.0
         print(f"\nHit Rate@10 (semantic): {avg_hit_rate:.2%} ({len(hits)} queries)")
+
+        # Semantic Hit Rate@10 should be non-zero for valid test data
+        assert avg_hit_rate > 0.0, "Semantic Hit Rate@10 should be non-zero"
 
     @pytest.mark.asyncio
     async def test_hit_rate_overall(self, eval_service):
@@ -76,16 +64,8 @@ class TestHitRate:
         hits = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
-            hr = calculate_hit_rate(
-                result["memories"],
-                tc["expected_hashes"],
-                k=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
+            hr = calculate_hit_rate(result["memories"], tc["expected_hashes"], k=10)
             hits.append(hr)
 
         avg_hit_rate = sum(hits) / len(hits) if hits else 0.0
@@ -102,17 +82,12 @@ class TestHitRate:
         for k in [1, 3, 5, 10]:
             hits = []
             for tc in test_cases:
-                result = await eval_service.retrieve_memories(
-                    query=tc["query"],
-                    page=1,
-                    page_size=k
-                )
-                hr = calculate_hit_rate(
-                    result["memories"],
-                    tc["expected_hashes"],
-                    k=k
-                )
+                result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=k)
+                hr = calculate_hit_rate(result["memories"], tc["expected_hashes"], k=k)
                 hits.append(hr)
 
             avg_hit_rate = sum(hits) / len(hits) if hits else 0.0
             print(f"Hit Rate@{k}: {avg_hit_rate:.2%}")
+
+            # Hit Rate@{k} should be non-zero for valid test data
+            assert avg_hit_rate > 0.0, f"Hit Rate@{k} should be non-zero"

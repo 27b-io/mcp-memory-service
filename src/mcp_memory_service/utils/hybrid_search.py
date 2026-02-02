@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,28 +23,118 @@ if TYPE_CHECKING:
     from ..models.memory import Memory, MemoryQueryResult
 
 # English stop words - common words that don't carry semantic meaning for tag matching
-STOP_WORDS: frozenset[str] = frozenset({
-    'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-    'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been',
-    'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
-    'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that',
-    'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my',
-    'your', 'his', 'her', 'its', 'our', 'their', 'what', 'which', 'who',
-    'whom', 'when', 'where', 'why', 'how', 'all', 'each', 'every', 'both',
-    'few', 'more', 'most', 'other', 'some', 'such', 'no', 'not', 'only',
-    'own', 'same', 'so', 'than', 'too', 'very', 'just', 'about', 'into',
-    'over', 'after', 'before', 'between', 'under', 'again', 'then', 'here',
-    'there', 'any', 'as', 'if', 'also', 'now', 'up', 'out', 'get', 'got',
-})
+STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "you",
+        "he",
+        "she",
+        "it",
+        "we",
+        "they",
+        "my",
+        "your",
+        "his",
+        "her",
+        "its",
+        "our",
+        "their",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "about",
+        "into",
+        "over",
+        "after",
+        "before",
+        "between",
+        "under",
+        "again",
+        "then",
+        "here",
+        "there",
+        "any",
+        "as",
+        "if",
+        "also",
+        "now",
+        "up",
+        "out",
+        "get",
+        "got",
+    }
+)
 
 # Regex for tokenization - split on non-alphanumeric characters
-_TOKEN_PATTERN = re.compile(r'[^a-zA-Z0-9]+')
+_TOKEN_PATTERN = re.compile(r"[^a-zA-Z0-9]+")
 
 
-def extract_query_keywords(
-    query: str,
-    existing_tags: set[str] | None = None
-) -> list[str]:
+def extract_query_keywords(query: str, existing_tags: set[str] | None = None) -> list[str]:
     """
     Extract potential tag keywords from a search query.
 
@@ -65,10 +155,7 @@ def extract_query_keywords(
     tokens = _TOKEN_PATTERN.split(query.lower())
 
     # Filter: remove empty strings, stop words, and very short tokens
-    keywords = [
-        token for token in tokens
-        if token and token not in STOP_WORDS and len(token) > 1
-    ]
+    keywords = [token for token in tokens if token and token not in STOP_WORDS and len(token) > 1]
 
     # Deduplicate while preserving order
     seen: set[str] = set()
@@ -107,10 +194,7 @@ def rrf_score(rank: int, k: int = 60) -> float:
 
 
 def combine_results_rrf(
-    vector_results: list[MemoryQueryResult],
-    tag_matches: list[Memory],
-    alpha: float,
-    k: int = 60
+    vector_results: list[MemoryQueryResult], tag_matches: list[Memory], alpha: float, k: int = 60
 ) -> list[tuple[Memory, float, dict]]:
     """
     Combine vector search and tag search results using RRF.
@@ -142,11 +226,11 @@ def combine_results_rrf(
         memories[content_hash] = result.memory
         scores[content_hash] = vec_contribution
         debug[content_hash] = {
-            'vector_score': result.similarity_score,
-            'vector_rank': rank,
-            'vector_rrf': vec_rrf,
-            'tag_boost': 0.0,
-            'tag_matches': [],
+            "vector_score": result.similarity_score,
+            "vector_rank": rank,
+            "vector_rrf": vec_rrf,
+            "tag_boost": 0.0,
+            "tag_matches": [],
         }
 
     # Process tag matches (treat as equally ranked for RRF purposes)
@@ -160,26 +244,26 @@ def combine_results_rrf(
         if content_hash in scores:
             # Overlap: add tag contribution to existing score
             scores[content_hash] += tag_contribution
-            debug[content_hash]['tag_boost'] = tag_contribution
-            debug[content_hash]['tag_matches'].append('matched')
+            debug[content_hash]["tag_boost"] = tag_contribution
+            debug[content_hash]["tag_matches"].append("matched")
         else:
             # Tag-only result (not in vector results)
             memories[content_hash] = memory
             scores[content_hash] = tag_contribution
             debug[content_hash] = {
-                'vector_score': 0.0,
-                'vector_rank': 0,
-                'vector_rrf': 0.0,
-                'tag_boost': tag_contribution,
-                'tag_matches': ['matched'],
+                "vector_score": 0.0,
+                "vector_rank": 0,
+                "vector_rrf": 0.0,
+                "tag_boost": tag_contribution,
+                "tag_matches": ["matched"],
             }
 
     # Build final results with debug info
     results: list[tuple[Memory, float, dict]] = []
     for content_hash, score in scores.items():
         info = debug[content_hash]
-        info['final_score'] = score
-        info['alpha_used'] = alpha
+        info["final_score"] = score
+        info["alpha_used"] = alpha
         results.append((memories[content_hash], score, info))
 
     # Sort by score descending
@@ -260,16 +344,20 @@ def apply_recency_decay(
     if decay_rate <= 0:
         # Decay disabled - add recency_factor=1.0 to debug and return as-is
         for _memory, _score, info in results:
-            info['recency_factor'] = 1.0
+            info["recency_factor"] = 1.0
         return results
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     adjusted: list[tuple[Memory, float, dict]] = []
 
     for memory, score, info in results:
         # Calculate days since last update
         try:
             updated_at = datetime.fromisoformat(memory.updated_at_iso)
+            # Normalize to UTC - handle both aware and naive datetimes
+            if updated_at.tzinfo is None:
+                # Assume naive datetime is UTC
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
             days_old = (now - updated_at).total_seconds() / 86400
         except (ValueError, TypeError):
             # If we can't parse the date, assume it's old
@@ -280,9 +368,9 @@ def apply_recency_decay(
         adjusted_score = score * recency_factor
 
         # Update debug info
-        info['recency_factor'] = recency_factor
-        info['days_old'] = days_old
-        info['final_score'] = adjusted_score
+        info["recency_factor"] = recency_factor
+        info["days_old"] = days_old
+        info["final_score"] = adjusted_score
 
         adjusted.append((memory, adjusted_score, info))
 

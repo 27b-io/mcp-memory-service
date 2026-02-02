@@ -53,13 +53,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Build image (CPU variant)
         uses: docker/build-push-action@v5
         with:
           context: .
           push: false
           load: true
           tags: mcp-memory:test
+          build-args: |
+            CUDA_ENABLED=false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -6,14 +6,15 @@ Higher positions are weighted more heavily.
 """
 
 import os
+
 import pytest
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from .conftest import (
     SQLITE_VEC_AVAILABLE,
-    get_test_cases,
     calculate_ndcg,
+    get_test_cases,
 )
 
 
@@ -28,11 +29,7 @@ class TestNDCG:
         ndcg_scores = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
             ndcg = calculate_ndcg(result["memories"], tc["expected_hashes"], k=10)
             ndcg_scores.append(ndcg)
 
@@ -48,16 +45,16 @@ class TestNDCG:
         ndcg_scores = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
             ndcg = calculate_ndcg(result["memories"], tc["expected_hashes"], k=10)
             ndcg_scores.append(ndcg)
 
         avg_ndcg = sum(ndcg_scores) / len(ndcg_scores) if ndcg_scores else 0.0
         print(f"\nNDCG@10 (semantic): {avg_ndcg:.3f} ({len(ndcg_scores)} queries)")
+
+        # Semantic NDCG@10 should be non-zero for valid test data
+        assert ndcg_scores, "Should have evaluated at least one semantic test case"
+        assert avg_ndcg > 0.0, "Semantic NDCG@10 should be non-zero"
 
     @pytest.mark.asyncio
     async def test_ndcg_overall(self, eval_service):
@@ -66,11 +63,7 @@ class TestNDCG:
         ndcg_scores = []
 
         for tc in test_cases:
-            result = await eval_service.retrieve_memories(
-                query=tc["query"],
-                page=1,
-                page_size=10
-            )
+            result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
             ndcg = calculate_ndcg(result["memories"], tc["expected_hashes"], k=10)
             ndcg_scores.append(ndcg)
 
@@ -87,16 +80,16 @@ class TestNDCG:
         for k in [1, 3, 5, 10]:
             ndcg_scores = []
             for tc in test_cases:
-                result = await eval_service.retrieve_memories(
-                    query=tc["query"],
-                    page=1,
-                    page_size=k
-                )
+                result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=k)
                 ndcg = calculate_ndcg(result["memories"], tc["expected_hashes"], k=k)
                 ndcg_scores.append(ndcg)
 
             avg_ndcg = sum(ndcg_scores) / len(ndcg_scores) if ndcg_scores else 0.0
             print(f"NDCG@{k}: {avg_ndcg:.3f}")
+
+            # NDCG@{k} should be non-zero for valid test data
+            assert ndcg_scores, f"Should have evaluated at least one test case for NDCG@{k}"
+            assert avg_ndcg > 0.0, f"NDCG@{k} should be non-zero"
 
     @pytest.mark.asyncio
     async def test_ndcg_per_category(self, eval_service):
@@ -110,13 +103,13 @@ class TestNDCG:
 
             ndcg_scores = []
             for tc in test_cases:
-                result = await eval_service.retrieve_memories(
-                    query=tc["query"],
-                    page=1,
-                    page_size=10
-                )
+                result = await eval_service.retrieve_memories(query=tc["query"], page=1, page_size=10)
                 ndcg = calculate_ndcg(result["memories"], tc["expected_hashes"], k=10)
                 ndcg_scores.append(ndcg)
 
             avg_ndcg = sum(ndcg_scores) / len(ndcg_scores) if ndcg_scores else 0.0
             print(f"NDCG@10 ({category}): {avg_ndcg:.3f} ({len(ndcg_scores)} queries)")
+
+            # Each category should have test cases and non-negative NDCG
+            assert ndcg_scores, f"Should have evaluated at least one {category} test case"
+            assert avg_ndcg >= 0.0, f"NDCG@10 for {category} should be non-negative"

@@ -6,23 +6,22 @@ adaptive alpha calculation, and recency decay.
 """
 
 import math
-import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from mcp_memory_service.utils.hybrid_search import (
     STOP_WORDS,
-    extract_query_keywords,
-    rrf_score,
-    combine_results_rrf,
-    get_adaptive_alpha,
     apply_recency_decay,
+    combine_results_rrf,
+    extract_query_keywords,
+    get_adaptive_alpha,
+    rrf_score,
 )
-
 
 # =============================================================================
 # Keyword Extraction Tests
 # =============================================================================
+
 
 class TestExtractQueryKeywords:
     """Tests for extract_query_keywords function."""
@@ -69,10 +68,7 @@ class TestExtractQueryKeywords:
     def test_tag_validation_filters(self):
         """Should filter to only matching tags when existing_tags provided."""
         existing_tags = {"python", "api", "memory"}
-        result = extract_query_keywords(
-            "python api bug fix memory",
-            existing_tags=existing_tags
-        )
+        result = extract_query_keywords("python api bug fix memory", existing_tags=existing_tags)
         assert "python" in result
         assert "api" in result
         assert "memory" in result
@@ -82,10 +78,7 @@ class TestExtractQueryKeywords:
     def test_tag_validation_case_insensitive(self):
         """Should match tags case-insensitively."""
         existing_tags = {"Python", "API"}
-        result = extract_query_keywords(
-            "python api test",
-            existing_tags=existing_tags
-        )
+        result = extract_query_keywords("python api test", existing_tags=existing_tags)
         assert "python" in result
         assert "api" in result
 
@@ -98,6 +91,7 @@ class TestExtractQueryKeywords:
 # =============================================================================
 # RRF Score Tests
 # =============================================================================
+
 
 class TestRRFScore:
     """Tests for rrf_score function."""
@@ -137,6 +131,7 @@ class TestRRFScore:
 # =============================================================================
 # Combine Results RRF Tests
 # =============================================================================
+
 
 class TestCombineResultsRRF:
     """Tests for combine_results_rrf function."""
@@ -183,8 +178,8 @@ class TestCombineResultsRRF:
 
         # hash1 should have zero vector contribution
         hash1_result = next(r for r in results if r[0].content_hash == "hash1")
-        assert hash1_result[2]['vector_rrf'] > 0  # Still calculated
-        assert hash1_result[2]['tag_boost'] == 0.0
+        assert hash1_result[2]["vector_rrf"] > 0  # Still calculated
+        assert hash1_result[2]["tag_boost"] == 0.0
 
         # hash2 should have tag contribution only
         hash2_result = next(r for r in results if r[0].content_hash == "hash2")
@@ -206,8 +201,8 @@ class TestCombineResultsRRF:
         result = results[0]
 
         # Should have both vector and tag contributions
-        assert result[2]['vector_rrf'] > 0
-        assert result[2]['tag_boost'] > 0
+        assert result[2]["vector_rrf"] > 0
+        assert result[2]["tag_boost"] > 0
 
     def test_empty_inputs(self):
         """Should handle empty inputs gracefully."""
@@ -216,9 +211,7 @@ class TestCombineResultsRRF:
         assert len(results) == 1
 
         # Empty tag matches
-        results = combine_results_rrf(
-            [self._make_query_result("hash1", 0.9)], [], alpha=0.5
-        )
+        results = combine_results_rrf([self._make_query_result("hash1", 0.9)], [], alpha=0.5)
         assert len(results) == 1
 
         # Both empty
@@ -232,19 +225,20 @@ class TestCombineResultsRRF:
 
         results = combine_results_rrf(vector_results, tag_matches, alpha=0.7)
 
-        for memory, score, debug in results:
-            assert 'vector_score' in debug
-            assert 'vector_rank' in debug
-            assert 'vector_rrf' in debug
-            assert 'tag_boost' in debug
-            assert 'final_score' in debug
-            assert 'alpha_used' in debug
-            assert debug['alpha_used'] == 0.7
+        for _memory, _score, debug in results:
+            assert "vector_score" in debug
+            assert "vector_rank" in debug
+            assert "vector_rrf" in debug
+            assert "tag_boost" in debug
+            assert "final_score" in debug
+            assert "alpha_used" in debug
+            assert debug["alpha_used"] == 0.7
 
 
 # =============================================================================
 # Adaptive Alpha Tests
 # =============================================================================
+
 
 class TestGetAdaptiveAlpha:
     """Tests for get_adaptive_alpha function."""
@@ -311,6 +305,7 @@ class TestGetAdaptiveAlpha:
 # Recency Decay Tests
 # =============================================================================
 
+
 class TestApplyRecencyDecay:
     """Tests for apply_recency_decay function."""
 
@@ -318,8 +313,10 @@ class TestApplyRecencyDecay:
         """Create a (memory, score, debug_info) tuple."""
         memory = MagicMock()
         memory.content_hash = content_hash
-        memory.updated_at_iso = (datetime.now() - timedelta(days=days_ago)).isoformat()
-        return (memory, score, {'vector_score': score})
+        # Use UTC-aware datetime with 'Z' suffix to match production data format
+        updated_at = datetime.now(timezone.utc) - timedelta(days=days_ago)
+        memory.updated_at_iso = updated_at.isoformat().replace("+00:00", "Z")
+        return (memory, score, {"vector_score": score})
 
     def test_decay_formula_70_days(self):
         """70 days old with decay=0.01 should give ~0.5x multiplier."""
@@ -329,7 +326,7 @@ class TestApplyRecencyDecay:
         # exp(-0.01 * 70) = exp(-0.7) ≈ 0.4966
         expected_factor = math.exp(-0.01 * 70)
         assert math.isclose(decayed[0][1], expected_factor, rel_tol=0.01)
-        assert math.isclose(decayed[0][2]['recency_factor'], expected_factor, rel_tol=0.01)
+        assert math.isclose(decayed[0][2]["recency_factor"], expected_factor, rel_tol=0.01)
 
     def test_decay_disabled_zero_rate(self):
         """Decay rate 0 should not modify scores."""
@@ -337,7 +334,7 @@ class TestApplyRecencyDecay:
         decayed = apply_recency_decay(results, decay_rate=0)
 
         assert decayed[0][1] == 1.0
-        assert decayed[0][2]['recency_factor'] == 1.0
+        assert decayed[0][2]["recency_factor"] == 1.0
 
     def test_fresh_memory_boost(self):
         """Fresh memories should rank higher than old ones."""
@@ -366,28 +363,29 @@ class TestApplyRecencyDecay:
         decayed = apply_recency_decay(results, decay_rate=0.01)
 
         debug = decayed[0][2]
-        assert 'recency_factor' in debug
-        assert 'days_old' in debug
-        assert 'final_score' in debug
-        assert math.isclose(debug['days_old'], 30, abs_tol=0.1)
+        assert "recency_factor" in debug
+        assert "days_old" in debug
+        assert "final_score" in debug
+        assert math.isclose(debug["days_old"], 30, abs_tol=0.1)
 
 
 # =============================================================================
 # Stop Words Tests
 # =============================================================================
 
+
 class TestStopWords:
     """Tests for STOP_WORDS constant."""
 
     def test_common_words_included(self):
         """Common English words should be in stop words."""
-        common = ['the', 'is', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at']
+        common = ["the", "is", "a", "an", "and", "or", "but", "in", "on", "at"]
         for word in common:
             assert word in STOP_WORDS, f"'{word}' should be a stop word"
 
     def test_meaningful_words_excluded(self):
         """Technical/meaningful words should not be stop words."""
-        technical = ['python', 'api', 'memory', 'database', 'error', 'config']
+        technical = ["python", "api", "memory", "database", "error", "config"]
         for word in technical:
             assert word not in STOP_WORDS, f"'{word}' should not be a stop word"
 
