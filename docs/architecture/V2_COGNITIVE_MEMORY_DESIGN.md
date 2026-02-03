@@ -91,7 +91,7 @@ class SensoryBuffer:
     capacity: int = 7  # Miller's magic number
     decay_ms: int = 1000  # 1 second TTL
     items: deque[SensoryItem] = field(default_factory=deque)
-    
+
     def push(self, content: str, metadata: dict) -> None:
         """Add to buffer, evict oldest if at capacity"""
         if len(self.items) >= self.capacity:
@@ -101,7 +101,7 @@ class SensoryBuffer:
             metadata=metadata,
             timestamp=time.time()
         ))
-    
+
     def flush_to_working(self) -> list[SensoryItem]:
         """Transfer non-expired items to working memory"""
         now = time.time()
@@ -121,14 +121,14 @@ class WorkingMemory:
     capacity: int = 4  # Cowan's limit
     decay_minutes: int = 30
     chunks: dict[str, WorkingChunk] = field(default_factory=dict)
-    
+
     def activate(self, memory_id: str, chunk: WorkingChunk) -> None:
         """Bring a memory into active working set"""
         if len(self.chunks) >= self.capacity:
             self._evict_least_recent()
         self.chunks[memory_id] = chunk
         chunk.last_access = time.time()
-    
+
     def consolidate_to_ltm(self) -> list[ConsolidationCandidate]:
         """Identify chunks ready for long-term storage"""
         candidates = []
@@ -163,18 +163,18 @@ def calculate_strength(memory: Memory, now: float) -> float:
     Potentiated memories (10+ accesses) decay 10x slower.
     """
     age_days = (now - memory.created_at) / 86400
-    
+
     # Base decay parameters
     exp_half_life = 1.0  # days
     power_exponent = 0.3
     consolidation_boundary = 3.0  # days
-    
+
     # Potentiation multiplier
     if memory.access_count >= 10:
         decay_multiplier = 0.1  # 10x slower decay
     else:
         decay_multiplier = 1.0
-    
+
     if age_days <= consolidation_boundary:
         # Exponential phase (consolidation)
         strength = math.exp(-decay_multiplier * age_days / exp_half_life)
@@ -184,7 +184,7 @@ def calculate_strength(memory: Memory, now: float) -> float:
         boundary_strength = math.exp(-decay_multiplier * consolidation_boundary / exp_half_life)
         adjusted_age = age_days - consolidation_boundary + 1
         strength = boundary_strength * (adjusted_age ** (-power_exponent * decay_multiplier))
-    
+
     return max(strength, 0.01)  # Never truly zero
 ```
 
@@ -233,7 +233,7 @@ class HebbianNetwork:
         self.edges: dict[tuple[str, str], HebbianEdge] = {}
         self.η = learning_rate  # Strengthening rate
         self.δ = decay_rate     # Edge decay rate
-    
+
     def record_co_access(self, memory_ids: list[str]) -> None:
         """When memories are retrieved together, strengthen their connections"""
         for i, m1 in enumerate(memory_ids):
@@ -241,15 +241,15 @@ class HebbianNetwork:
                 key = tuple(sorted([m1, m2]))
                 if key not in self.edges:
                     self.edges[key] = HebbianEdge(source_id=m1, target_id=m2)
-                
+
                 edge = self.edges[key]
                 edge.co_access_count += 1
-                
+
                 # Hebbian update: Δw = η * (pre * post)
                 # Both active = both 1, so Δw = η
                 edge.weight = min(1.0, edge.weight + self.η)
                 edge.last_strengthened = time.time()
-    
+
     def get_associated(self, memory_id: str, min_weight: float = 0.3) -> list[str]:
         """Get memories strongly associated with this one"""
         associated = []
@@ -279,13 +279,13 @@ class Memory:
     access_count: int = 0
     is_potentiated: bool = False
     strength: float = 1.0
-    
+
     POTENTIATION_THRESHOLD = 10
-    
+
     def record_access(self) -> None:
         self.access_count += 1
         self.updated_at = time.time()
-        
+
         if not self.is_potentiated and self.access_count >= self.POTENTIATION_THRESHOLD:
             self.is_potentiated = True
             # Log potentiation event for observability
@@ -307,7 +307,7 @@ class ConsolidationService:
     def __init__(self, memory_store: MemoryStore, hebbian: HebbianNetwork):
         self.store = memory_store
         self.hebbian = hebbian
-    
+
     async def run_consolidation_cycle(self) -> ConsolidationReport:
         """
         Hippocampal replay simulation.
@@ -315,20 +315,20 @@ class ConsolidationService:
         """
         report = ConsolidationReport()
         now = time.time()
-        
+
         # 1. Replay high-importance memories (strengthens them)
         important = await self.store.get_by_importance(min_importance=0.7, limit=100)
         for memory in important:
             memory.record_access()  # Replay = implicit access
             report.replayed += 1
-        
+
         # 2. Prune low-strength, non-potentiated memories
         weak = await self.store.get_weak_memories(max_strength=0.05, exclude_potentiated=True)
         for memory in weak:
             if memory.access_count < 3:  # Never meaningfully used
                 await self.store.archive(memory.id)
                 report.pruned += 1
-        
+
         # 3. Decay Hebbian edges that haven't been reinforced
         stale_edges = [
             key for key, edge in self.hebbian.edges.items()
@@ -339,14 +339,14 @@ class ConsolidationService:
             if self.hebbian.edges[key].weight < 0.05:
                 del self.hebbian.edges[key]
                 report.edges_pruned += 1
-        
+
         # 4. Discover new associations via embedding clustering
         clusters = await self._cluster_recent_memories(days=7)
         for cluster in clusters:
             if len(cluster) >= 2:
                 self.hebbian.record_co_access(cluster)
                 report.new_associations += len(cluster) * (len(cluster) - 1) // 2
-        
+
         return report
 ```
 
@@ -362,7 +362,7 @@ class MemoryNode:
     memory_id: str
     entity_type: str  # "concept", "person", "event", "fact", etc.
     tags: list[str]
-    
+
 @dataclass
 class MemoryRelation:
     source_id: str
@@ -376,10 +376,10 @@ class KnowledgeGraph:
         self.nodes: dict[str, MemoryNode] = {}
         self.relations: list[MemoryRelation] = []
         self.adjacency: dict[str, list[tuple[str, str, float]]] = defaultdict(list)
-    
+
     def spreading_activation(
-        self, 
-        seed_ids: list[str], 
+        self,
+        seed_ids: list[str],
         activation: float = 1.0,
         decay: float = 0.5,
         max_hops: int = 3
@@ -390,11 +390,11 @@ class KnowledgeGraph:
         """
         activations = {sid: activation for sid in seed_ids}
         frontier = list(seed_ids)
-        
+
         for hop in range(max_hops):
             next_frontier = []
             current_activation = activation * (decay ** hop)
-            
+
             for node_id in frontier:
                 for target_id, relation_type, weight in self.adjacency.get(node_id, []):
                     spread = current_activation * weight
@@ -403,11 +403,11 @@ class KnowledgeGraph:
                         next_frontier.append(target_id)
                     else:
                         activations[target_id] = max(activations[target_id], spread)
-            
+
             frontier = next_frontier
             if not frontier:
                 break
-        
+
         return activations
 ```
 
@@ -437,10 +437,10 @@ class HybridRetriever:
         self.β = β_temporal
         self.γ = γ_graph
         self.δ = δ_hebbian
-    
+
     async def retrieve(
-        self, 
-        query: str, 
+        self,
+        query: str,
         context_ids: list[str] = None,
         limit: int = 10
     ) -> list[ScoredMemory]:
@@ -448,40 +448,40 @@ class HybridRetriever:
         Hybrid retrieval combining multiple signals.
         """
         now = time.time()
-        
+
         # 1. Vector similarity search
         query_embedding = await self.embed(query)
         vector_results = await self.vector_store.search(query_embedding, limit=limit*3)
-        
+
         # 2. Calculate temporal decay for each result
         # 3. Get graph activation if context provided
         # 4. Get Hebbian associations if context provided
-        
+
         scored = []
         graph_activations = {}
         hebbian_boosts = {}
-        
+
         if context_ids:
             graph_activations = self.graph.spreading_activation(context_ids)
             for cid in context_ids:
                 for assoc_id, weight in self.hebbian.get_associated(cid):
                     hebbian_boosts[assoc_id] = max(hebbian_boosts.get(assoc_id, 0), weight)
-        
+
         for result in vector_results:
             memory = result.memory
-            
+
             # Vector score (already normalized 0-1)
             vec_score = result.score
-            
+
             # Temporal score (decay-adjusted)
             temp_score = calculate_strength(memory, now)
-            
+
             # Graph score (spreading activation)
             graph_score = graph_activations.get(memory.id, 0)
-            
+
             # Hebbian score (association strength)
             hebb_score = hebbian_boosts.get(memory.id, 0)
-            
+
             # Combined score
             final_score = (
                 self.α * vec_score +
@@ -489,9 +489,9 @@ class HybridRetriever:
                 self.γ * graph_score +
                 self.δ * hebb_score
             )
-            
+
             scored.append(ScoredMemory(memory=memory, score=final_score))
-        
+
         # Sort and return top results
         scored.sort(key=lambda x: -x.score)
         return scored[:limit]

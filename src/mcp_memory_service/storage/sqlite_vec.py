@@ -967,8 +967,15 @@ SOLUTIONS:
             def search_memories():
                 # Build the vector search query with optional filtering
                 if filter_conditions:
-                    # Filter embeddings to only those matching memory criteria
+                    # Filter at JOIN time, not in vector search subquery
+                    # This avoids sqlite-vec's "k = ?" constraint error when using AND with MATCH
                     filter_clause = " AND ".join(filter_conditions)
+
+                    # We need to fetch more results from vector search, then filter
+                    # Use a multiplier to ensure we get enough filtered results
+                    # This is a trade-off: fetch more, filter in SQL, limit final results
+                    fetch_limit = max(n_results * 10, 100)  # Fetch 10x what we need or at least 100
+
                     query_sql = (
                         """
                         SELECT m.content_hash, m.content, m.tags, m.memory_type, m.metadata,
@@ -976,22 +983,20 @@ SOLUTIONS:
                                e.distance
                         FROM memories m
                         INNER JOIN (
-                            SELECT e.rowid, e.distance
-                            FROM memory_embeddings e
-                            WHERE e.content_embedding MATCH ?
-                            AND e.rowid IN (
-                                SELECT id FROM memories
-                                WHERE """
+                            SELECT rowid, distance
+                            FROM memory_embeddings
+                            WHERE content_embedding MATCH ?
+                            ORDER BY distance
+                            LIMIT ?
+                        ) e ON m.id = e.rowid
+                        WHERE """
                         + filter_clause
                         + """
-                            )
-                            ORDER BY e.distance
-                            LIMIT ? OFFSET ?
-                        ) e ON m.id = e.rowid
                         ORDER BY e.distance
+                        LIMIT ? OFFSET ?
                     """
                     )
-                    params = [serialize_float32(query_embedding)] + filter_params + [n_results, offset]
+                    params = [serialize_float32(query_embedding), fetch_limit] + filter_params + [n_results, offset]
                 else:
                     # No filtering - original query
                     query_sql = """

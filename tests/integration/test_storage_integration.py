@@ -9,6 +9,7 @@ These tests use actual storage backends (not mocks) to verify:
 Run with: uv run pytest tests/integration/test_storage_integration.py -v
 """
 
+import importlib.util
 import os
 import shutil
 import tempfile
@@ -20,18 +21,14 @@ import pytest
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from mcp_memory_service.models.memory import Memory
+from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.utils.hashing import generate_content_hash
 
 # =============================================================================
 # SQLite-Vec Integration Tests
 # =============================================================================
 
-try:
-    import sqlite_vec
-
-    SQLITE_VEC_AVAILABLE = True
-except ImportError:
-    SQLITE_VEC_AVAILABLE = False
+SQLITE_VEC_AVAILABLE = importlib.util.find_spec("sqlite_vec") is not None
 
 if SQLITE_VEC_AVAILABLE:
     from mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
@@ -100,9 +97,9 @@ class TestSqliteVecIntegration:
 
         # Programming content should rank higher than animal content
         top_contents = [r.memory.content for r in results[:2]]
-        assert any("programming" in c.lower() or "machine learning" in c.lower() for c in top_contents), (
-            f"Expected programming content in top results, got: {top_contents}"
-        )
+        assert any(
+            "programming" in c.lower() or "machine learning" in c.lower() for c in top_contents
+        ), f"Expected programming content in top results, got: {top_contents}"
 
     @pytest.mark.asyncio
     async def test_edge_case_empty_string(self, sqlite_storage):
@@ -296,9 +293,9 @@ class TestQdrantIntegration:
 
         # Programming content should rank higher than animal content
         top_contents = [r.memory.content for r in results[:2]]
-        assert any("programming" in c.lower() or "machine learning" in c.lower() for c in top_contents), (
-            f"Expected programming content in top results, got: {top_contents}"
-        )
+        assert any(
+            "programming" in c.lower() or "machine learning" in c.lower() for c in top_contents
+        ), f"Expected programming content in top results, got: {top_contents}"
 
     @pytest.mark.asyncio
     async def test_edge_case_unicode_content(self, qdrant_storage):
@@ -348,8 +345,6 @@ class TestQdrantIntegration:
 # =============================================================================
 # MemoryService Integration Tests
 # =============================================================================
-
-from mcp_memory_service.services.memory_service import MemoryService
 
 
 @pytest.fixture

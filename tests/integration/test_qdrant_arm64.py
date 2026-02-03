@@ -97,9 +97,9 @@ class TestQdrantARM64Startup:
         error_keywords = ["ELFCLASS32", "incompatible", "wrong ELF class", "binary"]
         for record in caplog.records:
             for keyword in error_keywords:
-                assert keyword.lower() not in record.message.lower(), (
-                    f"Found error keyword '{keyword}' in logs: {record.message}"
-                )
+                assert (
+                    keyword.lower() not in record.message.lower()
+                ), f"Found error keyword '{keyword}' in logs: {record.message}"
 
 
 class TestQdrantARM64Operations:

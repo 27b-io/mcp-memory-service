@@ -14,20 +14,21 @@
 
 # scripts/repair_memories.py
 
+import argparse
 import asyncio
-import json
 import logging
+import os
+import sys
+
 from mcp_memory_service.storage.chroma import ChromaMemoryStorage
 from mcp_memory_service.utils.hashing import generate_content_hash
-import argparse
 
 logger = logging.getLogger(__name__)
 
+
 async def repair_missing_hashes(storage):
     """Repair memories missing content_hash by generating new ones"""
-    results = storage.collection.get(
-        include=["metadatas", "documents"]
-    )
+    results = storage.collection.get(include=["metadatas", "documents"])
 
     fixed_count = 0
     for i, meta in enumerate(results["metadatas"]):
@@ -46,10 +47,7 @@ async def repair_missing_hashes(storage):
                 new_meta["content_hash"] = new_hash
 
                 # Update the memory
-                storage.collection.update(
-                    ids=[memory_id],
-                    metadatas=[new_meta]
-                )
+                storage.collection.update(ids=[memory_id], metadatas=[new_meta])
 
                 logger.info(f"Fixed memory {memory_id} with new hash: {new_hash}")
                 fixed_count += 1
@@ -59,16 +57,17 @@ async def repair_missing_hashes(storage):
 
     return fixed_count
 
-async def main():
-log_level = os.getenv('LOG_LEVEL', 'ERROR').upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.ERROR),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stderr
-)
 
-    parser = argparse.ArgumentParser(description='Repair memories with missing content hashes')
-    parser.add_argument('--db-path', required=True, help='Path to ChromaDB database')
+async def main():
+    log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.ERROR),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        stream=sys.stderr,
+    )
+
+    parser = argparse.ArgumentParser(description="Repair memories with missing content hashes")
+    parser.add_argument("--db-path", required=True, help="Path to ChromaDB database")
     args = parser.parse_args()
 
     logger.info(f"Connecting to database at: {args.db_path}")
@@ -81,9 +80,11 @@ logging.basicConfig(
     # Run validation again to confirm fixes
     logger.info("Running validation to confirm fixes...")
     from validate_memories import run_validation_report
+
     report = await run_validation_report(storage)
     print("\nPost-repair validation report:")
     print(report)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -311,9 +311,9 @@ async def test_tools_reference_toon_documentation_resource():
 
         # Check if description mentions TOON resource or TOON format
         description = tool.description or ""
-        assert "toon://format/documentation" in description or "TOON" in description.upper(), (
-            f"Tool {tool_name} should reference TOON format in description"
-        )
+        assert (
+            "toon://format/documentation" in description or "TOON" in description.upper()
+        ), f"Tool {tool_name} should reference TOON format in description"
 
 
 # =============================================================================
