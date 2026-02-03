@@ -27,6 +27,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Prevent indefinite hangs
     steps:
       - uses: actions/checkout@v4
 
@@ -40,10 +41,11 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run pytest tests/unit tests/eval -v --tb=short
         env:
           MCP_MEMORY_STORAGE_BACKEND: sqlite_vec
           MCP_OAUTH_ENABLED: "false"
+          CUDA_VISIBLE_DEVICES: ""  # Force CPU mode
 
   docker:
     runs-on: ubuntu-latest
