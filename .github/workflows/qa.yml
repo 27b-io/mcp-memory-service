@@ -25,9 +25,9 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check src/
 
-  test:
+  unit-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Prevent indefinite hangs
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -40,12 +40,35 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Run tests
+      - name: Run unit tests
         run: uv run pytest tests/unit tests/eval -v --tb=short
         env:
           MCP_MEMORY_STORAGE_BACKEND: sqlite_vec
           MCP_OAUTH_ENABLED: "false"
-          CUDA_VISIBLE_DEVICES: ""  # Force CPU mode
+          CUDA_VISIBLE_DEVICES: ""
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: false  # Disabled for PRs - enable for nightly builds
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run integration tests
+        run: uv run pytest tests/integration -v --tb=short
+        env:
+          MCP_MEMORY_STORAGE_BACKEND: sqlite_vec
+          MCP_OAUTH_ENABLED: "false"
+          CUDA_VISIBLE_DEVICES: ""
 
   docker:
     runs-on: ubuntu-latest
