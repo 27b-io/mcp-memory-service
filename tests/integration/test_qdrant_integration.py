@@ -439,12 +439,12 @@ class TestQdrantIntegration:
                 operations.append(op)
 
             # Retrieve operations
-            for i in range(30):
+            for _i in range(30):
                 op = qdrant_storage.retrieve("Mixed op", n_results=5)
                 operations.append(op)
 
             # Tag retrieve operations
-            for i in range(15):
+            for _i in range(15):
                 op = qdrant_storage.retrieve("memory", n_results=10, tags=["mixed"])
                 operations.append(op)
 
@@ -586,7 +586,7 @@ class TestQdrantIntegration:
         assert len(checkpoint["failed"]) == 0
 
         # Verify content preserved
-        for i, original_memory in enumerate(memories[:10]):
+        for _i, original_memory in enumerate(memories[:10]):
             original = await storage_a.get_memory_by_hash(original_memory.content_hash)
             # Retrieve in new storage
             migrated = await storage_b.retrieve(original.content, n_results=1)

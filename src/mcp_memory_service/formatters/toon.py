@@ -89,7 +89,7 @@ def _get_nested_depth(obj: Any, current_depth: int = 0, max_depth: int = 500) ->
     Returns:
         Maximum nesting depth (returns early if max_depth exceeded)
     """
-    if not isinstance(obj, (dict, list)):
+    if not isinstance(obj, dict | list):
         return current_depth
 
     # Early termination BEFORE recursing to prevent stack overflow

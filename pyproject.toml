@@ -107,6 +107,11 @@ dev = [
 target-version = "py310"
 line-length = 129
 src = ["src"]
+extend-exclude = [
+    "scripts/",
+    "examples/",
+    "install.py",
+]
 
 [tool.ruff.lint]
 select = [

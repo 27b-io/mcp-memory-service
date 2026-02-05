@@ -12,7 +12,7 @@ import pytest
 
 # Skip tests if sqlite-vec is not available
 try:
-    import sqlite_vec
+    import sqlite_vec  # noqa: F401
 
     SQLITE_VEC_AVAILABLE = True
 except ImportError:

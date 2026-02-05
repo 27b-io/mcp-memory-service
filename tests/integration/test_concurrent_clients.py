@@ -26,7 +26,7 @@ class TestConcurrentClients:
         for ext in ["", "-wal", "-shm"]:
             try:
                 os.unlink(path + ext)
-            except:
+            except OSError:
                 pass
 
     async def create_client(self, db_path: str, client_id: str) -> SqliteVecMemoryStorage:
