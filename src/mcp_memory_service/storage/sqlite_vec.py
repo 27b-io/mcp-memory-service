@@ -999,6 +999,9 @@ SOLUTIONS:
                     params = [serialize_float32(query_embedding), fetch_limit] + filter_params + [n_results, offset]
                 else:
                     # No filtering - original query
+                    # Note: sqlite-vec KNN queries only accept LIMIT, not OFFSET.
+                    # Fetch enough results to cover pagination, then apply OFFSET at outer level.
+                    fetch_limit = n_results + offset
                     query_sql = """
                         SELECT m.content_hash, m.content, m.tags, m.memory_type, m.metadata,
                                m.created_at, m.updated_at, m.created_at_iso, m.updated_at_iso,
@@ -1009,11 +1012,12 @@ SOLUTIONS:
                             FROM memory_embeddings
                             WHERE content_embedding MATCH ?
                             ORDER BY distance
-                            LIMIT ? OFFSET ?
+                            LIMIT ?
                         ) e ON m.id = e.rowid
                         ORDER BY e.distance
+                        LIMIT ? OFFSET ?
                     """
-                    params = [serialize_float32(query_embedding), n_results, offset]
+                    params = [serialize_float32(query_embedding), fetch_limit, n_results, offset]
 
                 cursor = self.conn.execute(query_sql, params)
 
