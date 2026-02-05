@@ -1,7 +1,7 @@
 # MCP Memory Service - Multi-platform container
 # Supports: linux/amd64, linux/arm64
 # Build args:
-#   CUDA_ENABLED=false (default) - CPU-only build (~1.5GB)
+#   CUDA_ENABLED=false (default) - CPU-only build (~1.2GB)
 #   CUDA_ENABLED=true            - CUDA-enabled build (~5GB)
 
 FROM python:3.12-slim AS builder
@@ -11,75 +11,65 @@ ARG CUDA_ENABLED=false
 
 WORKDIR /app
 
-# Build dependencies
+# Build tools - no git (all deps are from PyPI), no curl (not needed in builder)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Pin uv version for reproducible builds
+COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /usr/local/bin/uv
 
 # Dependencies first (cache layer)
 COPY pyproject.toml uv.lock README.md ./
 
-# Install dependencies, then force correct PyTorch variant
-# CPU-only torch is ~200MB vs CUDA torch ~900MB
+# Install deps. CPU builds use --prune torch to strip torch + all nvidia-*/triton
+# transitive deps from the lockfile export (~3GB avoided). CPU torch installed first
+# so sentence-transformers' torch requirement is already satisfied. --no-deps on the
+# bulk install is safe because uv export produces a fully-resolved flat list.
 RUN uv venv && \
-    uv sync --frozen --no-dev --no-install-project && \
     if [ "$CUDA_ENABLED" = "false" ]; then \
-        echo "Installing CPU-only PyTorch..." && \
-        uv pip install --reinstall torch --index-url https://download.pytorch.org/whl/cpu; \
+        uv export --frozen --no-dev --no-emit-project --no-hashes --prune torch \
+            -o /tmp/requirements.txt && \
+        uv pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu && \
+        uv pip install --no-deps -r /tmp/requirements.txt && \
+        rm /tmp/requirements.txt; \
     else \
-        echo "Using CUDA-enabled PyTorch from lockfile"; \
+        uv sync --frozen --no-dev --no-install-project; \
     fi
 
-# Source code
+# Source code (no scripts/ - they are legacy maintenance tools, not needed at runtime)
 COPY src/ ./src/
-COPY scripts/ ./scripts/
-RUN uv sync --frozen --no-dev && \
-    if [ "$CUDA_ENABLED" = "false" ]; then \
-        echo "Reinstalling CPU-only PyTorch after project sync..." && \
-        uv pip install --reinstall torch --index-url https://download.pytorch.org/whl/cpu; \
-    fi
+RUN uv pip install --no-deps -e .
 
-# Pre-download embedding model
-RUN echo "Downloading ${EMBEDDING_MODEL}..." && \
-    .venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}'); print('Done')"
-
-# Aggressive cleanup - remove NVIDIA libs if any, caches, bytecode
-RUN rm -rf /root/.cache/pip /root/.cache/uv && \
-    find .venv -type d -name "nvidia" -exec rm -rf {} + 2>/dev/null || true && \
-    find .venv -name "*.pyc" -delete && \
+# Pre-download embedding model and clean up in the same layer
+RUN .venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')" && \
+    rm -rf /root/.cache/pip /root/.cache/uv && \
+    find .venv -name "*.pyc" -delete 2>/dev/null || true && \
     find .venv -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
-# Runtime stage
+# Runtime stage - minimal
 FROM python:3.12-slim
 
 ARG EMBEDDING_MODEL=intfloat/e5-small-v2
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy venv, source, and model cache
+# Copy venv, source, and model cache - no apt packages needed
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
-COPY --from=builder /app/scripts /app/scripts
 COPY --from=builder /root/.cache/huggingface /root/.cache/huggingface
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     MCP_MEMORY_EMBEDDING_MODEL=${EMBEDDING_MODEL} \
-    HF_HOME=/root/.cache/huggingface \
-    TRANSFORMERS_CACHE=/root/.cache/huggingface \
-    SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
+    HF_HOME=/root/.cache/huggingface
 
-RUN mkdir -p /data/qdrant /data/sqlite
+RUN mkdir -p /data/sqlite
 
+# Healthcheck using Python - no curl dependency needed
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
-    CMD curl -f http://localhost:8000/api/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 
 EXPOSE 8000
 
