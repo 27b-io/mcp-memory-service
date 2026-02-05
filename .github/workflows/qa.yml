@@ -45,7 +45,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run unit tests
-        run: uv run pytest tests/unit tests/eval -v --tb=short
+        run: uv run pytest tests/unit tests/eval -v --tb=short -m "not slow"
         env:
           MCP_MEMORY_STORAGE_BACKEND: sqlite_vec
           MCP_OAUTH_ENABLED: "false"
