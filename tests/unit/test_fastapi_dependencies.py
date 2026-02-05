@@ -82,9 +82,9 @@ def test_get_storage_uses_depends_not_default_param():
         if storage_param.default != inspect.Parameter.empty:
             # Default should be a Depends instance, not the result of get_storage()
             # Check the type name since Depends is not a simple type
-            assert (
-                type(storage_param.default).__name__ == "Depends"
-            ), "storage parameter should use Depends(get_storage), not get_storage()"
+            assert type(storage_param.default).__name__ == "Depends", (
+                "storage parameter should use Depends(get_storage), not get_storage()"
+            )
 
 
 @pytest.mark.asyncio

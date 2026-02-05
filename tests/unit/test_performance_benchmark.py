@@ -334,9 +334,9 @@ class TestPerformanceBenchmark:
             print(f"✗ Linear O(n) behavior detected ({increase_50k_to_100k * 100:.1f}% ≈ 100%)")
 
         # CRITICAL ASSERTION: Doubling data should NOT double query time
-        assert (
-            increase_50k_to_100k < 0.6
-        ), f"Query time should scale O(log n): 2x data → <60% time increase, got {increase_50k_to_100k * 100:.1f}%"
+        assert increase_50k_to_100k < 0.6, (
+            f"Query time should scale O(log n): 2x data → <60% time increase, got {increase_50k_to_100k * 100:.1f}%"
+        )
 
         # Additional assertion: 100K query should complete in reasonable time
         assert durations[100_000] < 0.5, f"100K query should complete in <500ms, took {durations[100_000] * 1000:.2f}ms"

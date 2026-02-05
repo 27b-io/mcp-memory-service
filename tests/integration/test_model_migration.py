@@ -261,9 +261,9 @@ class TestModelMigration:
         print(f"✓ Dimension change validated: {old_embedding_dims[0]} → {new_embedding_dims[0]}")
 
         # Verify ALL embeddings have new dimensions
-        assert all(
-            dim == new_embedding_dims[0] for dim in new_embedding_dims
-        ), "Not all embeddings have consistent new dimensions"
+        assert all(dim == new_embedding_dims[0] for dim in new_embedding_dims), (
+            "Not all embeddings have consistent new dimensions"
+        )
 
         # Clean up
         await old_storage.close()

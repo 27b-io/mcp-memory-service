@@ -104,9 +104,9 @@ class TestFilteringQualityDifference:
         print(f"Quality improvement: {len(results_new) - len(results_old)} more relevant results\n")
 
         # Demonstrate that NEW approach returns more results
-        assert len(results_new) > len(
-            results_old
-        ), f"Database filtering should return more results: {len(results_new)} vs {len(results_old)}"
+        assert len(results_new) > len(results_old), (
+            f"Database filtering should return more results: {len(results_new)} vs {len(results_old)}"
+        )
 
         # NEW approach returns exactly what was requested
         assert len(results_new) == 5, "Database filtering returns exactly N results as requested"

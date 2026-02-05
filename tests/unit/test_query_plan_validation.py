@@ -67,9 +67,9 @@ class TestQueryPlanValidation:
         # CRITICAL: Should NOT do table scans
         assert "SCAN TABLE TAGS" not in plan_str, f"Query should NOT scan tags table, should use idx_tags_name. Plan: {plan_str}"
 
-        assert (
-            "SCAN TABLE MEMORIES" not in plan_str or "COVERING INDEX" in plan_str
-        ), f"Query should NOT scan memories table without covering index. Plan: {plan_str}"
+        assert "SCAN TABLE MEMORIES" not in plan_str or "COVERING INDEX" in plan_str, (
+            f"Query should NOT scan memories table without covering index. Plan: {plan_str}"
+        )
 
     @pytest.mark.asyncio
     async def test_memory_type_filter_uses_index(self, temp_db_path):
@@ -112,9 +112,9 @@ class TestQueryPlanValidation:
         # Should use idx_memory_type index with SEARCH (not SCAN)
         assert "SEARCH" in plan_str or "INDEX" in plan_str, f"Query should use idx_memory_type index. Plan: {plan_str}"
 
-        assert (
-            "SCAN TABLE MEMORIES" not in plan_str or "USING INDEX" in plan_str
-        ), f"Query should not do full table scan. Plan: {plan_str}"
+        assert "SCAN TABLE MEMORIES" not in plan_str or "USING INDEX" in plan_str, (
+            f"Query should not do full table scan. Plan: {plan_str}"
+        )
 
     @pytest.mark.asyncio
     async def test_combined_filters_query_plan(self, temp_db_path):

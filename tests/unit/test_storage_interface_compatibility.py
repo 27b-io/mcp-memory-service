@@ -117,9 +117,9 @@ def test_count_all_memories_signature_compatibility():
 
         for name, sig in signatures.items():
             params = list(sig.parameters.keys())[1:]  # Skip 'self'
-            assert (
-                params == first_params
-            ), f"{name}.count_all_memories parameters {params} don't match {first_name} {first_params}"
+            assert params == first_params, (
+                f"{name}.count_all_memories parameters {params} don't match {first_name} {first_params}"
+            )
 
 
 def test_retrieve_signature_compatibility():
@@ -223,9 +223,9 @@ def test_async_method_consistency():
     for method_name, async_backends in async_status.items():
         if async_backends:
             all_backends = {name for name, _ in get_all_storage_classes()}
-            assert (
-                async_backends == all_backends
-            ), f"{method_name} is async in {async_backends} but not in {all_backends - async_backends}"
+            assert async_backends == all_backends, (
+                f"{method_name} is async in {async_backends} but not in {all_backends - async_backends}"
+            )
 
 
 def test_backends_handle_tags_parameter_consistently():
@@ -250,9 +250,9 @@ def test_backends_handle_tags_parameter_consistently():
             first_value = has_tags_param[first_name]
 
             for name, has_tags in has_tags_param.items():
-                assert (
-                    has_tags == first_value
-                ), f"{name}.{method_name} 'tags' parameter inconsistent: {name}={has_tags}, {first_name}={first_value}"
+                assert has_tags == first_value, (
+                    f"{name}.{method_name} 'tags' parameter inconsistent: {name}={has_tags}, {first_name}={first_value}"
+                )
 
 
 def _normalize_type_str(type_hint) -> str:
@@ -306,9 +306,9 @@ def test_return_type_consistency():
             for name, return_type in return_types.items():
                 normalized = _normalize_type_str(return_type)
                 # Allow for Coroutine wrappers in async methods
-                assert (
-                    normalized == first_normalized or "Coroutine" in normalized
-                ), f"{name}.{method_name} return type {return_type} doesn't match {first_name} {first_type}"
+                assert normalized == first_normalized or "Coroutine" in normalized, (
+                    f"{name}.{method_name} return type {return_type} doesn't match {first_name} {first_type}"
+                )
 
 
 if __name__ == "__main__":

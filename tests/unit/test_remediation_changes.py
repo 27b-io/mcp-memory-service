@@ -101,9 +101,9 @@ class TestStorageConsolidation:
         from mcp_memory_service.storage import BaseStorage
 
         # BaseStorage should be a Protocol (or have Protocol-like behavior)
-        assert hasattr(BaseStorage, "__protocol_attrs__") or issubclass(
-            type(BaseStorage), type(Protocol)
-        ), "BaseStorage should be a Protocol"
+        assert hasattr(BaseStorage, "__protocol_attrs__") or issubclass(type(BaseStorage), type(Protocol)), (
+            "BaseStorage should be a Protocol"
+        )
 
 
 class TestConfigCleanup:

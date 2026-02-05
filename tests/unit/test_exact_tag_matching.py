@@ -54,9 +54,9 @@ class TestExactTagMatching:
             assert "python3" not in result.memory.tags, f"Should not match 'python3', got {result.memory.tags}"
             assert "cpython" not in result.memory.tags, f"Should not match 'cpython', got {result.memory.tags}"
             assert "jython" not in result.memory.tags, f"Should not match 'jython', got {result.memory.tags}"
-            assert (
-                "my-python-project" not in result.memory.tags
-            ), f"Should not match 'my-python-project', got {result.memory.tags}"
+            assert "my-python-project" not in result.memory.tags, (
+                f"Should not match 'my-python-project', got {result.memory.tags}"
+            )
 
     @pytest.mark.asyncio
     async def test_multi_tag_exact_matching(self, temp_db_path):

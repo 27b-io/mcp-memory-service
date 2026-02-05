@@ -97,9 +97,9 @@ class TestSqliteVecIntegration:
 
         # Programming content should rank higher than animal content
         top_contents = [r.memory.content for r in results[:2]]
-        assert any(
-            "programming" in c.lower() or "machine learning" in c.lower() for c in top_contents
-        ), f"Expected programming content in top results, got: {top_contents}"
+        assert any("programming" in c.lower() or "machine learning" in c.lower() for c in top_contents), (
+            f"Expected programming content in top results, got: {top_contents}"
+        )
 
     @pytest.mark.asyncio
     async def test_edge_case_empty_string(self, sqlite_storage):
@@ -293,9 +293,9 @@ class TestQdrantIntegration:
 
         # Programming content should rank higher than animal content
         top_contents = [r.memory.content for r in results[:2]]
-        assert any(
-            "programming" in c.lower() or "machine learning" in c.lower() for c in top_contents
-        ), f"Expected programming content in top results, got: {top_contents}"
+        assert any("programming" in c.lower() or "machine learning" in c.lower() for c in top_contents), (
+            f"Expected programming content in top results, got: {top_contents}"
+        )
 
     @pytest.mark.asyncio
     async def test_edge_case_unicode_content(self, qdrant_storage):
