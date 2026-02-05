@@ -317,7 +317,7 @@ def get_torch_device() -> str:
                     gpu_name = torch.cuda.get_device_name(0)
                     logger.warning(
                         f"GPU detected ({gpu_name}, compute capability {capability[0]}.{capability[1]}) "
-                        f"is below PyTorch's minimum supported capability (sm_{min_cap//10}.{min_cap%10}). "
+                        f"is below PyTorch's minimum supported capability (sm_{min_cap // 10}.{min_cap % 10}). "
                         f"Forcing CPU mode to avoid runtime errors."
                     )
                     return "cpu"
