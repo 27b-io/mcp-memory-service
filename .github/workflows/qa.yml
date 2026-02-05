@@ -8,6 +8,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   lint:
     runs-on: lab
@@ -82,6 +86,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build image (CPU variant)
         uses: docker/build-push-action@v5
         with:
@@ -91,8 +102,8 @@ jobs:
           tags: mcp-memory:test
           build-args: |
             CUDA_ENABLED=false
-          cache-from: type=local,src=/cache/docker
-          cache-to: type=local,dest=/cache/docker,mode=max
+          cache-from: type=registry,ref=ghcr.io/27b-io/mcp-memory-service:cache-cpu
+          cache-to: type=registry,ref=ghcr.io/27b-io/mcp-memory-service:cache-cpu,mode=max
 
       - name: Test container starts
         run: |

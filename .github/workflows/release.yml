@@ -83,5 +83,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             CUDA_ENABLED=${{ matrix.cuda_enabled }}
-          cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.variant }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.variant }},mode=max
