@@ -94,7 +94,6 @@ class TestTimeParser:
     def test_month_names(self):
         """Test parsing month names"""
         current_year = datetime.now().year
-        datetime.now().month
 
         # Test a past month
         start_ts, end_ts = parse_time_expression("january")

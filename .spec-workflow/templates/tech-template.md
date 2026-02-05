@@ -69,7 +69,7 @@
 - [e.g., response time, throughput, memory usage, startup time]
 - [Specific benchmarks or targets]
 
-### Compatibility Requirements  
+### Compatibility Requirements
 - **Platform Support**: [Operating systems, architectures, versions]
 - **Dependency Versions**: [Minimum/maximum versions of dependencies]
 - **Standards Compliance**: [Industry standards, protocols, specifications]

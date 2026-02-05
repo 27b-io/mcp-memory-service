@@ -19,7 +19,7 @@ current_dir = Path(__file__).parent
 src_dir = current_dir.parent.parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from mcp_memory_service.cli.main import memory_server_main
+from mcp_memory_service.cli.main import memory_server_main  # noqa: E402
 
 
 class TestCLIInterfaces:

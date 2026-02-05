@@ -573,7 +573,7 @@ class QdrantStorage(MemoryStorage):
         """
         if ts is None:
             return 0.0
-        if isinstance(ts, (int, float)):
+        if isinstance(ts, int | float):
             return float(ts)
         if isinstance(ts, str):
             if DATEUTIL_AVAILABLE:

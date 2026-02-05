@@ -8,7 +8,7 @@
 Example for a library/package:
 project-root/
 ├── src/                    # Source code
-├── tests/                  # Test files  
+├── tests/                  # Test files
 ├── docs/                   # Documentation
 ├── examples/               # Usage examples
 └── [build/dist/out]        # Build output
@@ -105,7 +105,7 @@ Choose what works for your project:
 
 Examples of boundary patterns:
 - **Core vs Plugins**: Core functionality vs extensible plugins
-- **Public API vs Internal**: What's exposed vs implementation details  
+- **Public API vs Internal**: What's exposed vs implementation details
 - **Platform-specific vs Cross-platform**: OS-specific code isolation
 - **Stable vs Experimental**: Production code vs experimental features
 - **Dependencies direction**: Which modules can depend on which
