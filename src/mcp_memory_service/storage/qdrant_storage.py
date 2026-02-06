@@ -651,6 +651,9 @@ class QdrantStorage(MemoryStorage):
                     "updated_at": memory.updated_at,
                     "memory_type": memory.memory_type or "",
                     "content_hash": memory.content_hash,
+                    "emotional_valence": memory.emotional_valence,
+                    "salience_score": memory.salience_score,
+                    "access_count": memory.access_count,
                 },
             )
 
@@ -780,6 +783,9 @@ class QdrantStorage(MemoryStorage):
                         metadata=payload.get("metadata", {}),
                         created_at=payload.get("created_at"),
                         updated_at=payload.get("updated_at"),
+                        emotional_valence=payload.get("emotional_valence"),
+                        salience_score=float(payload.get("salience_score", 0.0)),
+                        access_count=int(payload.get("access_count", 0)),
                     )
 
                     # Qdrant score is already a similarity score (1.0 = perfect match for cosine)
@@ -946,6 +952,9 @@ class QdrantStorage(MemoryStorage):
                     metadata=payload.get("metadata", {}),
                     created_at=payload.get("created_at", 0.0),
                     updated_at=payload.get("updated_at", 0.0),
+                    emotional_valence=payload.get("emotional_valence"),
+                    salience_score=float(payload.get("salience_score", 0.0)),
+                    access_count=int(payload.get("access_count", 0)),
                 )
                 memories.append(memory)
 
@@ -997,6 +1006,9 @@ class QdrantStorage(MemoryStorage):
                 created_at=payload.get("created_at"),
                 updated_at=payload.get("updated_at"),
                 embedding=point.vector if hasattr(point, "vector") else None,
+                emotional_valence=payload.get("emotional_valence"),
+                salience_score=float(payload.get("salience_score", 0.0)),
+                access_count=int(payload.get("access_count", 0)),
             )
 
             self._record_success()
@@ -1218,6 +1230,44 @@ class QdrantStorage(MemoryStorage):
             logger.error(error_msg)
             return False, error_msg
 
+    async def increment_access_count(self, content_hash: str) -> None:
+        """
+        Atomically increment the access_count field for a memory.
+
+        Fire-and-forget operation — failures are logged but not raised.
+        Used to track retrieval frequency for salience scoring.
+        """
+        try:
+            point_id = self._hash_to_uuid(content_hash)
+            loop = asyncio.get_event_loop()
+
+            # Read current point
+            points = await loop.run_in_executor(
+                None,
+                lambda: self.client.retrieve(
+                    collection_name=self.collection_name,
+                    ids=[point_id],
+                    with_payload=["access_count"],
+                ),
+            )
+
+            if not points:
+                return
+
+            current_count = int(points[0].payload.get("access_count", 0))
+
+            # Update with incremented count
+            await loop.run_in_executor(
+                None,
+                lambda: self.client.set_payload(
+                    collection_name=self.collection_name,
+                    payload={"access_count": current_count + 1},
+                    points=[point_id],
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to increment access count for {content_hash[:8]}: {e}")
+
     async def get_stats(self) -> dict[str, Any]:
         """
         Get storage statistics.
@@ -1348,6 +1398,9 @@ class QdrantStorage(MemoryStorage):
                     metadata=payload.get("metadata", {}),
                     created_at=payload.get("created_at"),
                     updated_at=payload.get("updated_at"),
+                    emotional_valence=payload.get("emotional_valence"),
+                    salience_score=float(payload.get("salience_score", 0.0)),
+                    access_count=int(payload.get("access_count", 0)),
                 )
                 memories.append(memory)
 
@@ -1461,6 +1514,9 @@ class QdrantStorage(MemoryStorage):
                         metadata=payload.get("metadata", {}),
                         created_at=payload.get("created_at"),
                         updated_at=payload.get("updated_at"),
+                        emotional_valence=payload.get("emotional_valence"),
+                        salience_score=float(payload.get("salience_score", 0.0)),
+                        access_count=int(payload.get("access_count", 0)),
                     )
                     memories.append(memory)
 
@@ -1517,6 +1573,9 @@ class QdrantStorage(MemoryStorage):
                 metadata=payload.get("metadata", {}),
                 created_at=payload.get("created_at"),
                 updated_at=payload.get("updated_at"),
+                emotional_valence=payload.get("emotional_valence"),
+                salience_score=float(payload.get("salience_score", 0.0)),
+                access_count=int(payload.get("access_count", 0)),
             )
 
             self._record_success()
@@ -1610,6 +1669,9 @@ class QdrantStorage(MemoryStorage):
                         metadata=payload.get("metadata", {}),
                         created_at=payload.get("created_at"),
                         updated_at=payload.get("updated_at"),
+                        emotional_valence=payload.get("emotional_valence"),
+                        salience_score=float(payload.get("salience_score", 0.0)),
+                        access_count=int(payload.get("access_count", 0)),
                     )
                     memories.append(memory)
 

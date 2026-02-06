@@ -166,11 +166,17 @@ async def store_memory(
     retrieval via semantic search or tag filtering. Content is automatically vectorized
     for similarity matching.
 
+    Emotional tagging and salience scoring are computed automatically:
+    - Emotional valence (sentiment, magnitude, category) is detected from content
+    - Salience score combines emotional intensity, access frequency, and explicit importance
+    - Higher-salience memories receive a retrieval boost
+
     Args:
         content: The text content to store (will be embedded for semantic search)
         tags: Categorization labels (accepts ["tag1", "tag2"] or "tag1,tag2")
         memory_type: Classification - "note", "decision", "task", or "reference"
-        metadata: Additional structured data to attach
+        metadata: Additional structured data to attach. Special keys:
+            - importance: float (0.0-1.0) - explicit importance weight for salience scoring
         client_hostname: Source machine identifier (optional)
 
     Content Length Handling:

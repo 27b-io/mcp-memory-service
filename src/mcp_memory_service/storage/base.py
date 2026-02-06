@@ -279,6 +279,10 @@ class MemoryStorage(ABC):
         success, _ = await self.update_memory_metadata(memory.content_hash, updates, preserve_timestamps=True)
         return success
 
+    async def increment_access_count(self, content_hash: str) -> None:
+        """Increment retrieval counter for salience scoring. Override in backends."""
+        pass
+
     async def get_stats(self) -> dict[str, Any]:
         """Get storage statistics. Override for specific implementations."""
         return {"total_memories": 0, "storage_backend": self.__class__.__name__, "status": "operational"}

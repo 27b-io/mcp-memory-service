@@ -23,6 +23,7 @@ from ..graph.queue import HebbianWriteQueue
 from ..models.memory import Memory
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
+from ..utils.emotional_analysis import analyze_emotion
 from ..utils.hashing import generate_content_hash
 from ..utils.hybrid_search import (
     apply_recency_decay,
@@ -30,6 +31,7 @@ from ..utils.hybrid_search import (
     extract_query_keywords,
     get_adaptive_alpha,
 )
+from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,8 @@ class MemoryResult(TypedDict):
     updated_at: str
     created_at_iso: str
     updated_at_iso: str
+    emotional_valence: dict[str, Any] | None
+    salience_score: float
 
 
 class MemoryService:
@@ -117,6 +121,60 @@ class MemoryService:
         except Exception as e:
             logger.warning(f"Hebbian co-access enqueue failed (non-fatal): {e}")
 
+    def _compute_emotional_valence(self, content: str) -> dict[str, Any] | None:
+        """
+        Analyze emotional content and return valence dict if salience is enabled.
+
+        Returns None if salience feature is disabled, letting the memory stay neutral.
+        """
+        if not settings.salience.enabled:
+            return None
+        valence = analyze_emotion(content)
+        return valence.to_dict()
+
+    def _compute_salience_score(
+        self,
+        emotional_magnitude: float = 0.0,
+        access_count: int = 0,
+        explicit_importance: float = 0.0,
+    ) -> float:
+        """Compute salience score using configured weights."""
+        if not settings.salience.enabled:
+            return 0.0
+        config = settings.salience
+        return compute_salience(
+            SalienceFactors(
+                emotional_magnitude=emotional_magnitude,
+                access_count=access_count,
+                explicit_importance=explicit_importance,
+            ),
+            emotional_weight=config.emotional_weight,
+            frequency_weight=config.frequency_weight,
+            importance_weight=config.importance_weight,
+        )
+
+    def _fire_access_count_updates(self, content_hashes: list[str]) -> None:
+        """
+        Schedule access count increments as background tasks (fire-and-forget).
+
+        Non-blocking, non-fatal — access tracking failures don't affect reads.
+        """
+        if not settings.salience.enabled or not content_hashes:
+            return
+
+        async def _do_increments():
+            for h in content_hashes:
+                try:
+                    await self.storage.increment_access_count(h)
+                except Exception as e:
+                    logger.debug(f"Access count increment failed for {h[:8]}: {e}")
+
+        try:
+            asyncio.ensure_future(_do_increments())
+        except RuntimeError:
+            # No running event loop — skip silently
+            pass
+
     async def _get_cached_tags(self) -> set[str]:
         """Get all tags with 60-second TTL caching for performance."""
         now = time.time()
@@ -184,8 +242,23 @@ class MemoryService:
                     result["graph_boost"] = activation
             results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
 
+        # Apply salience boost to final scores
+        if settings.salience.enabled:
+            for result in results:
+                salience = result.get("salience_score", 0.0)
+                if salience > 0:
+                    result["similarity_score"] = apply_salience_boost(
+                        result.get("similarity_score", 0.0),
+                        salience,
+                        settings.salience.boost_weight,
+                    )
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
         # Fire Hebbian co-access events for co-retrieved memories
         await self._fire_hebbian_co_access(result_hashes)
+
+        # Track access counts (fire-and-forget)
+        self._fire_access_count_updates(result_hashes)
 
         return {
             "memories": results,
@@ -300,6 +373,16 @@ class MemoryService:
             # Generate content hash for deduplication
             content_hash = generate_content_hash(content)
 
+            # Compute emotional valence and initial salience score
+            emotional_valence = self._compute_emotional_valence(content)
+            emotional_mag = emotional_valence.get("magnitude", 0.0) if emotional_valence else 0.0
+            explicit_importance = float(final_metadata.pop("importance", 0.0))
+            salience_score = self._compute_salience_score(
+                emotional_magnitude=emotional_mag,
+                access_count=0,
+                explicit_importance=explicit_importance,
+            )
+
             # Process content if auto-splitting is enabled and content exceeds max length
             max_length = self.storage.max_content_length
             if ENABLE_AUTO_SPLIT and max_length and len(content) > max_length:
@@ -319,8 +402,22 @@ class MemoryService:
                     chunk_metadata["total_chunks"] = len(chunks)
                     chunk_metadata["original_hash"] = content_hash
 
+                    # Each chunk gets its own emotional analysis
+                    chunk_valence = self._compute_emotional_valence(chunk)
+                    chunk_mag = chunk_valence.get("magnitude", 0.0) if chunk_valence else 0.0
+                    chunk_salience = self._compute_salience_score(
+                        emotional_magnitude=chunk_mag,
+                        explicit_importance=explicit_importance,
+                    )
+
                     memory = Memory(
-                        content=chunk, content_hash=chunk_hash, tags=final_tags, memory_type=memory_type, metadata=chunk_metadata
+                        content=chunk,
+                        content_hash=chunk_hash,
+                        tags=final_tags,
+                        memory_type=memory_type,
+                        metadata=chunk_metadata,
+                        emotional_valence=chunk_valence,
+                        salience_score=chunk_salience,
                     )
 
                     success, message = await self.storage.store(memory)
@@ -331,7 +428,13 @@ class MemoryService:
             else:
                 # Store as single memory
                 memory = Memory(
-                    content=content, content_hash=content_hash, tags=final_tags, memory_type=memory_type, metadata=final_metadata
+                    content=content,
+                    content_hash=content_hash,
+                    tags=final_tags,
+                    memory_type=memory_type,
+                    metadata=final_metadata,
+                    emotional_valence=emotional_valence,
+                    salience_score=salience_score,
                 )
 
                 success, message = await self.storage.store(memory)
@@ -460,6 +563,17 @@ class MemoryService:
                     boosted.append((memory, score, debug_info))
                 combined = sorted(boosted, key=lambda x: x[1], reverse=True)
 
+            # Apply salience boost
+            if settings.salience.enabled:
+                salience_boosted = []
+                for memory, score, debug_info in combined:
+                    salience = memory.salience_score
+                    if salience > 0:
+                        score = apply_salience_boost(score, salience, settings.salience.boost_weight)
+                        debug_info = {**debug_info, "salience_boost": salience}
+                    salience_boosted.append((memory, score, debug_info))
+                combined = sorted(salience_boosted, key=lambda x: x[1], reverse=True)
+
             # Apply pagination to combined results (offset calculated above for fetch_size)
             total = len(combined)
             paginated = combined[offset : offset + page_size]
@@ -476,6 +590,9 @@ class MemoryService:
 
             # Fire Hebbian co-access events
             await self._fire_hebbian_co_access(result_hashes)
+
+            # Track access counts (fire-and-forget)
+            self._fire_access_count_updates(result_hashes)
 
             return {
                 "memories": results,
@@ -997,4 +1114,6 @@ class MemoryService:
             "updated_at": memory.updated_at,
             "created_at_iso": memory.created_at_iso,
             "updated_at_iso": memory.updated_at_iso,
+            "emotional_valence": memory.emotional_valence,
+            "salience_score": memory.salience_score,
         }

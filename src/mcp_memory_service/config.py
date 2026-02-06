@@ -477,6 +477,36 @@ class ConsolidationSettings(BaseSettings):
     )
 
 
+class SalienceSettings(BaseSettings):
+    """Salience scoring configuration for emotional tagging and retrieval boosting."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_SALIENCE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable emotional tagging and salience scoring")
+
+    # Salience computation weights (must sum to ~1.0 for interpretability)
+    emotional_weight: float = Field(
+        default=0.3, ge=0.0, le=1.0, description="Weight for emotional magnitude in salience score"
+    )
+    frequency_weight: float = Field(
+        default=0.3, ge=0.0, le=1.0, description="Weight for access frequency in salience score"
+    )
+    importance_weight: float = Field(
+        default=0.4, ge=0.0, le=1.0, description="Weight for explicit importance in salience score"
+    )
+
+    # Retrieval boost
+    boost_weight: float = Field(
+        default=0.15, ge=0.0, le=1.0, description="Max salience boost on retrieval scores (0.15 = up to +15%)"
+    )
+
+
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
 
@@ -547,6 +577,7 @@ class Settings(BaseSettings):
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
+    salience: SalienceSettings = Field(default_factory=SalienceSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
