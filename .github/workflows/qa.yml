@@ -106,7 +106,6 @@ jobs:
           build-args: |
             CUDA_ENABLED=false
           cache-from: type=registry,ref=ghcr.io/27b-io/mcp-memory-service:cache-cpu
-          cache-to: type=registry,ref=ghcr.io/27b-io/mcp-memory-service:cache-cpu,mode=max
 
       - name: Test container starts
         run: |
