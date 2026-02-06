@@ -36,7 +36,7 @@ sys.path.insert(0, str(src_dir))
 from fastmcp import Context, FastMCP  # noqa: E402
 
 # Import existing memory service components
-from .config import SQLITE_VEC_PATH, STORAGE_BACKEND  # noqa: E402
+from .config import settings  # noqa: E402
 from .formatters.toon import format_search_results_as_toon  # noqa: E402
 from .resources.toon_documentation import TOON_FORMAT_DOCUMENTATION  # noqa: E402
 from .services.memory_service import MemoryService  # noqa: E402
@@ -71,10 +71,16 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
         logger.info("No shared storage found, initializing new instance (standalone mode)")
         from .storage.factory import create_storage_instance
 
-        storage = await create_storage_instance(SQLITE_VEC_PATH)
+        storage = await create_storage_instance()
 
-    # Initialize memory service with shared business logic
-    memory_service = MemoryService(storage)
+    # Initialize memory service with shared business logic (including graph layer if available)
+    from .shared_storage import get_graph_client, get_write_queue
+
+    memory_service = MemoryService(
+        storage,
+        graph_client=get_graph_client(),
+        write_queue=get_write_queue(),
+    )
 
     try:
         yield MCPServerContext(storage=storage, memory_service=memory_service)
@@ -119,6 +125,7 @@ class StoreMemorySuccess(TypedDict):
     success: bool
     message: str
     content_hash: str
+    interference: NotRequired[dict[str, Any]]
 
 
 class StoreMemorySplitSuccess(TypedDict):
@@ -128,6 +135,7 @@ class StoreMemorySplitSuccess(TypedDict):
     message: str
     chunks_created: int
     chunk_hashes: list[str]
+    interference: NotRequired[dict[str, Any]]
 
 
 class StoreMemoryFailure(TypedDict):
@@ -160,16 +168,27 @@ async def store_memory(
     retrieval via semantic search or tag filtering. Content is automatically vectorized
     for similarity matching.
 
+    Emotional tagging and salience scoring are computed automatically:
+    - Emotional valence (sentiment, magnitude, category) is detected from content
+    - Salience score combines emotional intensity, access frequency, and explicit importance
+    - Higher-salience memories receive a retrieval boost
+
+    Proactive interference detection:
+    - New memories are checked against existing ones for contradictions
+    - Contradictions are flagged (not blocked) with signal type and confidence
+    - CONTRADICTS edges are created in the knowledge graph for flagged pairs
+    - Signal types: negation, antonym, temporal (supersession)
+
     Args:
         content: The text content to store (will be embedded for semantic search)
         tags: Categorization labels (accepts ["tag1", "tag2"] or "tag1,tag2")
         memory_type: Classification - "note", "decision", "task", or "reference"
-        metadata: Additional structured data to attach
+        metadata: Additional structured data to attach. Special keys:
+            - importance: float (0.0-1.0) - explicit importance weight for salience scoring
         client_hostname: Source machine identifier (optional)
 
     Content Length Handling:
-        - SQLite-vec/Qdrant: No limit
-        - Cloudflare/Hybrid: 800 chars max (auto-splits if exceeded)
+        - No limit on content length
         - Auto-splitting preserves context with 50-char overlap
         - Respects natural boundaries: paragraphs → sentences → words
 
@@ -182,12 +201,14 @@ async def store_memory(
             - success: True/False
             - message: Status description
             - content_hash: Unique identifier for retrieval/deletion
+            - interference: (optional) Contradiction detection results if conflicts found
 
-        Split memory (>800 chars on Cloudflare/Hybrid):
+        Split memory (when auto-split enabled):
             - success: True/False
             - message: Status description
             - chunks_created: Number of linked chunks
             - chunk_hashes: List of content hashes
+            - interference: (optional) Contradiction detection results if conflicts found
 
     Use this for: Capturing information for later retrieval, building knowledge base,
     recording decisions, storing context across conversations.
@@ -204,27 +225,44 @@ async def store_memory(
 
     # Transform MemoryService response to MCP schema
     if result["success"]:
+        interference = result.get("interference")
+
         if "memory" in result:
             # Single memory case
-            return StoreMemorySuccess(
-                success=True, message="Memory stored successfully", content_hash=result["memory"]["content_hash"]
+            response = StoreMemorySuccess(
+                success=True,
+                message="Memory stored successfully",
+                content_hash=result["memory"]["content_hash"],
             )
+            if interference:
+                response["interference"] = interference
+            return response
         elif "memories" in result:
             # Chunked memory case
             chunk_hashes = [m["content_hash"] for m in result["memories"]]
-            return StoreMemorySplitSuccess(
+            response = StoreMemorySplitSuccess(
                 success=True,
                 message=f"Memory stored as {result['total_chunks']} chunks",
                 chunks_created=result["total_chunks"],
                 chunk_hashes=chunk_hashes,
             )
+            if interference:
+                response["interference"] = interference
+            return response
 
     # Failure case
     return StoreMemoryFailure(success=False, message=result.get("error", "Unknown error occurred"))
 
 
 @mcp.tool()
-async def retrieve_memory(query: str, ctx: Context, page: int = 1, page_size: int = 10, min_similarity: float = 0.6) -> str:
+async def retrieve_memory(
+    query: str,
+    ctx: Context,
+    page: int = 1,
+    page_size: int = 10,
+    min_similarity: float = 0.6,
+    encoding_context: dict[str, Any] | None = None,
+) -> str:
     """
     Retrieve memories using hybrid search (semantic + tag matching).
 
@@ -245,6 +283,11 @@ async def retrieve_memory(query: str, ctx: Context, page: int = 1, page_size: in
             - 0.7-0.9: Very similar matches
             - 0.9+: Nearly identical
             - Lower for exploratory search, higher for precision
+        encoding_context: Optional current context for context-dependent retrieval.
+            Memories stored in a similar context receive a score boost.
+            Keys: time_of_day (morning|afternoon|evening|night),
+            day_type (weekday|weekend), agent (hostname/agent name),
+            task_tags (list of current task/project tags)
 
     Response Format:
         Returns memories in TOON (Terser Object Notation) format - a compact, pipe-delimited
@@ -262,7 +305,13 @@ async def retrieve_memory(query: str, ctx: Context, page: int = 1, page_size: in
     """
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.retrieve_memories(query=query, page=page, page_size=page_size, min_similarity=min_similarity)
+    result = await memory_service.retrieve_memories(
+        query=query,
+        page=page,
+        page_size=page_size,
+        min_similarity=min_similarity,
+        encoding_context=encoding_context,
+    )
 
     # Extract pagination metadata
     pagination = {
@@ -371,7 +420,7 @@ async def check_database_health(ctx: Context) -> dict[str, Any]:
     Returns:
         Dictionary with:
         - status: "healthy" or error state
-        - backend: Storage backend in use (sqlite_vec, cloudflare, hybrid, qdrant)
+        - backend: Storage backend in use (qdrant)
         - total_memories: Total count of stored memories
         - storage_info: Backend-specific statistics
         - version: Service version
@@ -443,6 +492,125 @@ async def list_memories(
 
 
 # =============================================================================
+# KNOWLEDGE GRAPH RELATIONSHIP OPERATIONS
+# =============================================================================
+
+
+@mcp.tool()
+async def create_relation(
+    source_hash: str,
+    target_hash: str,
+    relation_type: str,
+    ctx: Context,
+) -> dict[str, Any]:
+    """
+    Create a typed relationship between two memories in the knowledge graph.
+
+    Typed edges represent explicit semantic relationships between memories,
+    unlike Hebbian edges which form implicitly through co-retrieval patterns.
+    These are lower-frequency writes typically created during memory storage
+    or when a user identifies a connection between memories.
+
+    Args:
+        source_hash: Content hash of the source memory
+        target_hash: Content hash of the target memory
+        relation_type: Type of relationship. Must be one of:
+            - "RELATES_TO": Generic semantic relationship
+            - "PRECEDES": Temporal/causal ordering (source happened before target)
+            - "CONTRADICTS": Conflicting information between memories
+
+    Returns:
+        Dictionary with:
+        - success: True if relation was created
+        - source: Source memory hash
+        - target: Target memory hash
+        - relation_type: Normalized relation type
+        - error: Error message if failed
+
+    Use this for: Building knowledge graphs, linking related memories,
+    tracking temporal sequences, flagging contradictions.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.create_relation(
+        source_hash=source_hash,
+        target_hash=target_hash,
+        relation_type=relation_type,
+    )
+
+
+@mcp.tool()
+async def get_relations(
+    content_hash: str,
+    ctx: Context,
+    relation_type: str | None = None,
+) -> dict[str, Any]:
+    """
+    Get typed relationships for a specific memory.
+
+    Returns all typed edges (RELATES_TO, PRECEDES, CONTRADICTS) connected
+    to the given memory, in both directions.
+
+    Args:
+        content_hash: Content hash of the memory to query
+        relation_type: Optional filter - only return edges of this type
+
+    Returns:
+        Dictionary with:
+        - relations: List of relationship edges, each containing:
+            - source: Source memory hash
+            - target: Target memory hash
+            - relation_type: Edge type (RELATES_TO, PRECEDES, CONTRADICTS)
+            - direction: "outgoing" or "incoming" relative to queried memory
+            - created_at: Timestamp when relation was created
+        - content_hash: The queried memory hash
+        - count: Number of relations found
+
+    Use this for: Exploring knowledge graph connections, finding related memories,
+    understanding temporal sequences, identifying contradictions.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.get_relations(
+        content_hash=content_hash,
+        relation_type=relation_type,
+    )
+
+
+@mcp.tool()
+async def delete_relation(
+    source_hash: str,
+    target_hash: str,
+    relation_type: str,
+    ctx: Context,
+) -> dict[str, Any]:
+    """
+    Delete a typed relationship between two memories.
+
+    Removes a specific directed edge from the knowledge graph. This only
+    removes the relationship — the memories themselves are not affected.
+
+    Args:
+        source_hash: Content hash of the source memory
+        target_hash: Content hash of the target memory
+        relation_type: Type of relationship to delete (RELATES_TO, PRECEDES, CONTRADICTS)
+
+    Returns:
+        Dictionary with:
+        - success: True if relation was deleted, False if not found
+        - source: Source memory hash
+        - target: Target memory hash
+        - relation_type: The relation type that was deleted
+
+    Use this for: Removing incorrect relationships, cleaning up knowledge graph.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.delete_relation(
+        source_hash=source_hash,
+        target_hash=target_hash,
+        relation_type=relation_type,
+    )
+
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 
@@ -454,7 +622,7 @@ def main():
     host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
 
     logger.info(f"Starting MCP Memory Service FastAPI server on {host}:{port}")
-    logger.info(f"Storage backend: {STORAGE_BACKEND}")
+    logger.info("Storage backend: Qdrant")
 
     # Check transport mode from environment
     transport_mode = os.getenv("MCP_TRANSPORT_MODE", "http")

@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import tempfile
+import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -18,6 +19,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.services.memory_service import MemoryService
+from mcp_memory_service.storage.qdrant_storage import QdrantStorage
 
 # =============================================================================
 # Ground Truth Utilities
@@ -44,27 +46,18 @@ def get_test_cases(category: str = None) -> list[dict]:
 # Storage Fixtures
 # =============================================================================
 
-try:
-    import sqlite_vec  # noqa: F401
-
-    SQLITE_VEC_AVAILABLE = True
-except ImportError:
-    SQLITE_VEC_AVAILABLE = False
-
-if SQLITE_VEC_AVAILABLE:
-    from mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
-
 
 @pytest.fixture
-async def eval_storage() -> AsyncGenerator["SqliteVecMemoryStorage", None]:
-    """Create storage seeded with evaluation test data."""
-    if not SQLITE_VEC_AVAILABLE:
-        pytest.skip("sqlite-vec not available")
-
+async def eval_storage() -> AsyncGenerator[QdrantStorage, None]:
+    """Create Qdrant storage seeded with evaluation test data."""
     temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, "eval_test.db")
+    storage_path = os.path.join(temp_dir, "eval_qdrant")
 
-    storage = SqliteVecMemoryStorage(db_path)
+    storage = QdrantStorage(
+        storage_path=storage_path,
+        embedding_model="all-MiniLM-L6-v2",
+        collection_name=f"eval_{uuid.uuid4().hex[:8]}",
+    )
     await storage.initialize()
 
     # Seed with ground truth memories

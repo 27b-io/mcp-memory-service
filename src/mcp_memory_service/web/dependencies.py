@@ -21,6 +21,7 @@ import logging
 from fastapi import Depends, HTTPException
 
 from ..services.memory_service import MemoryService
+from ..shared_storage import get_graph_client, get_write_queue
 from ..storage.base import MemoryStorage
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,11 @@ def get_storage() -> MemoryStorage:
 
 def get_memory_service(storage: MemoryStorage = Depends(get_storage)) -> MemoryService:
     """Get a MemoryService instance with the configured storage backend."""
-    return MemoryService(storage)
+    return MemoryService(
+        storage,
+        graph_client=get_graph_client(),
+        write_queue=get_write_queue(),
+    )
 
 
 async def create_storage_backend() -> MemoryStorage:

@@ -108,7 +108,7 @@ describe('Bridge-Server Integration', () => {
         it('should use /api/health not /health for health checks', async () => {
             const result = await bridge.checkHealth();
             assert.strictEqual(result.status, 'healthy');
-            assert.strictEqual(result.backend, 'sqlite_vec');
+            assert.strictEqual(result.backend, 'qdrant');
         });
 
         it('should handle HTTP 200 with success field for memory storage', async () => {

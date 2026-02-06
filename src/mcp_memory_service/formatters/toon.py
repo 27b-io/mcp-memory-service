@@ -223,6 +223,15 @@ def format_search_results_as_toon(results: list[dict[str, Any]], pagination: dic
             if "similarity_score" in memory:
                 memory_data["similarity_score"] = memory["similarity_score"]
 
+            # Add emotional valence if present
+            if memory.get("emotional_valence"):
+                memory_data["emotional_valence"] = memory["emotional_valence"]
+
+            # Add salience score if non-zero
+            salience = memory.get("salience_score", 0.0)
+            if salience and salience > 0:
+                memory_data["salience_score"] = salience
+
             memories_for_encoding.append(memory_data)
 
         # Encode with 5-second timeout protection

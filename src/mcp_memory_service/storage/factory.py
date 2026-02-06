@@ -15,95 +15,49 @@
 """
 Storage backend factory for the MCP Memory Service.
 
-Provides factory functions for creating storage backends.
-Supported backends: Qdrant (production), SQLite-vec (development).
+Creates and initializes the Qdrant storage backend.
 """
 
 import logging
 
 from .base import MemoryStorage
+from .qdrant_storage import QdrantStorage
 
 logger = logging.getLogger(__name__)
 
 
-def get_storage_backend_class() -> type[MemoryStorage]:
+async def create_storage_instance() -> MemoryStorage:
     """
-    Get storage backend class based on configuration.
+    Create and initialize the Qdrant storage backend instance.
 
     Returns:
-        Storage backend class (QdrantStorage or SqliteVecMemoryStorage)
-    """
-    from ..config import STORAGE_BACKEND
-
-    backend = STORAGE_BACKEND.lower()
-
-    if backend in ("sqlite-vec", "sqlite_vec"):
-        from .sqlite_vec import SqliteVecMemoryStorage
-
-        return SqliteVecMemoryStorage
-
-    elif backend == "qdrant":
-        from .qdrant_storage import QdrantStorage
-
-        return QdrantStorage
-
-    else:
-        # Fail fast on invalid configuration - don't silently default
-        supported = ["sqlite_vec", "sqlite-vec", "qdrant"]
-        raise ValueError(
-            f"Unknown storage backend '{backend}'. "
-            f"Supported backends: {', '.join(supported)}. "
-            f"Set MCP_MEMORY_STORAGE_BACKEND environment variable."
-        )
-
-
-async def create_storage_instance(sqlite_path: str) -> MemoryStorage:
-    """
-    Create and initialize storage backend instance based on configuration.
-
-    Args:
-        sqlite_path: Path to SQLite database file (used for SQLite-vec backend)
-
-    Returns:
-        Initialized storage backend instance
+        Initialized QdrantStorage instance
     """
     from ..config import EMBEDDING_MODEL_NAME, settings
 
-    logger.info("Creating storage backend instance...")
+    logger.info("Creating Qdrant storage backend instance...")
 
-    StorageClass = get_storage_backend_class()
-
-    if StorageClass.__name__ == "SqliteVecMemoryStorage":
-        storage = StorageClass(db_path=sqlite_path, embedding_model=EMBEDDING_MODEL_NAME)
-        logger.info(f"Initialized SQLite-vec storage at {sqlite_path}")
-
-    elif StorageClass.__name__ == "QdrantStorage":
-        # Determine mode: server (URL) or embedded (path)
-        if settings.qdrant.url:
-            # Server mode - network client
-            storage = StorageClass(
-                url=settings.qdrant.url,
-                embedding_model=EMBEDDING_MODEL_NAME,
-                collection_name=settings.qdrant.COLLECTION_NAME,
-                quantization_enabled=settings.qdrant.quantization_enabled,
-                distance_metric=settings.qdrant.DISTANCE_METRIC,
-            )
-            logger.info(f"Initialized Qdrant storage in server mode: {settings.qdrant.url}")
-        else:
-            # Embedded mode - file-based
-            storage = StorageClass(
-                storage_path=settings.qdrant.storage_path,
-                embedding_model=EMBEDDING_MODEL_NAME,
-                collection_name=settings.qdrant.COLLECTION_NAME,
-                quantization_enabled=settings.qdrant.quantization_enabled,
-                distance_metric=settings.qdrant.DISTANCE_METRIC,
-            )
-            logger.info(f"Initialized Qdrant storage in embedded mode: {settings.qdrant.storage_path}")
-
+    # Determine mode: server (URL) or embedded (path)
+    if settings.qdrant.url:
+        storage = QdrantStorage(
+            url=settings.qdrant.url,
+            embedding_model=EMBEDDING_MODEL_NAME,
+            collection_name=settings.qdrant.COLLECTION_NAME,
+            quantization_enabled=settings.qdrant.quantization_enabled,
+            distance_metric=settings.qdrant.DISTANCE_METRIC,
+        )
+        logger.info(f"Initialized Qdrant storage in server mode: {settings.qdrant.url}")
     else:
-        raise ValueError(f"Unsupported storage backend class: {StorageClass.__name__}")
+        storage = QdrantStorage(
+            storage_path=settings.qdrant.storage_path,
+            embedding_model=EMBEDDING_MODEL_NAME,
+            collection_name=settings.qdrant.COLLECTION_NAME,
+            quantization_enabled=settings.qdrant.quantization_enabled,
+            distance_metric=settings.qdrant.DISTANCE_METRIC,
+        )
+        logger.info(f"Initialized Qdrant storage in embedded mode: {settings.qdrant.storage_path}")
 
     await storage.initialize()
-    logger.info(f"Storage backend {StorageClass.__name__} initialized successfully")
+    logger.info("QdrantStorage initialized successfully")
 
     return storage

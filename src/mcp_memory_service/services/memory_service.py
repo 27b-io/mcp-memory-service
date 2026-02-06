@@ -18,9 +18,18 @@ from ..config import (
     ENABLE_AUTO_SPLIT,
     settings,
 )
+from ..graph.client import GraphClient
+from ..graph.queue import HebbianWriteQueue
 from ..models.memory import Memory
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
+from ..utils.emotional_analysis import analyze_emotion
+from ..utils.encoding_context import (
+    EncodingContext,
+    apply_context_boost,
+    capture_encoding_context,
+    compute_context_similarity,
+)
 from ..utils.hashing import generate_content_hash
 from ..utils.hybrid_search import (
     apply_recency_decay,
@@ -28,6 +37,9 @@ from ..utils.hybrid_search import (
     extract_query_keywords,
     get_adaptive_alpha,
 )
+from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
+from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
+from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +56,8 @@ class MemoryResult(TypedDict):
     updated_at: str
     created_at_iso: str
     updated_at_iso: str
+    emotional_valence: dict[str, Any] | None
+    salience_score: float
 
 
 class MemoryService:
@@ -58,9 +72,206 @@ class MemoryService:
     # Tag cache TTL in seconds
     _TAG_CACHE_TTL = 60
 
-    def __init__(self, storage: MemoryStorage):
+    def __init__(
+        self,
+        storage: MemoryStorage,
+        graph_client: GraphClient | None = None,
+        write_queue: HebbianWriteQueue | None = None,
+    ):
         self.storage = storage
+        self._graph = graph_client
+        self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
+
+    async def _compute_graph_boosts(self, seed_hashes: list[str]) -> dict[str, float]:
+        """
+        Run spreading activation from seed memories to find graph-boosted neighbors.
+
+        Non-blocking, non-fatal — graph failures don't affect the read path.
+
+        Returns:
+            Dict of {content_hash: activation_score} for activated neighbors.
+        """
+        if self._graph is None or not seed_hashes:
+            return {}
+
+        config = settings.falkordb
+        if config.spreading_activation_boost <= 0:
+            return {}
+
+        try:
+            return await self._graph.spreading_activation(
+                seed_hashes=seed_hashes,
+                max_hops=config.spreading_activation_max_hops,
+                decay_factor=config.spreading_activation_decay,
+                min_activation=config.spreading_activation_min_activation,
+            )
+        except Exception as e:
+            logger.warning(f"Spreading activation failed (non-fatal): {e}")
+            return {}
+
+    async def _fire_hebbian_co_access(
+        self, content_hashes: list[str], spacing_qualities: list[float] | None = None
+    ) -> None:
+        """
+        Enqueue Hebbian strengthening for all pairs of co-retrieved memories.
+
+        Called after a retrieval returns multiple results. Non-blocking,
+        non-fatal — write failures don't affect the read path.
+
+        Args:
+            content_hashes: Hashes of co-retrieved memories
+            spacing_qualities: Per-memory spacing quality scores for LTP modulation.
+                If provided, the mean spacing of each pair is used.
+        """
+        if self._write_queue is None or len(content_hashes) < 2:
+            return
+
+        try:
+            sq = spacing_qualities or [0.0] * len(content_hashes)
+            for i, src in enumerate(content_hashes):
+                for j, dst in enumerate(content_hashes[i + 1 :], start=i + 1):
+                    # Use mean spacing quality of the pair
+                    pair_spacing = (sq[i] + sq[j]) / 2.0
+                    await self._write_queue.enqueue_strengthen(src, dst, pair_spacing)
+                    await self._write_queue.enqueue_strengthen(dst, src, pair_spacing)
+        except Exception as e:
+            logger.warning(f"Hebbian co-access enqueue failed (non-fatal): {e}")
+
+    def _compute_emotional_valence(self, content: str) -> dict[str, Any] | None:
+        """
+        Analyze emotional content and return valence dict if salience is enabled.
+
+        Returns None if salience feature is disabled, letting the memory stay neutral.
+        """
+        if not settings.salience.enabled:
+            return None
+        valence = analyze_emotion(content)
+        return valence.to_dict()
+
+    def _compute_salience_score(
+        self,
+        emotional_magnitude: float = 0.0,
+        access_count: int = 0,
+        explicit_importance: float = 0.0,
+    ) -> float:
+        """Compute salience score using configured weights."""
+        if not settings.salience.enabled:
+            return 0.0
+        config = settings.salience
+        return compute_salience(
+            SalienceFactors(
+                emotional_magnitude=emotional_magnitude,
+                access_count=access_count,
+                explicit_importance=explicit_importance,
+            ),
+            emotional_weight=config.emotional_weight,
+            frequency_weight=config.frequency_weight,
+            importance_weight=config.importance_weight,
+        )
+
+    async def _detect_contradictions(self, content: str) -> InterferenceResult:
+        """
+        Check for contradictions between new content and existing memories.
+
+        Searches for semantically similar memories, then applies lexical
+        contradiction signals to determine if they conflict.
+
+        Non-blocking to store: contradictions are flagged, not prevented.
+
+        Args:
+            content: The new memory content to check
+
+        Returns:
+            InterferenceResult with any detected contradictions
+        """
+        config = settings.interference
+        result = InterferenceResult()
+
+        if not config.enabled:
+            return result
+
+        try:
+            # Find semantically similar existing memories
+            similar = await self.storage.retrieve(
+                query=content,
+                n_results=config.max_candidates,
+                min_similarity=config.similarity_threshold,
+            )
+
+            for match in similar:
+                # Skip exact duplicates (same content hash)
+                if match.memory.content_hash == generate_content_hash(content):
+                    continue
+
+                signals = detect_contradiction_signals(
+                    new_content=content,
+                    existing_content=match.memory.content,
+                    existing_hash=match.memory.content_hash,
+                    similarity=match.similarity_score,
+                    min_confidence=config.min_confidence,
+                )
+                result.contradictions.extend(signals)
+
+        except Exception as e:
+            logger.warning(f"Contradiction detection failed (non-fatal): {e}")
+
+        return result
+
+    async def _create_contradiction_edges(
+        self,
+        new_hash: str,
+        contradictions: list[ContradictionSignal],
+    ) -> None:
+        """
+        Create CONTRADICTS edges in the graph for detected contradictions.
+
+        Non-blocking, non-fatal — graph failures don't affect storage.
+        """
+        if self._graph is None or not contradictions:
+            return
+
+        # Deduplicate by existing_hash (keep highest confidence per pair)
+        seen: dict[str, ContradictionSignal] = {}
+        for c in contradictions:
+            if c.existing_hash not in seen or c.confidence > seen[c.existing_hash].confidence:
+                seen[c.existing_hash] = c
+
+        for existing_hash, signal in seen.items():
+            try:
+                await self._graph.create_typed_edge(
+                    source_hash=new_hash,
+                    target_hash=existing_hash,
+                    relation_type="CONTRADICTS",
+                )
+                logger.info(
+                    f"Contradiction edge: {new_hash[:8]} -> {existing_hash[:8]} "
+                    f"({signal.signal_type}, confidence={signal.confidence:.2f})"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create contradiction edge (non-fatal): {e}")
+
+    def _fire_access_count_updates(self, content_hashes: list[str]) -> None:
+        """
+        Schedule access count increments as background tasks (fire-and-forget).
+
+        Non-blocking, non-fatal — access tracking failures don't affect reads.
+        """
+        if not settings.salience.enabled or not content_hashes:
+            return
+
+        async def _do_increments():
+            for h in content_hashes:
+                try:
+                    await self.storage.increment_access_count(h)
+                except Exception as e:
+                    logger.debug(f"Access count increment failed for {h[:8]}: {e}")
+
+        try:
+            asyncio.ensure_future(_do_increments())
+        except RuntimeError:
+            # No running event loop — skip silently
+            pass
 
     async def _get_cached_tags(self) -> set[str]:
         """Get all tags with 60-second TTL caching for performance."""
@@ -83,11 +294,12 @@ class MemoryService:
         tags: list[str] | None,
         memory_type: str | None,
         min_similarity: float | None,
+        encoding_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Fallback to pure vector search (original behavior)."""
         offset = (page - 1) * page_size
 
-        # Use a reasonable limit for count to avoid sqlite-vec k limit (4096)
+        # Count matching memories for pagination
         try:
             total = await self.storage.count_semantic_search(
                 query=query, tags=tags, memory_type=memory_type, min_similarity=min_similarity
@@ -104,14 +316,84 @@ class MemoryService:
             min_similarity=min_similarity,
             offset=offset,
         )
+
+        # Extract hashes and scores for graph boosting
         results = []
+        result_hashes = []
+        result_memories = []  # Parallel list of Memory objects for spacing boost
         for item in memories:
             if hasattr(item, "memory"):
                 memory_dict = self._format_memory_response(item.memory)
                 memory_dict["similarity_score"] = item.similarity_score
                 results.append(memory_dict)
+                result_hashes.append(item.memory.content_hash)
+                result_memories.append(item.memory)
             else:
                 results.append(self._format_memory_response(item))
+                result_hashes.append(item.content_hash)
+                result_memories.append(item)
+
+        # Apply spreading activation boost from graph layer
+        graph_boosts = await self._compute_graph_boosts(result_hashes)
+        if graph_boosts:
+            boost_weight = settings.falkordb.spreading_activation_boost
+            for result in results:
+                activation = graph_boosts.get(result["content_hash"], 0.0)
+                if activation > 0:
+                    result["similarity_score"] = result.get("similarity_score", 0.0) + boost_weight * activation
+                    result["graph_boost"] = activation
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
+        # Apply salience boost to final scores
+        if settings.salience.enabled:
+            for result in results:
+                salience = result.get("salience_score", 0.0)
+                if salience > 0:
+                    result["similarity_score"] = apply_salience_boost(
+                        result.get("similarity_score", 0.0),
+                        salience,
+                        settings.salience.boost_weight,
+                    )
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
+        # Apply spaced repetition boost and collect spacing qualities for LTP
+        spacing_qualities = []
+        if settings.spaced_repetition.enabled:
+            for result, mem in zip(results, result_memories):
+                spacing = compute_spacing_quality(mem.access_timestamps)
+                spacing_qualities.append(spacing)
+                if spacing > 0:
+                    result["similarity_score"] = apply_spacing_boost(
+                        result.get("similarity_score", 0.0),
+                        spacing,
+                        settings.spaced_repetition.boost_weight,
+                    )
+                    result["spacing_quality"] = spacing
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
+        # Apply encoding context boost (context-dependent retrieval)
+        if settings.encoding_context.enabled and encoding_context:
+            current_ctx = EncodingContext.from_dict(encoding_context)
+            for result, mem in zip(results, result_memories):
+                stored_ctx_data = mem.encoding_context
+                if stored_ctx_data:
+                    stored_ctx = EncodingContext.from_dict(stored_ctx_data)
+                    ctx_sim = compute_context_similarity(stored_ctx, current_ctx)
+                    if ctx_sim > 0:
+                        result["similarity_score"] = apply_context_boost(
+                            result.get("similarity_score", 0.0),
+                            ctx_sim,
+                            settings.encoding_context.boost_weight,
+                        )
+                        result["context_similarity"] = ctx_sim
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
+        # Fire Hebbian co-access events for co-retrieved memories
+        await self._fire_hebbian_co_access(result_hashes, spacing_qualities or None)
+
+        # Track access counts (fire-and-forget)
+        self._fire_access_count_updates(result_hashes)
+
         return {
             "memories": results,
             "query": query,
@@ -225,6 +507,24 @@ class MemoryService:
             # Generate content hash for deduplication
             content_hash = generate_content_hash(content)
 
+            # Compute emotional valence and initial salience score
+            emotional_valence = self._compute_emotional_valence(content)
+            emotional_mag = emotional_valence.get("magnitude", 0.0) if emotional_valence else 0.0
+            explicit_importance = float(final_metadata.pop("importance", 0.0))
+            salience_score = self._compute_salience_score(
+                emotional_magnitude=emotional_mag,
+                access_count=0,
+                explicit_importance=explicit_importance,
+            )
+
+            # Capture encoding context (environmental context at storage time)
+            enc_context = None
+            if settings.encoding_context.enabled:
+                enc_context = capture_encoding_context(
+                    tags=final_tags,
+                    agent=client_hostname or "",
+                ).to_dict()
+
             # Process content if auto-splitting is enabled and content exceeds max length
             max_length = self.storage.max_content_length
             if ENABLE_AUTO_SPLIT and max_length and len(content) > max_length:
@@ -244,25 +544,81 @@ class MemoryService:
                     chunk_metadata["total_chunks"] = len(chunks)
                     chunk_metadata["original_hash"] = content_hash
 
+                    # Each chunk gets its own emotional analysis
+                    chunk_valence = self._compute_emotional_valence(chunk)
+                    chunk_mag = chunk_valence.get("magnitude", 0.0) if chunk_valence else 0.0
+                    chunk_salience = self._compute_salience_score(
+                        emotional_magnitude=chunk_mag,
+                        explicit_importance=explicit_importance,
+                    )
+
                     memory = Memory(
-                        content=chunk, content_hash=chunk_hash, tags=final_tags, memory_type=memory_type, metadata=chunk_metadata
+                        content=chunk,
+                        content_hash=chunk_hash,
+                        tags=final_tags,
+                        memory_type=memory_type,
+                        metadata=chunk_metadata,
+                        emotional_valence=chunk_valence,
+                        salience_score=chunk_salience,
+                        encoding_context=enc_context,
                     )
 
                     success, message = await self.storage.store(memory)
                     if success:
                         stored_memories.append(self._format_memory_response(memory))
 
-                return {"success": True, "memories": stored_memories, "total_chunks": len(chunks), "original_hash": content_hash}
+                result = {
+                    "success": True,
+                    "memories": stored_memories,
+                    "total_chunks": len(chunks),
+                    "original_hash": content_hash,
+                }
+
+                # Detect contradictions against the full (unsplit) content
+                interference = await self._detect_contradictions(content)
+                if interference.has_contradictions:
+                    result["interference"] = interference.to_dict()
+                    # Create graph edges for each stored chunk
+                    for mem_dict in stored_memories:
+                        await self._create_contradiction_edges(
+                            mem_dict["content_hash"], interference.contradictions,
+                        )
+
+                return result
             else:
                 # Store as single memory
                 memory = Memory(
-                    content=content, content_hash=content_hash, tags=final_tags, memory_type=memory_type, metadata=final_metadata
+                    content=content,
+                    content_hash=content_hash,
+                    tags=final_tags,
+                    memory_type=memory_type,
+                    metadata=final_metadata,
+                    emotional_valence=emotional_valence,
+                    salience_score=salience_score,
+                    encoding_context=enc_context,
                 )
 
                 success, message = await self.storage.store(memory)
 
                 if success:
-                    return {"success": True, "memory": self._format_memory_response(memory)}
+                    # Create corresponding graph node (non-blocking, non-fatal)
+                    if self._graph is not None:
+                        try:
+                            await self._graph.ensure_memory_node(content_hash, memory.created_at)
+                        except Exception as e:
+                            logger.warning(f"Graph node creation failed (non-fatal): {e}")
+
+                    result = {"success": True, "memory": self._format_memory_response(memory)}
+
+                    # Detect contradictions with existing memories
+                    interference = await self._detect_contradictions(content)
+                    if interference.has_contradictions:
+                        result["interference"] = interference.to_dict()
+                        await self._create_contradiction_edges(
+                            content_hash, interference.contradictions,
+                        )
+
+                    return result
                 else:
                     return {"success": False, "error": message}
 
@@ -287,6 +643,7 @@ class MemoryService:
         tags: list[str] | None = None,
         memory_type: str | None = None,
         min_similarity: float | None = None,
+        encoding_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Retrieve memories using hybrid search (semantic + tag matching).
@@ -316,7 +673,9 @@ class MemoryService:
             # If tags explicitly provided (even empty list), skip hybrid and use pure vector search
             # Distinguishes "no tags" (None) from "explicit empty tags" ([])
             if tags is not None:
-                return await self._retrieve_vector_only(query, page, page_size, tags, memory_type, min_similarity)
+                return await self._retrieve_vector_only(
+                    query, page, page_size, tags, memory_type, min_similarity, encoding_context,
+                )
 
             # Get cached tags for keyword extraction
             existing_tags = await self._get_cached_tags()
@@ -326,7 +685,9 @@ class MemoryService:
 
             # If no keywords match existing tags, fall back to vector-only
             if not keywords:
-                return await self._retrieve_vector_only(query, page, page_size, None, memory_type, min_similarity)
+                return await self._retrieve_vector_only(
+                    query, page, page_size, None, memory_type, min_similarity, encoding_context,
+                )
 
             # Determine alpha (explicit > env > adaptive)
             corpus_size = await self.storage.count()
@@ -334,7 +695,9 @@ class MemoryService:
 
             # If alpha is 1.0, pure vector search (opt-out)
             if alpha >= 1.0:
-                return await self._retrieve_vector_only(query, page, page_size, None, memory_type, min_similarity)
+                return await self._retrieve_vector_only(
+                    query, page, page_size, None, memory_type, min_similarity, encoding_context,
+                )
 
             # Fetch larger result set for RRF combination
             # Must cover offset + page_size to support pagination beyond page 1
@@ -365,17 +728,84 @@ class MemoryService:
             if config.recency_decay > 0:
                 combined = apply_recency_decay(combined, config.recency_decay)
 
+            # Apply spreading activation boost from graph layer
+            all_hashes = [m.content_hash for m, _, _ in combined]
+            graph_boosts = await self._compute_graph_boosts(all_hashes)
+            if graph_boosts:
+                boost_weight = settings.falkordb.spreading_activation_boost
+                boosted = []
+                for memory, score, debug_info in combined:
+                    activation = graph_boosts.get(memory.content_hash, 0.0)
+                    if activation > 0:
+                        score += boost_weight * activation
+                        debug_info = {**debug_info, "graph_boost": activation}
+                    boosted.append((memory, score, debug_info))
+                combined = sorted(boosted, key=lambda x: x[1], reverse=True)
+
+            # Apply salience boost
+            if settings.salience.enabled:
+                salience_boosted = []
+                for memory, score, debug_info in combined:
+                    salience = memory.salience_score
+                    if salience > 0:
+                        score = apply_salience_boost(score, salience, settings.salience.boost_weight)
+                        debug_info = {**debug_info, "salience_boost": salience}
+                    salience_boosted.append((memory, score, debug_info))
+                combined = sorted(salience_boosted, key=lambda x: x[1], reverse=True)
+
+            # Apply spaced repetition boost
+            if settings.spaced_repetition.enabled:
+                spacing_boosted = []
+                for memory, score, debug_info in combined:
+                    spacing = compute_spacing_quality(memory.access_timestamps)
+                    if spacing > 0:
+                        score = apply_spacing_boost(score, spacing, settings.spaced_repetition.boost_weight)
+                        debug_info = {**debug_info, "spacing_quality": spacing}
+                    spacing_boosted.append((memory, score, debug_info))
+                combined = sorted(spacing_boosted, key=lambda x: x[1], reverse=True)
+
+            # Apply encoding context boost (context-dependent retrieval)
+            if settings.encoding_context.enabled and encoding_context:
+                current_ctx = EncodingContext.from_dict(encoding_context)
+                context_boosted = []
+                for memory, score, debug_info in combined:
+                    stored_ctx_data = memory.encoding_context
+                    if stored_ctx_data:
+                        stored_ctx = EncodingContext.from_dict(stored_ctx_data)
+                        ctx_sim = compute_context_similarity(stored_ctx, current_ctx)
+                        if ctx_sim > 0:
+                            score = apply_context_boost(
+                                score, ctx_sim, settings.encoding_context.boost_weight,
+                            )
+                            debug_info = {**debug_info, "context_similarity": ctx_sim}
+                    context_boosted.append((memory, score, debug_info))
+                combined = sorted(context_boosted, key=lambda x: x[1], reverse=True)
+
             # Apply pagination to combined results (offset calculated above for fetch_size)
             total = len(combined)
             paginated = combined[offset : offset + page_size]
 
-            # Format results
+            # Format results and collect hashes for Hebbian co-access
             results = []
+            result_hashes = []
+            result_spacing = []
             for memory, score, debug_info in paginated:
                 memory_dict = self._format_memory_response(memory)
                 memory_dict["similarity_score"] = score
                 memory_dict["hybrid_debug"] = debug_info
                 results.append(memory_dict)
+                result_hashes.append(memory.content_hash)
+                result_spacing.append(
+                    compute_spacing_quality(memory.access_timestamps)
+                    if settings.spaced_repetition.enabled
+                    else 0.0
+                )
+
+            # Fire Hebbian co-access events with spacing qualities for LTP
+            await self._fire_hebbian_co_access(result_hashes, result_spacing or None)
+
+            # Track access counts (fire-and-forget)
+            self._fire_access_count_updates(result_hashes)
 
             return {
                 "memories": results,
@@ -513,6 +943,12 @@ class MemoryService:
         try:
             success, message = await self.storage.delete(content_hash)
             if success:
+                # Clean up graph node and edges (non-blocking, non-fatal)
+                if self._graph is not None:
+                    try:
+                        await self._graph.delete_memory_node(content_hash)
+                    except Exception as e:
+                        logger.warning(f"Graph node deletion failed (non-fatal): {e}")
                 return {"success": True, "content_hash": content_hash}
             else:
                 return {"success": False, "content_hash": content_hash, "error": message}
@@ -530,7 +966,7 @@ class MemoryService:
         """
         try:
             stats = await self.storage.get_stats()
-            return {
+            result = {
                 "healthy": True,
                 "storage_type": stats.get("backend", "unknown"),
                 "total_memories": stats.get("total_memories", 0),
@@ -538,9 +974,338 @@ class MemoryService:
                 **stats,
             }
 
+            # Include graph stats if graph layer is available
+            if self._graph is not None:
+                try:
+                    result["graph"] = await self._graph.get_graph_stats()
+                except Exception as e:
+                    result["graph"] = {"status": "error", "error": str(e)}
+
+            if self._write_queue is not None:
+                result["write_queue"] = self._write_queue.get_stats()
+
+            return result
+
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return {"healthy": False, "error": f"Health check failed: {str(e)}"}
+
+    async def consolidate(self) -> dict[str, Any]:
+        """
+        Run a memory consolidation cycle: decay, prune, and detect duplicates.
+
+        Implements biological sleep consolidation:
+        1. Global decay: downscale ALL edge weights (synaptic homeostasis)
+        2. Stale decay: extra penalty for edges not accessed recently
+        3. Prune: delete edges that fell below threshold
+        4. Duplicate detection: find near-identical memories via vector similarity
+
+        Idempotent: safe to run multiple times. Each run applies one decay cycle.
+        Crash-safe: each phase uses atomic graph operations. Partial completion
+        leaves the graph in a valid state — the next run finishes the work.
+
+        Returns:
+            Dict with consolidation statistics
+        """
+        config = settings.consolidation
+        stats: dict[str, Any] = {
+            "edges_decayed": 0,
+            "stale_edges_decayed": 0,
+            "edges_pruned": 0,
+            "orphan_nodes": 0,
+            "duplicates_found": 0,
+            "duplicates_merged": 0,
+            "errors": [],
+        }
+
+        # Phase 1: Global edge decay (requires graph layer)
+        if self._graph is not None:
+            try:
+                stats["edges_decayed"] = await self._graph.decay_all_edges(
+                    decay_factor=config.decay_factor,
+                    limit=config.max_edges_per_run,
+                )
+            except Exception as e:
+                logger.error(f"Consolidation global decay failed: {e}")
+                stats["errors"].append(f"global_decay: {e}")
+
+            # Phase 2: Extra decay for stale edges
+            # Note: stale edges get BOTH global decay (phase 1) and stale decay (phase 2).
+            # E.g., with defaults: weight * 0.9 * 0.5 = weight * 0.45 per run.
+            # This aggressive compounding is intentional — unused synapses are pruned fast.
+            try:
+                stale_before = time.time() - (config.stale_edge_days * 86400)
+                stats["stale_edges_decayed"] = await self._graph.decay_stale_edges(
+                    stale_before=stale_before,
+                    decay_factor=config.stale_decay_factor,
+                    limit=config.max_edges_per_run,
+                )
+            except Exception as e:
+                logger.error(f"Consolidation stale decay failed: {e}")
+                stats["errors"].append(f"stale_decay: {e}")
+
+            # Phase 3: Prune weak edges
+            try:
+                stats["edges_pruned"] = await self._graph.prune_weak_edges(
+                    threshold=config.prune_threshold,
+                    limit=config.max_edges_per_run,
+                )
+            except Exception as e:
+                logger.error(f"Consolidation pruning failed: {e}")
+                stats["errors"].append(f"prune: {e}")
+
+            # Phase 4: Report orphan nodes (informational only)
+            try:
+                orphans = await self._graph.get_orphan_nodes(limit=100)
+                stats["orphan_nodes"] = len(orphans)
+            except Exception as e:
+                logger.error(f"Consolidation orphan detection failed: {e}")
+                stats["errors"].append(f"orphan_detection: {e}")
+        else:
+            logger.info("Consolidation: graph layer not enabled, skipping edge operations")
+
+        # Phase 5: Duplicate detection via vector similarity
+        try:
+            dup_stats = await self._find_and_merge_duplicates(
+                similarity_threshold=config.duplicate_similarity_threshold,
+                max_pairs=config.max_duplicates_per_run,
+            )
+            stats["duplicates_found"] = dup_stats["found"]
+            stats["duplicates_merged"] = dup_stats["merged"]
+        except Exception as e:
+            logger.error(f"Consolidation duplicate detection failed: {e}")
+            stats["errors"].append(f"duplicate_detection: {e}")
+
+        stats["success"] = len(stats["errors"]) == 0
+        logger.info(f"Consolidation complete: {stats}")
+        return stats
+
+    async def _find_and_merge_duplicates(
+        self,
+        similarity_threshold: float = 0.95,
+        max_pairs: int = 100,
+    ) -> dict[str, int]:
+        """
+        Find and merge near-duplicate memories using vector similarity.
+
+        Strategy: iterate recent memories in batches, search for near-duplicates,
+        merge by keeping the older memory and updating its tags/metadata.
+
+        Args:
+            similarity_threshold: Cosine similarity above which = duplicate
+            max_pairs: Max duplicate pairs to process per run
+
+        Returns:
+            Dict with 'found' and 'merged' counts
+        """
+        found = 0
+        merged = 0
+        seen_hashes: set[str] = set()
+
+        # Get recent memories in batches to check for duplicates
+        batch_size = 50
+        offset = 0
+        memories = await self.storage.get_all_memories(limit=batch_size, offset=offset)
+
+        while memories and found < max_pairs:
+            for memory in memories:
+                if memory.content_hash in seen_hashes:
+                    continue
+                seen_hashes.add(memory.content_hash)
+
+                # Search for near-duplicates of this memory's content
+                try:
+                    similar = await self.storage.retrieve(
+                        query=memory.content,
+                        n_results=5,
+                        min_similarity=similarity_threshold,
+                    )
+                except Exception:
+                    continue
+
+                for match in similar:
+                    match_hash = match.memory.content_hash
+                    if match_hash == memory.content_hash or match_hash in seen_hashes:
+                        continue
+
+                    found += 1
+                    seen_hashes.add(match_hash)
+
+                    # Merge: keep the older memory, absorb tags from the newer one
+                    keeper, victim = (
+                        (memory, match.memory)
+                        if (memory.created_at or 0) <= (match.memory.created_at or 0)
+                        else (match.memory, memory)
+                    )
+
+                    try:
+                        # Absorb victim's tags into keeper
+                        merged_tags = list(set(keeper.tags) | set(victim.tags))
+                        if merged_tags != keeper.tags:
+                            await self.storage.update_memory_metadata(
+                                keeper.content_hash,
+                                {"tags": merged_tags},
+                                preserve_timestamps=True,
+                            )
+
+                        # Delete victim from storage
+                        await self.storage.delete(victim.content_hash)
+
+                        # Clean up graph node for victim
+                        if self._graph is not None:
+                            await self._graph.delete_memory_node(victim.content_hash)
+
+                        merged += 1
+                        logger.info(
+                            f"Merged duplicate: kept {keeper.content_hash[:8]}, "
+                            f"removed {victim.content_hash[:8]}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to merge duplicate pair: {e}")
+
+                    # If current memory was the victim (deleted), stop searching against it
+                    if victim.content_hash == memory.content_hash:
+                        break
+
+                    if found >= max_pairs:
+                        break
+
+                if found >= max_pairs:
+                    break
+
+            offset += batch_size
+            memories = await self.storage.get_all_memories(limit=batch_size, offset=offset)
+
+        return {"found": found, "merged": merged}
+
+    async def create_relation(
+        self,
+        source_hash: str,
+        target_hash: str,
+        relation_type: str,
+    ) -> dict[str, Any]:
+        """
+        Create a typed relationship between two memories.
+
+        Typed edges (RELATES_TO, PRECEDES, CONTRADICTS) are explicit knowledge
+        graph relationships, unlike Hebbian edges which form implicitly through
+        co-retrieval. They are lower-frequency writes created during storage or
+        by explicit user action.
+
+        Args:
+            source_hash: Content hash of the source memory
+            target_hash: Content hash of the target memory
+            relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS
+
+        Returns:
+            Dict with success status and relation details
+        """
+        if self._graph is None:
+            return {
+                "success": False,
+                "error": "Graph layer not enabled (set MCP_FALKORDB_ENABLED=true)",
+            }
+
+        try:
+            created = await self._graph.create_typed_edge(
+                source_hash=source_hash,
+                target_hash=target_hash,
+                relation_type=relation_type,
+            )
+            if created:
+                return {
+                    "success": True,
+                    "source": source_hash,
+                    "target": target_hash,
+                    "relation_type": relation_type.upper(),
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Source or target memory not found in graph",
+                    "source": source_hash,
+                    "target": target_hash,
+                }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Failed to create relation: {e}")
+            return {"success": False, "error": f"Failed to create relation: {e}"}
+
+    async def get_relations(
+        self,
+        content_hash: str,
+        relation_type: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Get typed relationships for a memory.
+
+        Args:
+            content_hash: Memory to get relations for
+            relation_type: Filter by type (None = all typed edges)
+
+        Returns:
+            Dict with relations list
+        """
+        if self._graph is None:
+            return {"relations": [], "content_hash": content_hash}
+
+        try:
+            edges = await self._graph.get_typed_edges(
+                content_hash=content_hash,
+                relation_type=relation_type,
+            )
+            return {
+                "relations": edges,
+                "content_hash": content_hash,
+                "count": len(edges),
+            }
+        except ValueError as e:
+            return {"relations": [], "content_hash": content_hash, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Failed to get relations: {e}")
+            return {"relations": [], "content_hash": content_hash, "error": str(e)}
+
+    async def delete_relation(
+        self,
+        source_hash: str,
+        target_hash: str,
+        relation_type: str,
+    ) -> dict[str, Any]:
+        """
+        Delete a typed relationship between two memories.
+
+        Args:
+            source_hash: Content hash of the source memory
+            target_hash: Content hash of the target memory
+            relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS
+
+        Returns:
+            Dict with success status
+        """
+        if self._graph is None:
+            return {
+                "success": False,
+                "error": "Graph layer not enabled (set MCP_FALKORDB_ENABLED=true)",
+            }
+
+        try:
+            deleted = await self._graph.delete_typed_edge(
+                source_hash=source_hash,
+                target_hash=target_hash,
+                relation_type=relation_type,
+            )
+            return {
+                "success": deleted,
+                "source": source_hash,
+                "target": target_hash,
+                "relation_type": relation_type.upper(),
+            }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Failed to delete relation: {e}")
+            return {"success": False, "error": f"Failed to delete relation: {e}"}
 
     def _format_memory_response(self, memory: Memory) -> MemoryResult:
         """
@@ -562,4 +1327,7 @@ class MemoryService:
             "updated_at": memory.updated_at,
             "created_at_iso": memory.created_at_iso,
             "updated_at_iso": memory.updated_at_iso,
+            "emotional_valence": memory.emotional_valence,
+            "salience_score": memory.salience_score,
+            "encoding_context": memory.encoding_context,
         }

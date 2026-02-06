@@ -193,41 +193,12 @@ async def detailed_health_check(
             stats = {"error": "Storage backend doesn't support statistics"}
 
         if "error" not in stats:
-            # Detect backend type from storage class or stats
-            backend_name = stats.get("storage_backend", storage.__class__.__name__)
-            if "sqlite" in backend_name.lower():
-                backend_type = "sqlite-vec"
-            elif "cloudflare" in backend_name.lower():
-                backend_type = "cloudflare"
-            elif "hybrid" in backend_name.lower():
-                backend_type = "hybrid"
-            else:
-                backend_type = backend_name
+            backend_type = "qdrant"
 
             storage_info = {"backend": backend_type, "status": "connected", "accessible": True}
 
-            # Add backend-specific information if available
-            if hasattr(storage, "db_path"):
-                storage_info["database_path"] = storage.db_path
             if hasattr(storage, "embedding_model_name"):
                 storage_info["embedding_model"] = storage.embedding_model_name
-
-            # Add sync status for hybrid backend
-            if backend_type == "hybrid" and hasattr(storage, "get_sync_status"):
-                try:
-                    sync_status = await storage.get_sync_status()
-                    storage_info["sync_status"] = {
-                        "is_running": sync_status.get("is_running", False),
-                        "last_sync_time": sync_status.get("last_sync_time", 0),
-                        "pending_operations": sync_status.get("pending_operations", 0),
-                        "operations_processed": sync_status.get("operations_processed", 0),
-                        "operations_failed": sync_status.get("operations_failed", 0),
-                        "time_since_last_sync": time.time() - sync_status.get("last_sync_time", 0)
-                        if sync_status.get("last_sync_time", 0) > 0
-                        else 0,
-                    }
-                except Exception as sync_err:
-                    storage_info["sync_status"] = {"error": str(sync_err)}
 
             # Merge all stats
             storage_info.update(stats)
@@ -258,7 +229,7 @@ async def detailed_health_check(
         "unique_tags": storage_info.get("unique_tags", 0),
         "memories_this_week": storage_info.get("memories_this_week", 0),
         "database_size_mb": storage_info.get("database_size_mb", 0),
-        "backend": storage_info.get("backend", "sqlite-vec"),
+        "backend": storage_info.get("backend", "qdrant"),
     }
 
     return DetailedHealthResponse(

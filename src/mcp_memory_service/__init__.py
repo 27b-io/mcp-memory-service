@@ -52,13 +52,4 @@ from .models import Memory, MemoryQueryResult  # noqa: E402
 from .storage import MemoryStorage  # noqa: E402
 from .utils import generate_content_hash  # noqa: E402
 
-# Conditional imports
 __all__ = ["Memory", "MemoryQueryResult", "MemoryStorage", "generate_content_hash"]
-
-# Import storage backends conditionally
-try:
-    from .storage import SqliteVecMemoryStorage
-
-    __all__.append("SqliteVecMemoryStorage")
-except ImportError:
-    SqliteVecMemoryStorage = None

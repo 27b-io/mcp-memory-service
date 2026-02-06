@@ -12,13 +12,11 @@ import pytest
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from .conftest import (
-    SQLITE_VEC_AVAILABLE,
     calculate_hit_rate,
     get_test_cases,
 )
 
 
-@pytest.mark.skipif(not SQLITE_VEC_AVAILABLE, reason="sqlite-vec not available")
 class TestHitRate:
     """Hit Rate@10 evaluation tests."""
 

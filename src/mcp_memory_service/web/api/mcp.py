@@ -352,6 +352,6 @@ async def mcp_health():
         "status": "healthy",
         "protocol": "mcp",
         "tools_available": len(MCP_TOOLS),
-        "storage_backend": "sqlite-vec",
+        "storage_backend": "qdrant",
         "statistics": stats,
     }

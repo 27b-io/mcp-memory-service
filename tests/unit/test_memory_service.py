@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from mcp_memory_service.models.memory import Memory
+from mcp_memory_service.models.memory import Memory, MemoryQueryResult
 from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.storage.base import MemoryStorage
 
@@ -453,3 +453,335 @@ class TestHealthCheckResponses:
         assert result["total_memories"] == 42
         assert result["storage_type"] == "test"
         assert "last_updated" in result
+
+
+# =============================================================================
+# Typed Relationship Tests
+# =============================================================================
+
+
+class TestRelationOperations:
+    """Test create_relation, get_relations, delete_relation service methods."""
+
+    @pytest.fixture
+    def mock_graph_client(self):
+        """Create a mock graph client with typed edge methods."""
+        from unittest.mock import AsyncMock
+
+        client = AsyncMock()
+        client.create_typed_edge = AsyncMock(return_value=True)
+        client.get_typed_edges = AsyncMock(return_value=[])
+        client.delete_typed_edge = AsyncMock(return_value=True)
+        return client
+
+    @pytest.fixture
+    def service_with_graph(self, mock_storage, mock_graph_client):
+        """MemoryService with graph layer enabled."""
+        return MemoryService(
+            storage=mock_storage,
+            graph_client=mock_graph_client,
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_relation_success(self, service_with_graph, mock_graph_client):
+        result = await service_with_graph.create_relation("hash_a", "hash_b", "RELATES_TO")
+
+        assert result["success"] is True
+        assert result["source"] == "hash_a"
+        assert result["target"] == "hash_b"
+        assert result["relation_type"] == "RELATES_TO"
+        mock_graph_client.create_typed_edge.assert_called_once_with(
+            source_hash="hash_a", target_hash="hash_b", relation_type="RELATES_TO"
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_relation_nodes_missing(self, service_with_graph, mock_graph_client):
+        mock_graph_client.create_typed_edge.return_value = False
+
+        result = await service_with_graph.create_relation("missing", "also_missing", "PRECEDES")
+
+        assert result["success"] is False
+        assert "not found" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_create_relation_invalid_type(self, service_with_graph, mock_graph_client):
+        mock_graph_client.create_typed_edge.side_effect = ValueError("Invalid relation type")
+
+        result = await service_with_graph.create_relation("a", "b", "CAUSES")
+
+        assert result["success"] is False
+        assert "Invalid" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_create_relation_no_graph_layer(self, memory_service):
+        """Without graph layer, returns error."""
+        result = await memory_service.create_relation("a", "b", "RELATES_TO")
+
+        assert result["success"] is False
+        assert "not enabled" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_relations_success(self, service_with_graph, mock_graph_client):
+        mock_graph_client.get_typed_edges.return_value = [
+            {
+                "source": "hash_a",
+                "target": "hash_b",
+                "relation_type": "RELATES_TO",
+                "direction": "outgoing",
+                "created_at": 1700000000.0,
+            }
+        ]
+
+        result = await service_with_graph.get_relations("hash_a")
+
+        assert result["count"] == 1
+        assert result["relations"][0]["relation_type"] == "RELATES_TO"
+
+    @pytest.mark.asyncio
+    async def test_get_relations_no_graph_layer(self, memory_service):
+        result = await memory_service.get_relations("hash_a")
+
+        assert result["relations"] == []
+        assert result["content_hash"] == "hash_a"
+
+    @pytest.mark.asyncio
+    async def test_delete_relation_success(self, service_with_graph, mock_graph_client):
+        result = await service_with_graph.delete_relation("hash_a", "hash_b", "CONTRADICTS")
+
+        assert result["success"] is True
+        assert result["relation_type"] == "CONTRADICTS"
+
+    @pytest.mark.asyncio
+    async def test_delete_relation_not_found(self, service_with_graph, mock_graph_client):
+        mock_graph_client.delete_typed_edge.return_value = False
+
+        result = await service_with_graph.delete_relation("a", "b", "RELATES_TO")
+
+        assert result["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_create_relation_general_exception(self, service_with_graph, mock_graph_client):
+        """General exception from graph client is caught and reported."""
+        mock_graph_client.create_typed_edge.side_effect = ConnectionError("redis down")
+
+        result = await service_with_graph.create_relation("a", "b", "RELATES_TO")
+
+        assert result["success"] is False
+        assert "redis down" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_relations_with_type_filter(self, service_with_graph, mock_graph_client):
+        """relation_type parameter is passed through to graph client."""
+        mock_graph_client.get_typed_edges.return_value = []
+
+        await service_with_graph.get_relations("hash_a", relation_type="PRECEDES")
+
+        mock_graph_client.get_typed_edges.assert_called_once_with(
+            content_hash="hash_a", relation_type="PRECEDES"
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_relation_self_edge(self, service_with_graph, mock_graph_client):
+        """Self-edge raises ValueError, caught by service layer."""
+        mock_graph_client.create_typed_edge.side_effect = ValueError(
+            "Cannot create a relationship from a memory to itself"
+        )
+
+        result = await service_with_graph.create_relation("same", "same", "RELATES_TO")
+
+        assert result["success"] is False
+        assert "itself" in result["error"]
+
+
+# =============================================================================
+# Proactive Interference & Contradiction Detection Tests
+# =============================================================================
+
+
+class TestInterferenceDetection:
+    """Test contradiction detection during memory storage."""
+
+    @pytest.fixture
+    def mock_graph_client(self):
+        client = AsyncMock()
+        client.ensure_memory_node = AsyncMock()
+        client.create_typed_edge = AsyncMock(return_value=True)
+        return client
+
+    @pytest.fixture
+    def service_with_graph(self, mock_storage, mock_graph_client):
+        return MemoryService(
+            storage=mock_storage,
+            graph_client=mock_graph_client,
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_detects_contradiction(self, service_with_graph, mock_storage, mock_graph_client):
+        """When similar memory exists with contradicting content, interference is reported."""
+        # Existing memory says "enabled"
+        existing = Memory(
+            content="Feature flag oauth_v2 is enabled in production",
+            content_hash="existing_hash_123",
+            tags=["feature-flag"],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.9),
+        ]
+
+        # New memory says "disabled" — contradiction
+        result = await service_with_graph.store_memory(
+            content="Feature flag oauth_v2 is now disabled in production",
+        )
+
+        assert result["success"] is True
+        assert "interference" in result
+        assert result["interference"]["has_contradictions"] is True
+        assert result["interference"]["contradiction_count"] >= 1
+
+        # Should have created a CONTRADICTS edge in the graph
+        mock_graph_client.create_typed_edge.assert_any_call(
+            source_hash=result["memory"]["content_hash"],
+            target_hash="existing_hash_123",
+            relation_type="CONTRADICTS",
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_no_contradiction_when_consistent(self, service_with_graph, mock_storage):
+        """No interference when similar memories are consistent (not contradictory)."""
+        existing = Memory(
+            content="The API uses pagination with page and page_size parameters",
+            content_hash="existing_hash_456",
+            tags=["api"],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.85),
+        ]
+
+        result = await service_with_graph.store_memory(
+            content="The API supports pagination for all list endpoints",
+        )
+
+        assert result["success"] is True
+        # No interference key when no contradictions detected
+        assert "interference" not in result or not result.get("interference", {}).get("has_contradictions")
+
+    @pytest.mark.asyncio
+    async def test_store_no_interference_without_similar_memories(self, service_with_graph, mock_storage):
+        """No interference when no similar memories exist."""
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = []
+
+        result = await service_with_graph.store_memory(
+            content="Completely new topic with no related memories",
+        )
+
+        assert result["success"] is True
+        assert "interference" not in result
+
+    @pytest.mark.asyncio
+    async def test_store_succeeds_even_if_detection_fails(self, service_with_graph, mock_storage):
+        """Contradiction detection failure is non-fatal — memory still stored."""
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.side_effect = Exception("Search failed")
+
+        result = await service_with_graph.store_memory(
+            content="Some content that triggers a search failure",
+        )
+
+        # Memory should still be stored successfully
+        assert result["success"] is True
+        assert "memory" in result
+
+    @pytest.mark.asyncio
+    async def test_store_succeeds_without_graph_layer(self, memory_service, mock_storage):
+        """Without graph layer, contradiction detection still works (just no edges)."""
+        existing = Memory(
+            content="Feature X is enabled",
+            content_hash="existing_hash",
+            tags=[],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.9),
+        ]
+
+        result = await memory_service.store_memory(
+            content="Feature X is disabled",
+        )
+
+        assert result["success"] is True
+        # Should still detect and report contradictions
+        if "interference" in result:
+            assert result["interference"]["has_contradictions"] is True
+
+    @pytest.mark.asyncio
+    async def test_temporal_supersession_detected(self, service_with_graph, mock_storage, mock_graph_client):
+        """'No longer' phrasing triggers temporal supersession signal."""
+        existing = Memory(
+            content="Redis is used for caching in the API layer",
+            content_hash="redis_hash",
+            tags=["redis"],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.82),
+        ]
+
+        result = await service_with_graph.store_memory(
+            content="The system no longer uses Redis for caching",
+        )
+
+        assert result["success"] is True
+        assert "interference" in result
+        contradictions = result["interference"]["contradictions"]
+        temporal = [c for c in contradictions if c["signal_type"] == "temporal"]
+        assert len(temporal) >= 1
+
+    @pytest.mark.asyncio
+    async def test_skips_exact_duplicate_in_detection(self, service_with_graph, mock_storage):
+        """Exact duplicate (same content hash) is not flagged as contradiction."""
+        from mcp_memory_service.utils.hashing import generate_content_hash
+
+        content = "Test content for deduplication"
+        content_hash = generate_content_hash(content)
+        existing = Memory(
+            content=content,
+            content_hash=content_hash,
+            tags=[],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=1.0),
+        ]
+
+        result = await service_with_graph.store_memory(content=content)
+
+        assert result["success"] is True
+        # Should NOT report interference for exact same content
+        assert "interference" not in result
+
+    @pytest.mark.asyncio
+    async def test_graph_edge_failure_nonfatal(self, service_with_graph, mock_storage, mock_graph_client):
+        """Graph edge creation failure doesn't affect store result."""
+        existing = Memory(
+            content="Feature X is enabled in production",
+            content_hash="existing_hash",
+            tags=[],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.9),
+        ]
+        # Graph edge creation fails
+        mock_graph_client.create_typed_edge.side_effect = ConnectionError("redis down")
+
+        result = await service_with_graph.store_memory(
+            content="Feature X is disabled in production",
+        )
+
+        # Store should still succeed with interference reported
+        assert result["success"] is True
+        if "interference" in result:
+            assert result["interference"]["has_contradictions"] is True

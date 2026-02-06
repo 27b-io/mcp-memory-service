@@ -49,6 +49,17 @@ class Memory:
     updated_at: float | None = None
     updated_at_iso: str | None = None
 
+    # Emotional tagging and salience scoring
+    emotional_valence: dict[str, Any] | None = None  # {sentiment, magnitude, category}
+    salience_score: float = 0.0  # 0.0–1.0 computed importance
+    access_count: int = 0  # Retrieval frequency counter
+
+    # Spaced repetition: recent access timestamps (ring buffer, newest last)
+    access_timestamps: list[float] = field(default_factory=list)
+
+    # Encoding context: environmental context captured at storage time
+    encoding_context: dict[str, Any] | None = None
+
     # Legacy timestamp field (maintain for backward compatibility)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -220,6 +231,14 @@ class Memory:
             "created_at_iso": self.created_at_iso,
             "updated_at": self.updated_at,
             "updated_at_iso": self.updated_at_iso,
+            # Emotional tagging and salience
+            "emotional_valence": self.emotional_valence,
+            "salience_score": self.salience_score,
+            "access_count": self.access_count,
+            # Spaced repetition
+            "access_timestamps": self.access_timestamps,
+            # Encoding context
+            "encoding_context": self.encoding_context,
             **self.metadata,
         }
 
@@ -245,6 +264,17 @@ class Memory:
             if "timestamp_str" in data and created_at_iso is None:
                 created_at_iso = data["timestamp_str"]
 
+        # Extract emotional tagging and salience fields
+        emotional_valence = data.get("emotional_valence")
+        salience_score = float(data.get("salience_score", 0.0))
+        access_count = int(data.get("access_count", 0))
+
+        # Extract spaced repetition fields
+        access_timestamps = data.get("access_timestamps", [])
+
+        # Extract encoding context
+        encoding_context = data.get("encoding_context")
+
         # Create metadata dictionary without special fields
         metadata = {
             k: v
@@ -262,6 +292,11 @@ class Memory:
                 "created_at_iso",
                 "updated_at",
                 "updated_at_iso",
+                "emotional_valence",
+                "salience_score",
+                "access_count",
+                "access_timestamps",
+                "encoding_context",
             ]
         }
 
@@ -277,6 +312,11 @@ class Memory:
             created_at_iso=created_at_iso,
             updated_at=updated_at,
             updated_at_iso=updated_at_iso,
+            emotional_valence=emotional_valence,
+            salience_score=salience_score,
+            access_count=access_count,
+            access_timestamps=access_timestamps,
+            encoding_context=encoding_context,
         )
 
 

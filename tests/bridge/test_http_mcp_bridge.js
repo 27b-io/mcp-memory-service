@@ -170,14 +170,14 @@ describe('HTTP-MCP Bridge', () => {
                 statusCode: 200,
                 data: {
                     status: 'healthy',
-                    storage_type: 'sqlite_vec',
+                    storage_type: 'qdrant',
                     statistics: { total_memories: 100 }
                 }
             });
 
             const result = await bridge.checkHealth();
             assert.strictEqual(result.status, 'healthy');
-            assert.strictEqual(result.backend, 'sqlite_vec');
+            assert.strictEqual(result.backend, 'qdrant');
             assert.deepStrictEqual(result.statistics, { total_memories: 100 });
         });
 

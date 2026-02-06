@@ -16,7 +16,6 @@
 Main CLI entry point for MCP Memory Service.
 """
 
-import os
 import sys
 
 import click
@@ -47,29 +46,18 @@ def cli(ctx):
             stacklevel=2,
         )
         # Default to server command with default options for backward compatibility
-        ctx.invoke(server, debug=False, storage_backend=None)
+        ctx.invoke(server, debug=False)
 
 
 @cli.command()
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-@click.option(
-    "--storage-backend",
-    "-s",
-    default=None,
-    type=click.Choice(["sqlite_vec", "sqlite-vec", "qdrant"]),
-    help="Storage backend to use (defaults to environment or sqlite_vec)",
-)
-def server(debug, storage_backend):
+def server(debug):
     """
     Start the MCP Memory Service server.
 
     This starts the Model Context Protocol server that can be used by
     Claude Desktop, VS Code extensions, and other MCP-compatible clients.
     """
-    # Set environment variables if explicitly provided
-    if storage_backend is not None:
-        os.environ["MCP_MEMORY_STORAGE_BACKEND"] = storage_backend
-
     # Import and run the unified server
     from ..unified_server import main as server_main
 
@@ -84,14 +72,7 @@ def server(debug, storage_backend):
 
 
 @cli.command()
-@click.option(
-    "--storage-backend",
-    "-s",
-    default="sqlite_vec",
-    type=click.Choice(["sqlite_vec", "sqlite-vec", "qdrant"]),
-    help="Storage backend to use",
-)
-def status(storage_backend: str):
+def status():
     """
     Show memory service status and statistics.
     """
@@ -101,7 +82,7 @@ def status(storage_backend: str):
         try:
             from .utils import get_storage
 
-            storage = await get_storage(storage_backend)
+            storage = await get_storage()
             stats = await storage.get_stats() if hasattr(storage, "get_stats") else {}
 
             click.echo("📊 MCP Memory Service Status\n")

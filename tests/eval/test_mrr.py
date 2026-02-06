@@ -12,13 +12,11 @@ import pytest
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from .conftest import (
-    SQLITE_VEC_AVAILABLE,
     calculate_mrr,
     get_test_cases,
 )
 
 
-@pytest.mark.skipif(not SQLITE_VEC_AVAILABLE, reason="sqlite-vec not available")
 class TestMRR:
     """Mean Reciprocal Rank evaluation tests."""
 

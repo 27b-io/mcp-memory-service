@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 keywords = [
     "mcp", "model-context-protocol", "claude-desktop", "semantic-memory",
-    "vector-database", "ai-assistant", "sqlite-vec", "multi-client",
+    "vector-database", "ai-assistant", "qdrant", "multi-client",
     "semantic-search", "memory-consolidation", "ai-productivity", "vs-code",
     "cursor", "continue", "fastapi", "developer-tools", "cross-platform"
 ]
@@ -37,7 +37,6 @@ license = { text = "WTFPL" }
 dependencies = [
     "tokenizers==0.20.3",
     "fastmcp>=2.13.0",
-    "sqlite-vec>=0.1.0",
     "qdrant-client>=1.7.0",
     "build>=0.10.0",
     "aiohttp>=3.8.0",
@@ -55,6 +54,8 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "typing-extensions>=4.0.0; python_version < '3.11'",
     "tenacity>=8.0.0",
+    "falkordb>=1.0.0",
+    "redis>=5.0.0",
     "optimum[onnxruntime]>=1.16.0", # ONNX backend for 1.5-3x speedup on ARM64
     "onnxruntime>=1.17.0", # Explicit ONNX Runtime for ARM64 optimization
     "toon-format>=0.9.0b1",
@@ -66,18 +67,6 @@ dependencies = [
 ml = [
     "sentence-transformers>=2.2.2",
     "torch>=2.0.0"
-]
-# SQLite-vec with lightweight ONNX embeddings (recommended for most users)
-sqlite = [
-    "onnxruntime>=1.14.1"
-]
-# SQLite-vec with full ML capabilities (for advanced features)
-sqlite-ml = [
-    "mcp-memory-service[sqlite,ml]"
-]
-# Full installation including all optional dependencies
-full = [
-    "mcp-memory-service[sqlite,ml]"
 ]
 
 [project.scripts]

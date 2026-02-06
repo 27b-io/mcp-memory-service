@@ -24,7 +24,6 @@ import os
 import secrets
 import threading
 import time
-from typing import Literal
 
 from platformdirs import user_data_dir
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -118,8 +117,6 @@ class PathSettings(BaseSettings):
 
     backups_path: str | None = Field(default=None, description="Path for database backups")
 
-    sqlite_path: str | None = Field(default=None, alias="SQLITEVEC_PATH", description="Path to SQLite-vec database file")
-
     @model_validator(mode="after")
     def validate_paths(self) -> "PathSettings":
         """Validate and create all paths."""
@@ -160,10 +157,6 @@ class StorageSettings(BaseSettings):
         env_prefix="MCP_MEMORY_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    storage_backend: Literal["sqlite_vec", "sqlite-vec", "qdrant"] = Field(
-        default="sqlite_vec", description="Storage backend to use"
-    )
-
     embedding_model: str = Field(
         default="intfloat/e5-base-v2",  # E5-base: ~63 MTEB avg, 768-dim, fast, no prefixes, CPU-optimized
         description="Embedding model name (env: MCP_MEMORY_EMBEDDING_MODEL)",
@@ -171,24 +164,12 @@ class StorageSettings(BaseSettings):
 
     use_onnx: bool = Field(default=False, description="Use ONNX for embeddings (PyTorch-free) (env: MCP_MEMORY_USE_ONNX)")
 
-    @field_validator("storage_backend")
-    @classmethod
-    def normalize_backend(cls, v: str) -> str:
-        """Normalize backend names."""
-        if v == "sqlite-vec":
-            return "sqlite_vec"
-        return v.lower()
-
 
 class ContentLimitsSettings(BaseSettings):
     """Content length limits and splitting configuration."""
 
     model_config = SettingsConfigDict(
         env_prefix="MCP_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
-    )
-
-    sqlitevec_max_content_length: int | None = Field(
-        default=None, ge=100, le=10000, description="SQLite-vec content length limit (None = unlimited)"
     )
 
     enable_auto_split: bool = Field(default=True, description="Enable automatic content splitting when limits exceeded")
@@ -384,6 +365,243 @@ class QdrantSettings(BaseSettings):
         return self
 
 
+class FalkorDBSettings(BaseSettings):
+    """FalkorDB graph database configuration for cognitive memory graph layer."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_FALKORDB_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+    )
+
+    # Connection
+    host: str = Field(default="localhost", description="FalkorDB host (runs on Redis protocol)")
+    port: int = Field(default=6379, ge=1, le=65535, description="FalkorDB port")
+    password: SecretStr | None = Field(default=None, description="FalkorDB/Redis password")
+
+    # Graph
+    graph_name: str = Field(default="memory_graph", description="Name of the graph within FalkorDB")
+
+    # CQRS write queue (uses Redis LPUSH/BRPOP on the same FalkorDB instance)
+    write_queue_key: str = Field(default="mcp:graph:write_queue", description="Redis key for Hebbian write queue")
+    write_queue_batch_size: int = Field(default=50, ge=1, le=500, description="Max edges to process per consumer tick")
+    write_queue_poll_interval: float = Field(
+        default=0.5, ge=0.1, le=10.0, description="Seconds between BRPOP polls when queue is empty"
+    )
+
+    # Connection pool
+    max_connections: int = Field(default=16, ge=1, le=128, description="Max connections in Redis pool (for concurrent reads)")
+
+    # Hebbian learning parameters
+    hebbian_initial_weight: float = Field(
+        default=0.1, ge=0.01, le=1.0, description="Initial weight for new Hebbian edges"
+    )
+    hebbian_strengthen_rate: float = Field(
+        default=0.15,
+        ge=0.01,
+        le=1.0,
+        description="Multiplicative strengthen rate per co-access (w *= 1 + rate)",
+    )
+    hebbian_max_weight: float = Field(
+        default=1.0, ge=0.1, le=10.0, description="Maximum Hebbian edge weight"
+    )
+
+    # Spreading activation parameters
+    spreading_activation_max_hops: int = Field(
+        default=2, ge=1, le=3, description="Max BFS hops for spreading activation"
+    )
+    spreading_activation_decay: float = Field(
+        default=0.5, ge=0.01, le=1.0, description="Per-hop exponential decay factor (activation *= decay^hops)"
+    )
+    spreading_activation_boost: float = Field(
+        default=0.2, ge=0.0, le=1.0, description="Weight of graph activation boost on vector scores"
+    )
+    spreading_activation_min_activation: float = Field(
+        default=0.01, ge=0.0, le=1.0, description="Minimum activation threshold to consider a neighbor"
+    )
+
+    # Feature flag
+    enabled: bool = Field(default=False, description="Enable FalkorDB graph layer")
+
+
+class ConsolidationSettings(BaseSettings):
+    """Memory consolidation configuration for periodic pruning and strengthening."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_CONSOLIDATION_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    decay_factor: float = Field(
+        default=0.9,
+        ge=0.01,
+        le=0.99,
+        description="Global edge weight decay per consolidation run (synaptic homeostasis)",
+    )
+    prune_threshold: float = Field(
+        default=0.05,
+        ge=0.001,
+        le=0.5,
+        description="Delete edges with weight below this after decay",
+    )
+    stale_edge_days: int = Field(
+        default=30,
+        ge=1,
+        le=365,
+        description="Edges not co-accessed within this many days are candidates for extra decay",
+    )
+    stale_decay_factor: float = Field(
+        default=0.5,
+        ge=0.01,
+        le=0.99,
+        description="Additional decay applied to stale edges (on top of global decay)",
+    )
+    max_edges_per_run: int = Field(
+        default=10000,
+        ge=100,
+        le=100000,
+        description="Maximum edges to process per consolidation run (safety limit)",
+    )
+    duplicate_similarity_threshold: float = Field(
+        default=0.95,
+        ge=0.8,
+        le=1.0,
+        description="Cosine similarity above which memories are considered duplicates",
+    )
+    max_duplicates_per_run: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum duplicate pairs to merge per run",
+    )
+
+
+class InterferenceSettings(BaseSettings):
+    """Proactive interference and contradiction detection configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_INTERFERENCE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable contradiction detection at store time")
+
+    similarity_threshold: float = Field(
+        default=0.7,
+        ge=0.5,
+        le=0.95,
+        description="Minimum cosine similarity to consider a memory as potentially contradictory",
+    )
+    min_confidence: float = Field(
+        default=0.3,
+        ge=0.1,
+        le=0.9,
+        description="Minimum confidence for a contradiction signal to be reported",
+    )
+    max_candidates: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum similar memories to check for contradictions per store",
+    )
+
+
+class SalienceSettings(BaseSettings):
+    """Salience scoring configuration for emotional tagging and retrieval boosting."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_SALIENCE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable emotional tagging and salience scoring")
+
+    # Salience computation weights (must sum to ~1.0 for interpretability)
+    emotional_weight: float = Field(
+        default=0.3, ge=0.0, le=1.0, description="Weight for emotional magnitude in salience score"
+    )
+    frequency_weight: float = Field(
+        default=0.3, ge=0.0, le=1.0, description="Weight for access frequency in salience score"
+    )
+    importance_weight: float = Field(
+        default=0.4, ge=0.0, le=1.0, description="Weight for explicit importance in salience score"
+    )
+
+    # Retrieval boost
+    boost_weight: float = Field(
+        default=0.15, ge=0.0, le=1.0, description="Max salience boost on retrieval scores (0.15 = up to +15%)"
+    )
+
+
+class SpacedRepetitionSettings(BaseSettings):
+    """Spaced repetition and adaptive LTP configuration.
+
+    Implements two neuroscience-inspired memory strengthening mechanisms:
+
+    1. Spacing effect: Memories accessed at increasing intervals receive stronger
+       retrieval boosts than those accessed in rapid bursts (Ebbinghaus, 1885).
+    2. Adaptive LTP: Hebbian edge strengthening rate decreases as edge weight
+       approaches maximum, preventing runaway potentiation (BCM theory).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_SPACED_REPETITION_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable spaced repetition and adaptive LTP")
+
+    boost_weight: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Max spacing quality boost on retrieval scores (0.1 = up to +10%)",
+    )
+
+    max_timestamps: int = Field(
+        default=20,
+        ge=5,
+        le=100,
+        description="Maximum access timestamps to retain per memory (ring buffer)",
+    )
+
+
+class EncodingContextSettings(BaseSettings):
+    """Encoding context capture and context-dependent retrieval configuration.
+
+    Implements the encoding specificity principle (Tulving & Thomson, 1973):
+    memories encoded in a particular context are retrieved more effectively
+    when that same context is present at retrieval time.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_ENCODING_CONTEXT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable encoding context capture and context-dependent retrieval")
+
+    boost_weight: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Max context similarity boost on retrieval scores (0.1 = up to +10%)",
+    )
+
+
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
 
@@ -450,8 +668,14 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     content_limits: ContentLimitsSettings = Field(default_factory=ContentLimitsSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
+    falkordb: FalkorDBSettings = Field(default_factory=FalkorDBSettings)
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
+    consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
+    interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
+    salience: SalienceSettings = Field(default_factory=SalienceSettings)
+    spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)
+    encoding_context: EncodingContextSettings = Field(default_factory=EncodingContextSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
@@ -459,19 +683,6 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_backend_requirements(self) -> "Settings":
         """Validate that required backend configuration is present."""
-        backend = self.storage.storage_backend
-
-        # Set SQLite path if needed
-        if backend == "sqlite_vec":
-            if not self.paths.sqlite_path:
-                self.paths.sqlite_path = os.path.join(self.paths.base_dir, "sqlite_vec.db")
-                logger.info(f"Using default SQLite path: {self.paths.sqlite_path}")
-
-            # Ensure directory exists
-            sqlite_dir = os.path.dirname(self.paths.sqlite_path)
-            if sqlite_dir:
-                os.makedirs(sqlite_dir, exist_ok=True)
-
         # Set OAuth issuer if not provided
         if self.oauth.enabled and not self.oauth.issuer:
             scheme = "https" if self.http.https_enabled else "http"
@@ -493,16 +704,13 @@ class Settings(BaseSettings):
         logger.info("MCP Memory Service Configuration")
         logger.info("=" * 80)
         logger.info(f"Server: {self.server.name} v{self.server.version}")
-        logger.info(f"Storage Backend: {self.storage.storage_backend}")
+        logger.info("Storage Backend: Qdrant")
         logger.info(f"Base Directory: {self.paths.base_dir}")
 
-        if self.storage.storage_backend == "sqlite_vec":
-            logger.info(f"SQLite Path: {self.paths.sqlite_path}")
-        elif self.storage.storage_backend == "qdrant":
-            if self.qdrant.url:
-                logger.info(f"Qdrant URL: {self.qdrant.url}")
-            else:
-                logger.info(f"Qdrant Storage: {self.qdrant.storage_path}")
+        if self.qdrant.url:
+            logger.info(f"Qdrant URL: {self.qdrant.url}")
+        else:
+            logger.info(f"Qdrant Storage: {self.qdrant.storage_path}")
 
         if self.http.http_enabled:
             logger.info(f"HTTP Server: {self.http.http_host}:{self.http.http_port}")
@@ -573,16 +781,13 @@ def __getattr__(name: str):
         # Paths
         "BASE_DIR": lambda: _settings.paths.base_dir,
         "BACKUPS_PATH": lambda: _settings.paths.backups_path,
-        "SQLITE_VEC_PATH": lambda: _settings.paths.sqlite_path,
         # Server
         "SERVER_NAME": lambda: _settings.server.name,
         "SERVER_VERSION": lambda: _settings.server.version,
         # Storage
-        "STORAGE_BACKEND": lambda: _settings.storage.storage_backend,
         "EMBEDDING_MODEL_NAME": lambda: _settings.storage.embedding_model,
         "USE_ONNX": lambda: _settings.storage.use_onnx,
         # Content limits
-        "SQLITEVEC_MAX_CONTENT_LENGTH": lambda: _settings.content_limits.sqlitevec_max_content_length,
         "ENABLE_AUTO_SPLIT": lambda: _settings.content_limits.enable_auto_split,
         "CONTENT_SPLIT_OVERLAP": lambda: _settings.content_limits.content_split_overlap,
         "CONTENT_PRESERVE_BOUNDARIES": lambda: _settings.content_limits.content_preserve_boundaries,
@@ -597,7 +802,6 @@ def __getattr__(name: str):
         "SSL_CERT_FILE": lambda: _settings.http.ssl_cert_file,
         "SSL_KEY_FILE": lambda: _settings.http.ssl_key_file,
         "MDNS_ENABLED": lambda: _settings.http.mdns_enabled,
-        "DATABASE_PATH": lambda: _settings.paths.sqlite_path or os.path.join(_settings.paths.base_dir, "memory_http.db"),
         # OAuth
         "OAUTH_ENABLED": lambda: _settings.oauth.enabled,
         "OAUTH_PRIVATE_KEY": lambda: _settings.oauth.private_key.get_secret_value() if _settings.oauth.private_key else None,
@@ -625,9 +829,6 @@ def __getattr__(name: str):
 
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-
-# Constants that don't need lazy loading
-SUPPORTED_BACKENDS = ["sqlite_vec", "sqlite-vec", "qdrant"]
 
 # Note: All config values are now lazy-loaded via __getattr__ above
 # Do not add assignments here - they will trigger eager Settings() instantiation
