@@ -88,9 +88,9 @@ class TestExecuteWrite:
     """Test write operation execution against the graph."""
 
     @pytest.mark.asyncio
-    async def test_strengthen_edge_uses_multiplicative_update(self, queue, mock_graph):
-        """Verify the Cypher uses multiplicative w * (1 + rate), not additive w + delta."""
-        await queue._strengthen_edge("src", "dst", 1700000000.0)
+    async def test_strengthen_edge_uses_adaptive_ltp(self, queue, mock_graph):
+        """Verify the Cypher uses adaptive LTP: rate * (1 - weight/max) * spacing_mod."""
+        await queue._strengthen_edge("src", "dst", 1700000000.0, spacing_quality=0.5)
 
         mock_graph.query.assert_called_once()
         query = mock_graph.query.call_args[0][0]
@@ -101,16 +101,18 @@ class TestExecuteWrite:
         assert "HEBBIAN" in query
         assert "co_access_count" in query
 
-        # Multiplicative formula: w * (1.0 + $rate)
-        assert "e.weight * (1.0 + $rate)" in query
+        # Adaptive LTP formula: rate * (1 - weight/max_w) * spacing_mod
+        assert "$rate * (1.0 - e.weight / $max_w) * $sp_mod" in query
 
-        # Must NOT contain additive formula
-        assert "e.weight + $delta" not in query
+        # Must NOT contain old multiplicative formula
+        assert "e.weight * (1.0 + $rate)" not in query
 
         # Params use instance config values
         assert params["init_w"] == 0.1
         assert params["rate"] == 0.15
         assert params["max_w"] == 1.0
+        # spacing_mod = 0.5 + 0.5 * 0.5 = 0.75
+        assert abs(params["sp_mod"] - 0.75) < 0.001
 
     @pytest.mark.asyncio
     async def test_strengthen_edge_uses_custom_config(self, mock_pool, mock_graph):

@@ -540,6 +540,42 @@ class SalienceSettings(BaseSettings):
     )
 
 
+class SpacedRepetitionSettings(BaseSettings):
+    """Spaced repetition and adaptive LTP configuration.
+
+    Implements two neuroscience-inspired memory strengthening mechanisms:
+
+    1. Spacing effect: Memories accessed at increasing intervals receive stronger
+       retrieval boosts than those accessed in rapid bursts (Ebbinghaus, 1885).
+    2. Adaptive LTP: Hebbian edge strengthening rate decreases as edge weight
+       approaches maximum, preventing runaway potentiation (BCM theory).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_SPACED_REPETITION_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable spaced repetition and adaptive LTP")
+
+    boost_weight: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Max spacing quality boost on retrieval scores (0.1 = up to +10%)",
+    )
+
+    max_timestamps: int = Field(
+        default=20,
+        ge=5,
+        le=100,
+        description="Maximum access timestamps to retain per memory (ring buffer)",
+    )
+
+
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
 
@@ -612,6 +648,7 @@ class Settings(BaseSettings):
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
     interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
+    spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)

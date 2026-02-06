@@ -85,17 +85,24 @@ class HebbianWriteQueue:
     # ── Producer methods (called from any service instance) ─────────────
 
     async def enqueue_strengthen(
-        self, source_hash: str, target_hash: str
+        self, source_hash: str, target_hash: str, spacing_quality: float = 0.0
     ) -> None:
         """
         Enqueue a Hebbian strengthening event for co-accessed memories.
 
         Called when two memories are retrieved together in the same query result.
+
+        Args:
+            source_hash: Content hash of source memory
+            target_hash: Content hash of target memory
+            spacing_quality: How well-spaced the access pattern is (0.0–1.0).
+                Used for adaptive LTP modulation of the strengthen rate.
         """
         await self._enqueue({
             "op": "strengthen",
             "source": source_hash,
             "target": target_hash,
+            "spacing_quality": spacing_quality,
             "ts": time.time(),
         })
 
@@ -210,7 +217,7 @@ class HebbianWriteQueue:
         target = op["target"]
 
         if op_type == "strengthen":
-            await self._strengthen_edge(source, target, op["ts"])
+            await self._strengthen_edge(source, target, op["ts"], op.get("spacing_quality", 0.0))
         elif op_type == "weaken":
             await self._weaken_edge(source, target, op.get("decay", 0.95))
         elif op_type == "delete":
@@ -219,25 +226,33 @@ class HebbianWriteQueue:
             logger.warning(f"Unknown write op: {op_type}")
 
     async def _strengthen_edge(
-        self, source: str, target: str, timestamp: float
+        self, source: str, target: str, timestamp: float,
+        spacing_quality: float = 0.0,
     ) -> None:
         """
         Strengthen or create a Hebbian edge between two memories.
 
-        Uses MERGE for idempotent edge creation, then applies multiplicative
-        weight update: w *= (1 + rate), capped at max_weight.
+        Uses MERGE for idempotent edge creation, then applies adaptive LTP:
+        - Weight saturation: rate decreases as weight approaches max_weight
+          (BCM theory — prevents runaway potentiation)
+        - Spacing modulation: well-spaced access patterns strengthen more
+          effectively than clustered access (spaced repetition effect)
 
-        Multiplicative strengthening means stronger connections reinforce
-        faster — matching biological Hebbian plasticity.
+        Effective rate = base_rate * (1 - weight/max_weight) * spacing_modifier
+        where spacing_modifier = 0.5 + 0.5 * spacing_quality
         """
+        # Precompute spacing modifier (0.5 for clustered, 1.0 for perfectly spaced)
+        spacing_mod = 0.5 + 0.5 * max(0.0, min(1.0, spacing_quality))
+
         await self._graph.query(
             "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
             "MERGE (a)-[e:HEBBIAN]->(b) "
             "ON CREATE SET e.weight = $init_w, e.co_access_count = 1, "
             "  e.created_at = $ts, e.last_co_access = $ts "
             "ON MATCH SET e.weight = toFloat(CASE "
-            "  WHEN e.weight * (1.0 + $rate) > $max_w THEN $max_w "
-            "  ELSE e.weight * (1.0 + $rate) END), "
+            "  WHEN e.weight + $rate * (1.0 - e.weight / $max_w) * $sp_mod > $max_w "
+            "    THEN $max_w "
+            "  ELSE e.weight + $rate * (1.0 - e.weight / $max_w) * $sp_mod END), "
             "  e.co_access_count = e.co_access_count + 1, "
             "  e.last_co_access = $ts",
             params={
@@ -246,6 +261,7 @@ class HebbianWriteQueue:
                 "init_w": self._initial_weight,
                 "rate": self._strengthen_rate,
                 "max_w": self._max_weight,
+                "sp_mod": spacing_mod,
                 "ts": timestamp,
             },
         )

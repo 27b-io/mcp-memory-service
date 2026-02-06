@@ -20,6 +20,7 @@ Provides embedded vector storage using Qdrant with circuit breaker and model tra
 import asyncio
 import logging
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -654,6 +655,7 @@ class QdrantStorage(MemoryStorage):
                     "emotional_valence": memory.emotional_valence,
                     "salience_score": memory.salience_score,
                     "access_count": memory.access_count,
+                    "access_timestamps": memory.access_timestamps,
                 },
             )
 
@@ -786,6 +788,7 @@ class QdrantStorage(MemoryStorage):
                         emotional_valence=payload.get("emotional_valence"),
                         salience_score=float(payload.get("salience_score", 0.0)),
                         access_count=int(payload.get("access_count", 0)),
+                        access_timestamps=payload.get("access_timestamps", []),
                     )
 
                     # Qdrant score is already a similarity score (1.0 = perfect match for cosine)
@@ -955,6 +958,7 @@ class QdrantStorage(MemoryStorage):
                     emotional_valence=payload.get("emotional_valence"),
                     salience_score=float(payload.get("salience_score", 0.0)),
                     access_count=int(payload.get("access_count", 0)),
+                    access_timestamps=payload.get("access_timestamps", []),
                 )
                 memories.append(memory)
 
@@ -1009,6 +1013,7 @@ class QdrantStorage(MemoryStorage):
                 emotional_valence=payload.get("emotional_valence"),
                 salience_score=float(payload.get("salience_score", 0.0)),
                 access_count=int(payload.get("access_count", 0)),
+                access_timestamps=payload.get("access_timestamps", []),
             )
 
             self._record_success()
@@ -1232,14 +1237,21 @@ class QdrantStorage(MemoryStorage):
 
     async def increment_access_count(self, content_hash: str) -> None:
         """
-        Atomically increment the access_count field for a memory.
+        Atomically increment access_count and append to access_timestamps.
 
         Fire-and-forget operation — failures are logged but not raised.
-        Used to track retrieval frequency for salience scoring.
+        Used to track retrieval frequency for salience scoring and
+        access timing for spaced repetition.
+
+        Timestamps are kept as a ring buffer capped at max_timestamps
+        (from SpacedRepetitionSettings) to prevent unbounded growth.
         """
         try:
+            from ..config import settings
+
             point_id = self._hash_to_uuid(content_hash)
             loop = asyncio.get_event_loop()
+            now = time.time()
 
             # Read current point
             points = await loop.run_in_executor(
@@ -1247,21 +1259,32 @@ class QdrantStorage(MemoryStorage):
                 lambda: self.client.retrieve(
                     collection_name=self.collection_name,
                     ids=[point_id],
-                    with_payload=["access_count"],
+                    with_payload=["access_count", "access_timestamps"],
                 ),
             )
 
             if not points:
                 return
 
-            current_count = int(points[0].payload.get("access_count", 0))
+            payload = points[0].payload
+            current_count = int(payload.get("access_count", 0))
+            timestamps = list(payload.get("access_timestamps", []))
 
-            # Update with incremented count
+            # Append current timestamp and cap at max
+            timestamps.append(now)
+            max_ts = settings.spaced_repetition.max_timestamps
+            if len(timestamps) > max_ts:
+                timestamps = timestamps[-max_ts:]
+
+            # Update with incremented count and timestamps
             await loop.run_in_executor(
                 None,
                 lambda: self.client.set_payload(
                     collection_name=self.collection_name,
-                    payload={"access_count": current_count + 1},
+                    payload={
+                        "access_count": current_count + 1,
+                        "access_timestamps": timestamps,
+                    },
                     points=[point_id],
                 ),
             )
@@ -1401,6 +1424,7 @@ class QdrantStorage(MemoryStorage):
                     emotional_valence=payload.get("emotional_valence"),
                     salience_score=float(payload.get("salience_score", 0.0)),
                     access_count=int(payload.get("access_count", 0)),
+                    access_timestamps=payload.get("access_timestamps", []),
                 )
                 memories.append(memory)
 
@@ -1517,6 +1541,7 @@ class QdrantStorage(MemoryStorage):
                         emotional_valence=payload.get("emotional_valence"),
                         salience_score=float(payload.get("salience_score", 0.0)),
                         access_count=int(payload.get("access_count", 0)),
+                        access_timestamps=payload.get("access_timestamps", []),
                     )
                     memories.append(memory)
 
@@ -1576,6 +1601,7 @@ class QdrantStorage(MemoryStorage):
                 emotional_valence=payload.get("emotional_valence"),
                 salience_score=float(payload.get("salience_score", 0.0)),
                 access_count=int(payload.get("access_count", 0)),
+                access_timestamps=payload.get("access_timestamps", []),
             )
 
             self._record_success()
@@ -1672,6 +1698,7 @@ class QdrantStorage(MemoryStorage):
                         emotional_valence=payload.get("emotional_valence"),
                         salience_score=float(payload.get("salience_score", 0.0)),
                         access_count=int(payload.get("access_count", 0)),
+                        access_timestamps=payload.get("access_timestamps", []),
                     )
                     memories.append(memory)
 

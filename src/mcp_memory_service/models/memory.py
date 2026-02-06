@@ -54,6 +54,9 @@ class Memory:
     salience_score: float = 0.0  # 0.0–1.0 computed importance
     access_count: int = 0  # Retrieval frequency counter
 
+    # Spaced repetition: recent access timestamps (ring buffer, newest last)
+    access_timestamps: list[float] = field(default_factory=list)
+
     # Legacy timestamp field (maintain for backward compatibility)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -229,6 +232,8 @@ class Memory:
             "emotional_valence": self.emotional_valence,
             "salience_score": self.salience_score,
             "access_count": self.access_count,
+            # Spaced repetition
+            "access_timestamps": self.access_timestamps,
             **self.metadata,
         }
 
@@ -259,6 +264,9 @@ class Memory:
         salience_score = float(data.get("salience_score", 0.0))
         access_count = int(data.get("access_count", 0))
 
+        # Extract spaced repetition fields
+        access_timestamps = data.get("access_timestamps", [])
+
         # Create metadata dictionary without special fields
         metadata = {
             k: v
@@ -279,6 +287,7 @@ class Memory:
                 "emotional_valence",
                 "salience_score",
                 "access_count",
+                "access_timestamps",
             ]
         }
 
@@ -297,6 +306,7 @@ class Memory:
             emotional_valence=emotional_valence,
             salience_score=salience_score,
             access_count=access_count,
+            access_timestamps=access_timestamps,
         )
 
 

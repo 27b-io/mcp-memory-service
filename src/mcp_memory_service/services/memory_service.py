@@ -33,6 +33,7 @@ from ..utils.hybrid_search import (
 )
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
+from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
 
 logger = logging.getLogger(__name__)
 
@@ -103,22 +104,31 @@ class MemoryService:
             logger.warning(f"Spreading activation failed (non-fatal): {e}")
             return {}
 
-    async def _fire_hebbian_co_access(self, content_hashes: list[str]) -> None:
+    async def _fire_hebbian_co_access(
+        self, content_hashes: list[str], spacing_qualities: list[float] | None = None
+    ) -> None:
         """
         Enqueue Hebbian strengthening for all pairs of co-retrieved memories.
 
         Called after a retrieval returns multiple results. Non-blocking,
         non-fatal — write failures don't affect the read path.
+
+        Args:
+            content_hashes: Hashes of co-retrieved memories
+            spacing_qualities: Per-memory spacing quality scores for LTP modulation.
+                If provided, the mean spacing of each pair is used.
         """
         if self._write_queue is None or len(content_hashes) < 2:
             return
 
         try:
-            # Create edges for all pairs (bidirectional)
+            sq = spacing_qualities or [0.0] * len(content_hashes)
             for i, src in enumerate(content_hashes):
-                for dst in content_hashes[i + 1 :]:
-                    await self._write_queue.enqueue_strengthen(src, dst)
-                    await self._write_queue.enqueue_strengthen(dst, src)
+                for j, dst in enumerate(content_hashes[i + 1 :], start=i + 1):
+                    # Use mean spacing quality of the pair
+                    pair_spacing = (sq[i] + sq[j]) / 2.0
+                    await self._write_queue.enqueue_strengthen(src, dst, pair_spacing)
+                    await self._write_queue.enqueue_strengthen(dst, src, pair_spacing)
         except Exception as e:
             logger.warning(f"Hebbian co-access enqueue failed (non-fatal): {e}")
 
@@ -303,15 +313,18 @@ class MemoryService:
         # Extract hashes and scores for graph boosting
         results = []
         result_hashes = []
+        result_memories = []  # Parallel list of Memory objects for spacing boost
         for item in memories:
             if hasattr(item, "memory"):
                 memory_dict = self._format_memory_response(item.memory)
                 memory_dict["similarity_score"] = item.similarity_score
                 results.append(memory_dict)
                 result_hashes.append(item.memory.content_hash)
+                result_memories.append(item.memory)
             else:
                 results.append(self._format_memory_response(item))
                 result_hashes.append(item.content_hash)
+                result_memories.append(item)
 
         # Apply spreading activation boost from graph layer
         graph_boosts = await self._compute_graph_boosts(result_hashes)
@@ -336,8 +349,23 @@ class MemoryService:
                     )
             results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
 
+        # Apply spaced repetition boost and collect spacing qualities for LTP
+        spacing_qualities = []
+        if settings.spaced_repetition.enabled:
+            for result, mem in zip(results, result_memories):
+                spacing = compute_spacing_quality(mem.access_timestamps)
+                spacing_qualities.append(spacing)
+                if spacing > 0:
+                    result["similarity_score"] = apply_spacing_boost(
+                        result.get("similarity_score", 0.0),
+                        spacing,
+                        settings.spaced_repetition.boost_weight,
+                    )
+                    result["spacing_quality"] = spacing
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
         # Fire Hebbian co-access events for co-retrieved memories
-        await self._fire_hebbian_co_access(result_hashes)
+        await self._fire_hebbian_co_access(result_hashes, spacing_qualities or None)
 
         # Track access counts (fire-and-forget)
         self._fire_access_count_updates(result_hashes)
@@ -684,6 +712,17 @@ class MemoryService:
                     salience_boosted.append((memory, score, debug_info))
                 combined = sorted(salience_boosted, key=lambda x: x[1], reverse=True)
 
+            # Apply spaced repetition boost
+            if settings.spaced_repetition.enabled:
+                spacing_boosted = []
+                for memory, score, debug_info in combined:
+                    spacing = compute_spacing_quality(memory.access_timestamps)
+                    if spacing > 0:
+                        score = apply_spacing_boost(score, spacing, settings.spaced_repetition.boost_weight)
+                        debug_info = {**debug_info, "spacing_quality": spacing}
+                    spacing_boosted.append((memory, score, debug_info))
+                combined = sorted(spacing_boosted, key=lambda x: x[1], reverse=True)
+
             # Apply pagination to combined results (offset calculated above for fetch_size)
             total = len(combined)
             paginated = combined[offset : offset + page_size]
@@ -691,15 +730,21 @@ class MemoryService:
             # Format results and collect hashes for Hebbian co-access
             results = []
             result_hashes = []
+            result_spacing = []
             for memory, score, debug_info in paginated:
                 memory_dict = self._format_memory_response(memory)
                 memory_dict["similarity_score"] = score
                 memory_dict["hybrid_debug"] = debug_info
                 results.append(memory_dict)
                 result_hashes.append(memory.content_hash)
+                result_spacing.append(
+                    compute_spacing_quality(memory.access_timestamps)
+                    if settings.spaced_repetition.enabled
+                    else 0.0
+                )
 
-            # Fire Hebbian co-access events
-            await self._fire_hebbian_co_access(result_hashes)
+            # Fire Hebbian co-access events with spacing qualities for LTP
+            await self._fire_hebbian_co_access(result_hashes, result_spacing or None)
 
             # Track access counts (fire-and-forget)
             self._fire_access_count_updates(result_hashes)
