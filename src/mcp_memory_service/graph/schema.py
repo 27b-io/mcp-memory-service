@@ -8,13 +8,21 @@ Node Labels:
     :Memory  - Represents a stored memory (keyed by content_hash)
 
 Relationship Types:
-    :HEBBIAN - Co-access association edge with weight and decay metadata
-               Weight increases on co-retrieval, decays over time.
+    :HEBBIAN     - Co-access association edge (implicit, high-frequency).
+                   Weight increases on co-retrieval, decays over time.
+    :RELATES_TO  - Generic semantic relationship (explicit, user-created).
+    :PRECEDES    - Temporal/causal ordering: source precedes target.
+    :CONTRADICTS - Conflicting information between two memories.
 
 Indices:
     Memory(content_hash) - Unique lookup for memory nodes
     Memory(created_at)   - Temporal queries
 """
+
+# Valid typed relationship types (whitelist for Cypher injection safety).
+# FalkorDB doesn't support parameterized relationship types, so we validate
+# against this set before string-formatting into queries.
+RELATION_TYPES: frozenset[str] = frozenset({"RELATES_TO", "PRECEDES", "CONTRADICTS"})
 
 # Cypher statements executed idempotently on graph initialization.
 # FalkorDB supports CREATE INDEX IF NOT EXISTS syntax.

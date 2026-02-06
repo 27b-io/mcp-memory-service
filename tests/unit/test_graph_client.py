@@ -214,9 +214,19 @@ class TestGraphClientReads:
 
         node_result = MagicMock()
         node_result.result_set = [[42]]
-        edge_result = MagicMock()
-        edge_result.result_set = [[100]]
-        mock_graph.query.side_effect = [node_result, edge_result]
+        hebbian_result = MagicMock()
+        hebbian_result.result_set = [[100]]
+        # Typed edge counts: CONTRADICTS=2, PRECEDES=3, RELATES_TO=5
+        contradicts_result = MagicMock()
+        contradicts_result.result_set = [[2]]
+        precedes_result = MagicMock()
+        precedes_result.result_set = [[3]]
+        relates_result = MagicMock()
+        relates_result.result_set = [[5]]
+        mock_graph.query.side_effect = [
+            node_result, hebbian_result,
+            contradicts_result, precedes_result, relates_result,
+        ]
 
         client = GraphClient.__new__(GraphClient)
         client._graph = mock_graph
@@ -225,7 +235,11 @@ class TestGraphClientReads:
 
         stats = await client.get_graph_stats()
         assert stats["node_count"] == 42
-        assert stats["edge_count"] == 100
+        assert stats["hebbian_edge_count"] == 100
+        assert stats["edge_count"] == 110  # 100 hebbian + 2 + 3 + 5
+        assert stats["typed_edge_counts"] == {
+            "contradicts": 2, "precedes": 3, "relates_to": 5,
+        }
         assert stats["status"] == "operational"
 
     @pytest.mark.asyncio
@@ -276,3 +290,257 @@ class TestGraphClientClose:
         client._initialized = False
 
         await client.close()  # Should not raise
+
+
+class TestGraphClientTypedEdges:
+    """Test typed relationship edge operations."""
+
+    @pytest.mark.asyncio
+    async def test_create_typed_edge_relates_to(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        mock_result = MagicMock()
+        mock_result.result_set = [[1]]
+        mock_graph.query.return_value = mock_result
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        created = await client.create_typed_edge("hash_a", "hash_b", "RELATES_TO")
+
+        assert created is True
+        query = mock_graph.query.call_args[0][0]
+        assert "RELATES_TO" in query
+        assert "MERGE" in query
+        assert mock_graph.query.call_args[1]["params"]["src"] == "hash_a"
+        assert mock_graph.query.call_args[1]["params"]["dst"] == "hash_b"
+
+    @pytest.mark.asyncio
+    async def test_create_typed_edge_precedes(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        mock_result = MagicMock()
+        mock_result.result_set = [[1]]
+        mock_graph.query.return_value = mock_result
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        created = await client.create_typed_edge("hash_a", "hash_b", "precedes")
+        assert created is True
+        assert "PRECEDES" in mock_graph.query.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_create_typed_edge_contradicts(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        mock_result = MagicMock()
+        mock_result.result_set = [[1]]
+        mock_graph.query.return_value = mock_result
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        created = await client.create_typed_edge("hash_a", "hash_b", "CONTRADICTS")
+        assert created is True
+        assert "CONTRADICTS" in mock_graph.query.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_create_typed_edge_invalid_type_raises(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        with pytest.raises(ValueError, match="Invalid relation type"):
+            await client.create_typed_edge("hash_a", "hash_b", "CAUSES")
+
+    @pytest.mark.asyncio
+    async def test_create_typed_edge_nodes_missing(self, mock_graph):
+        """When source or target node doesn't exist, MATCH returns nothing."""
+        from mcp_memory_service.graph.client import GraphClient
+
+        mock_result = MagicMock()
+        mock_result.result_set = [[0]]
+        mock_graph.query.return_value = mock_result
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        created = await client.create_typed_edge("missing_a", "missing_b", "RELATES_TO")
+        assert created is False
+
+    @pytest.mark.asyncio
+    async def test_get_typed_edges_all_types(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        # Return one outgoing RELATES_TO edge, empty for all others
+        out_result = MagicMock()
+        out_result.result_set = [["hash_a", "hash_b", 1700000000.0]]
+        empty_result = MagicMock()
+        empty_result.result_set = []
+        # For each type: outgoing + incoming queries. 3 types = 6 queries.
+        # CONTRADICTS out, CONTRADICTS in, PRECEDES out, PRECEDES in, RELATES_TO out, RELATES_TO in
+        mock_graph.query.side_effect = [
+            empty_result, empty_result,  # CONTRADICTS out, in
+            empty_result, empty_result,  # PRECEDES out, in
+            out_result, empty_result,    # RELATES_TO out, in
+        ]
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        edges = await client.get_typed_edges("hash_a")
+
+        assert len(edges) == 1
+        assert edges[0]["source"] == "hash_a"
+        assert edges[0]["target"] == "hash_b"
+        assert edges[0]["relation_type"] == "RELATES_TO"
+        assert edges[0]["direction"] == "outgoing"
+
+    @pytest.mark.asyncio
+    async def test_get_typed_edges_filtered_by_type(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        out_result = MagicMock()
+        out_result.result_set = [["hash_a", "hash_b", 1700000000.0]]
+        in_result = MagicMock()
+        in_result.result_set = []
+        mock_graph.query.side_effect = [out_result, in_result]
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        edges = await client.get_typed_edges("hash_a", relation_type="PRECEDES")
+
+        assert len(edges) == 1
+        assert edges[0]["relation_type"] == "PRECEDES"
+        # Only 2 queries (out + in for PRECEDES), not 6
+        assert mock_graph.query.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_delete_typed_edge_success(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        mock_result = MagicMock()
+        mock_result.result_set = [[1]]
+        mock_graph.query.return_value = mock_result
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        deleted = await client.delete_typed_edge("hash_a", "hash_b", "CONTRADICTS")
+
+        assert deleted is True
+        query = mock_graph.query.call_args[0][0]
+        assert "CONTRADICTS" in query
+        assert "DELETE" in query
+
+    @pytest.mark.asyncio
+    async def test_delete_typed_edge_not_found(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        mock_result = MagicMock()
+        mock_result.result_set = [[0]]
+        mock_graph.query.return_value = mock_result
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        deleted = await client.delete_typed_edge("hash_a", "hash_b", "RELATES_TO")
+        assert deleted is False
+
+    @pytest.mark.asyncio
+    async def test_delete_typed_edge_invalid_type_raises(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        with pytest.raises(ValueError, match="Invalid relation type"):
+            await client.delete_typed_edge("hash_a", "hash_b", "INVENTED")
+
+    @pytest.mark.asyncio
+    async def test_create_typed_edge_self_edge_raises(self, mock_graph):
+        """Cannot create a relationship from a memory to itself."""
+        from mcp_memory_service.graph.client import GraphClient
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        with pytest.raises(ValueError, match="to itself"):
+            await client.create_typed_edge("same_hash", "same_hash", "RELATES_TO")
+
+    @pytest.mark.asyncio
+    async def test_get_typed_edges_invalid_direction_raises(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        with pytest.raises(ValueError, match="Invalid direction"):
+            await client.get_typed_edges("hash_a", direction="sideways")
+
+    @pytest.mark.asyncio
+    async def test_get_typed_edges_none_created_at(self, mock_graph):
+        """Handle None created_at in edge results."""
+        from mcp_memory_service.graph.client import GraphClient
+
+        out_result = MagicMock()
+        out_result.result_set = [["hash_a", "hash_b", None]]
+        empty_result = MagicMock()
+        empty_result.result_set = []
+        mock_graph.query.side_effect = [out_result, empty_result]
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        edges = await client.get_typed_edges("hash_a", relation_type="RELATES_TO")
+        assert edges[0]["created_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_validate_relation_type_case_insensitive(self):
+        from mcp_memory_service.graph.client import GraphClient
+
+        assert GraphClient._validate_relation_type("relates_to") == "RELATES_TO"
+        assert GraphClient._validate_relation_type("Precedes") == "PRECEDES"
+        assert GraphClient._validate_relation_type("CONTRADICTS") == "CONTRADICTS"
+
+
+class TestGraphClientOrphanNodesWithTypedEdges:
+    """Test orphan detection considers typed edges."""
+
+    @pytest.mark.asyncio
+    async def test_get_orphan_nodes_includes_typed_edge_check(self, mock_graph):
+        from mcp_memory_service.graph.client import GraphClient
+
+        mock_result = MagicMock()
+        mock_result.result_set = [["orphan_hash"]]
+        mock_graph.query.return_value = mock_result
+
+        client = GraphClient.__new__(GraphClient)
+        client._graph = mock_graph
+        client._initialized = True
+
+        orphans = await client.get_orphan_nodes()
+
+        query = mock_graph.query.call_args[0][0]
+        # Must check ALL edge types, not just HEBBIAN
+        assert "HEBBIAN" in query
+        assert "RELATES_TO" in query
+        assert "PRECEDES" in query
+        assert "CONTRADICTS" in query
+        assert orphans == ["orphan_hash"]

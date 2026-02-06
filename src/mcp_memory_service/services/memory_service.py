@@ -848,6 +848,135 @@ class MemoryService:
 
         return {"found": found, "merged": merged}
 
+    async def create_relation(
+        self,
+        source_hash: str,
+        target_hash: str,
+        relation_type: str,
+    ) -> dict[str, Any]:
+        """
+        Create a typed relationship between two memories.
+
+        Typed edges (RELATES_TO, PRECEDES, CONTRADICTS) are explicit knowledge
+        graph relationships, unlike Hebbian edges which form implicitly through
+        co-retrieval. They are lower-frequency writes created during storage or
+        by explicit user action.
+
+        Args:
+            source_hash: Content hash of the source memory
+            target_hash: Content hash of the target memory
+            relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS
+
+        Returns:
+            Dict with success status and relation details
+        """
+        if self._graph is None:
+            return {
+                "success": False,
+                "error": "Graph layer not enabled (set MCP_FALKORDB_ENABLED=true)",
+            }
+
+        try:
+            created = await self._graph.create_typed_edge(
+                source_hash=source_hash,
+                target_hash=target_hash,
+                relation_type=relation_type,
+            )
+            if created:
+                return {
+                    "success": True,
+                    "source": source_hash,
+                    "target": target_hash,
+                    "relation_type": relation_type.upper(),
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Source or target memory not found in graph",
+                    "source": source_hash,
+                    "target": target_hash,
+                }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Failed to create relation: {e}")
+            return {"success": False, "error": f"Failed to create relation: {e}"}
+
+    async def get_relations(
+        self,
+        content_hash: str,
+        relation_type: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Get typed relationships for a memory.
+
+        Args:
+            content_hash: Memory to get relations for
+            relation_type: Filter by type (None = all typed edges)
+
+        Returns:
+            Dict with relations list
+        """
+        if self._graph is None:
+            return {"relations": [], "content_hash": content_hash}
+
+        try:
+            edges = await self._graph.get_typed_edges(
+                content_hash=content_hash,
+                relation_type=relation_type,
+            )
+            return {
+                "relations": edges,
+                "content_hash": content_hash,
+                "count": len(edges),
+            }
+        except ValueError as e:
+            return {"relations": [], "content_hash": content_hash, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Failed to get relations: {e}")
+            return {"relations": [], "content_hash": content_hash, "error": str(e)}
+
+    async def delete_relation(
+        self,
+        source_hash: str,
+        target_hash: str,
+        relation_type: str,
+    ) -> dict[str, Any]:
+        """
+        Delete a typed relationship between two memories.
+
+        Args:
+            source_hash: Content hash of the source memory
+            target_hash: Content hash of the target memory
+            relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS
+
+        Returns:
+            Dict with success status
+        """
+        if self._graph is None:
+            return {
+                "success": False,
+                "error": "Graph layer not enabled (set MCP_FALKORDB_ENABLED=true)",
+            }
+
+        try:
+            deleted = await self._graph.delete_typed_edge(
+                source_hash=source_hash,
+                target_hash=target_hash,
+                relation_type=relation_type,
+            )
+            return {
+                "success": deleted,
+                "source": source_hash,
+                "target": target_hash,
+                "relation_type": relation_type.upper(),
+            }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Failed to delete relation: {e}")
+            return {"success": False, "error": f"Failed to delete relation: {e}"}
+
     def _format_memory_response(self, memory: Memory) -> MemoryResult:
         """
         Format a memory object for API response.

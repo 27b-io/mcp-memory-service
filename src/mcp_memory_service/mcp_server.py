@@ -448,6 +448,125 @@ async def list_memories(
 
 
 # =============================================================================
+# KNOWLEDGE GRAPH RELATIONSHIP OPERATIONS
+# =============================================================================
+
+
+@mcp.tool()
+async def create_relation(
+    source_hash: str,
+    target_hash: str,
+    relation_type: str,
+    ctx: Context,
+) -> dict[str, Any]:
+    """
+    Create a typed relationship between two memories in the knowledge graph.
+
+    Typed edges represent explicit semantic relationships between memories,
+    unlike Hebbian edges which form implicitly through co-retrieval patterns.
+    These are lower-frequency writes typically created during memory storage
+    or when a user identifies a connection between memories.
+
+    Args:
+        source_hash: Content hash of the source memory
+        target_hash: Content hash of the target memory
+        relation_type: Type of relationship. Must be one of:
+            - "RELATES_TO": Generic semantic relationship
+            - "PRECEDES": Temporal/causal ordering (source happened before target)
+            - "CONTRADICTS": Conflicting information between memories
+
+    Returns:
+        Dictionary with:
+        - success: True if relation was created
+        - source: Source memory hash
+        - target: Target memory hash
+        - relation_type: Normalized relation type
+        - error: Error message if failed
+
+    Use this for: Building knowledge graphs, linking related memories,
+    tracking temporal sequences, flagging contradictions.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.create_relation(
+        source_hash=source_hash,
+        target_hash=target_hash,
+        relation_type=relation_type,
+    )
+
+
+@mcp.tool()
+async def get_relations(
+    content_hash: str,
+    ctx: Context,
+    relation_type: str | None = None,
+) -> dict[str, Any]:
+    """
+    Get typed relationships for a specific memory.
+
+    Returns all typed edges (RELATES_TO, PRECEDES, CONTRADICTS) connected
+    to the given memory, in both directions.
+
+    Args:
+        content_hash: Content hash of the memory to query
+        relation_type: Optional filter - only return edges of this type
+
+    Returns:
+        Dictionary with:
+        - relations: List of relationship edges, each containing:
+            - source: Source memory hash
+            - target: Target memory hash
+            - relation_type: Edge type (RELATES_TO, PRECEDES, CONTRADICTS)
+            - direction: "outgoing" or "incoming" relative to queried memory
+            - created_at: Timestamp when relation was created
+        - content_hash: The queried memory hash
+        - count: Number of relations found
+
+    Use this for: Exploring knowledge graph connections, finding related memories,
+    understanding temporal sequences, identifying contradictions.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.get_relations(
+        content_hash=content_hash,
+        relation_type=relation_type,
+    )
+
+
+@mcp.tool()
+async def delete_relation(
+    source_hash: str,
+    target_hash: str,
+    relation_type: str,
+    ctx: Context,
+) -> dict[str, Any]:
+    """
+    Delete a typed relationship between two memories.
+
+    Removes a specific directed edge from the knowledge graph. This only
+    removes the relationship — the memories themselves are not affected.
+
+    Args:
+        source_hash: Content hash of the source memory
+        target_hash: Content hash of the target memory
+        relation_type: Type of relationship to delete (RELATES_TO, PRECEDES, CONTRADICTS)
+
+    Returns:
+        Dictionary with:
+        - success: True if relation was deleted, False if not found
+        - source: Source memory hash
+        - target: Target memory hash
+        - relation_type: The relation type that was deleted
+
+    Use this for: Removing incorrect relationships, cleaning up knowledge graph.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.delete_relation(
+        source_hash=source_hash,
+        target_hash=target_hash,
+        relation_type=relation_type,
+    )
+
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 

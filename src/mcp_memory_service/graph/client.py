@@ -12,12 +12,13 @@ All Hebbian edge mutations go through the write queue.
 """
 
 import logging
+import time
 from typing import Any
 
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 
-from .schema import SCHEMA_STATEMENTS
+from .schema import RELATION_TYPES, SCHEMA_STATEMENTS
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +251,150 @@ class GraphClient:
             for row in result.result_set
         ]
 
+    # ── Typed relationship operations (explicit, low-frequency) ────────
+
+    @staticmethod
+    def _validate_relation_type(relation_type: str) -> str:
+        """Validate and normalize a relation type against the whitelist."""
+        normalized = relation_type.upper()
+        if normalized not in RELATION_TYPES:
+            raise ValueError(
+                f"Invalid relation type: {relation_type!r}. "
+                f"Must be one of: {', '.join(sorted(RELATION_TYPES))}"
+            )
+        return normalized
+
+    async def create_typed_edge(
+        self,
+        source_hash: str,
+        target_hash: str,
+        relation_type: str,
+        created_at: float | None = None,
+    ) -> bool:
+        """
+        Create a typed relationship edge between two memories.
+
+        Unlike Hebbian edges (auto-created on co-retrieval), typed edges are
+        explicitly created by users/systems during storage. They are idempotent
+        (MERGE) and carry no weight — they simply assert a relationship.
+
+        Args:
+            source_hash: Source memory content_hash
+            target_hash: Target memory content_hash
+            relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS
+            created_at: Optional timestamp (defaults to current time)
+
+        Returns:
+            True if both source and target nodes exist and edge was created.
+
+        Raises:
+            ValueError: If relation_type is invalid or source == target.
+        """
+        if source_hash == target_hash:
+            raise ValueError("Cannot create a relationship from a memory to itself")
+
+        rel = self._validate_relation_type(relation_type)
+        ts = created_at if created_at is not None else time.time()
+
+        # MATCH both nodes first — if either is missing, nothing happens.
+        # This prevents dangling edges to non-existent memories.
+        result = await self._graph.query(
+            "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
+            f"MERGE (a)-[e:{rel}]->(b) "
+            "ON CREATE SET e.created_at = $ts "
+            "RETURN count(e)",
+            params={"src": source_hash, "dst": target_hash, "ts": ts},
+        )
+        count = int(result.result_set[0][0]) if result.result_set else 0
+        return count > 0
+
+    _VALID_DIRECTIONS = frozenset({"outgoing", "incoming", "both"})
+
+    async def get_typed_edges(
+        self,
+        content_hash: str,
+        relation_type: str | None = None,
+        direction: str = "both",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        Get typed relationship edges for a memory.
+
+        Args:
+            content_hash: Memory to query edges for
+            relation_type: Filter by type (None = all typed edges)
+            direction: "outgoing", "incoming", or "both"
+            limit: Maximum edges to return
+
+        Returns:
+            List of dicts with source, target, relation_type, created_at
+        """
+        if direction not in self._VALID_DIRECTIONS:
+            raise ValueError(
+                f"Invalid direction: {direction!r}. "
+                f"Must be one of: {', '.join(sorted(self._VALID_DIRECTIONS))}"
+            )
+
+        if relation_type is not None:
+            rel_types = [self._validate_relation_type(relation_type)]
+        else:
+            rel_types = sorted(RELATION_TYPES)
+
+        results: list[dict[str, Any]] = []
+        for rel in rel_types:
+            if direction in ("outgoing", "both"):
+                out = await self._graph.query(
+                    f"MATCH (a:Memory {{content_hash: $hash}})-[e:{rel}]->(b:Memory) "
+                    "RETURN a.content_hash, b.content_hash, e.created_at "
+                    "LIMIT $lim",
+                    params={"hash": content_hash, "lim": limit},
+                )
+                for row in out.result_set:
+                    results.append({
+                        "source": row[0],
+                        "target": row[1],
+                        "relation_type": rel,
+                        "direction": "outgoing",
+                        "created_at": float(row[2]) if row[2] is not None else None,
+                    })
+
+            if direction in ("incoming", "both"):
+                inc = await self._graph.query(
+                    f"MATCH (a:Memory)-[e:{rel}]->(b:Memory {{content_hash: $hash}}) "
+                    "RETURN a.content_hash, b.content_hash, e.created_at "
+                    "LIMIT $lim",
+                    params={"hash": content_hash, "lim": limit},
+                )
+                for row in inc.result_set:
+                    results.append({
+                        "source": row[0],
+                        "target": row[1],
+                        "relation_type": rel,
+                        "direction": "incoming",
+                        "created_at": float(row[2]) if row[2] is not None else None,
+                    })
+
+        return results[:limit]
+
+    async def delete_typed_edge(
+        self, source_hash: str, target_hash: str, relation_type: str
+    ) -> bool:
+        """
+        Delete a typed relationship edge between two memories.
+
+        Returns:
+            True if an edge was deleted, False if none existed.
+        """
+        rel = self._validate_relation_type(relation_type)
+        result = await self._graph.query(
+            f"MATCH (a:Memory {{content_hash: $src}})-[e:{rel}]->(b:Memory {{content_hash: $dst}}) "
+            "DELETE e "
+            "RETURN count(e)",
+            params={"src": source_hash, "dst": target_hash},
+        )
+        count = int(result.result_set[0][0]) if result.result_set else 0
+        return count > 0
+
     # ── Consolidation operations (bulk, idempotent) ────────────────────
 
     async def decay_all_edges(self, decay_factor: float, limit: int = 10000) -> int:
@@ -339,17 +484,21 @@ class GraphClient:
         """
         Find Memory nodes with no edges (orphans after pruning).
 
-        These nodes still exist in Qdrant but have no graph relationships.
-        They're not deleted — just returned for informational purposes.
+        Considers both Hebbian and typed relationship edges. A node is only
+        orphaned if it has zero edges of ANY type.
 
         Returns:
             List of content_hash values for orphan nodes
         """
+        # Build a WHERE clause that checks all edge types
+        edge_checks = ["NOT (m)-[:HEBBIAN]-()"]
+        for rel in sorted(RELATION_TYPES):
+            edge_checks.append(f"NOT (m)-[:{rel}]-()")
+        where_clause = " AND ".join(edge_checks)
+
         result = await self._graph.query(
-            "MATCH (m:Memory) "
-            "WHERE NOT (m)-[:HEBBIAN]-() "
-            "RETURN m.content_hash "
-            "LIMIT $lim",
+            f"MATCH (m:Memory) WHERE {where_clause} "
+            "RETURN m.content_hash LIMIT $lim",
             params={"lim": limit},
         )
         return [row[0] for row in result.result_set]
@@ -365,12 +514,26 @@ class GraphClient:
             )
 
             node_count = node_result.result_set[0][0] if node_result.result_set else 0
-            edge_count = edge_result.result_set[0][0] if edge_result.result_set else 0
+            hebbian_count = edge_result.result_set[0][0] if edge_result.result_set else 0
+
+            # Count typed relationship edges
+            typed_counts: dict[str, int] = {}
+            for rel in sorted(RELATION_TYPES):
+                rel_result = await self._graph.query(
+                    f"MATCH ()-[e:{rel}]->() RETURN count(e)"
+                )
+                typed_counts[rel.lower()] = (
+                    int(rel_result.result_set[0][0]) if rel_result.result_set else 0
+                )
+
+            total_typed = sum(typed_counts.values())
 
             return {
                 "graph_name": self.graph_name,
                 "node_count": int(node_count),
-                "edge_count": int(edge_count),
+                "edge_count": int(hebbian_count) + total_typed,
+                "hebbian_edge_count": int(hebbian_count),
+                "typed_edge_counts": typed_counts,
                 "status": "operational",
             }
         except Exception as e:

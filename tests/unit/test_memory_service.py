@@ -453,3 +453,141 @@ class TestHealthCheckResponses:
         assert result["total_memories"] == 42
         assert result["storage_type"] == "test"
         assert "last_updated" in result
+
+
+# =============================================================================
+# Typed Relationship Tests
+# =============================================================================
+
+
+class TestRelationOperations:
+    """Test create_relation, get_relations, delete_relation service methods."""
+
+    @pytest.fixture
+    def mock_graph_client(self):
+        """Create a mock graph client with typed edge methods."""
+        from unittest.mock import AsyncMock
+
+        client = AsyncMock()
+        client.create_typed_edge = AsyncMock(return_value=True)
+        client.get_typed_edges = AsyncMock(return_value=[])
+        client.delete_typed_edge = AsyncMock(return_value=True)
+        return client
+
+    @pytest.fixture
+    def service_with_graph(self, mock_storage, mock_graph_client):
+        """MemoryService with graph layer enabled."""
+        return MemoryService(
+            storage=mock_storage,
+            graph_client=mock_graph_client,
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_relation_success(self, service_with_graph, mock_graph_client):
+        result = await service_with_graph.create_relation("hash_a", "hash_b", "RELATES_TO")
+
+        assert result["success"] is True
+        assert result["source"] == "hash_a"
+        assert result["target"] == "hash_b"
+        assert result["relation_type"] == "RELATES_TO"
+        mock_graph_client.create_typed_edge.assert_called_once_with(
+            source_hash="hash_a", target_hash="hash_b", relation_type="RELATES_TO"
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_relation_nodes_missing(self, service_with_graph, mock_graph_client):
+        mock_graph_client.create_typed_edge.return_value = False
+
+        result = await service_with_graph.create_relation("missing", "also_missing", "PRECEDES")
+
+        assert result["success"] is False
+        assert "not found" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_create_relation_invalid_type(self, service_with_graph, mock_graph_client):
+        mock_graph_client.create_typed_edge.side_effect = ValueError("Invalid relation type")
+
+        result = await service_with_graph.create_relation("a", "b", "CAUSES")
+
+        assert result["success"] is False
+        assert "Invalid" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_create_relation_no_graph_layer(self, memory_service):
+        """Without graph layer, returns error."""
+        result = await memory_service.create_relation("a", "b", "RELATES_TO")
+
+        assert result["success"] is False
+        assert "not enabled" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_relations_success(self, service_with_graph, mock_graph_client):
+        mock_graph_client.get_typed_edges.return_value = [
+            {
+                "source": "hash_a",
+                "target": "hash_b",
+                "relation_type": "RELATES_TO",
+                "direction": "outgoing",
+                "created_at": 1700000000.0,
+            }
+        ]
+
+        result = await service_with_graph.get_relations("hash_a")
+
+        assert result["count"] == 1
+        assert result["relations"][0]["relation_type"] == "RELATES_TO"
+
+    @pytest.mark.asyncio
+    async def test_get_relations_no_graph_layer(self, memory_service):
+        result = await memory_service.get_relations("hash_a")
+
+        assert result["relations"] == []
+        assert result["content_hash"] == "hash_a"
+
+    @pytest.mark.asyncio
+    async def test_delete_relation_success(self, service_with_graph, mock_graph_client):
+        result = await service_with_graph.delete_relation("hash_a", "hash_b", "CONTRADICTS")
+
+        assert result["success"] is True
+        assert result["relation_type"] == "CONTRADICTS"
+
+    @pytest.mark.asyncio
+    async def test_delete_relation_not_found(self, service_with_graph, mock_graph_client):
+        mock_graph_client.delete_typed_edge.return_value = False
+
+        result = await service_with_graph.delete_relation("a", "b", "RELATES_TO")
+
+        assert result["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_create_relation_general_exception(self, service_with_graph, mock_graph_client):
+        """General exception from graph client is caught and reported."""
+        mock_graph_client.create_typed_edge.side_effect = ConnectionError("redis down")
+
+        result = await service_with_graph.create_relation("a", "b", "RELATES_TO")
+
+        assert result["success"] is False
+        assert "redis down" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_relations_with_type_filter(self, service_with_graph, mock_graph_client):
+        """relation_type parameter is passed through to graph client."""
+        mock_graph_client.get_typed_edges.return_value = []
+
+        await service_with_graph.get_relations("hash_a", relation_type="PRECEDES")
+
+        mock_graph_client.get_typed_edges.assert_called_once_with(
+            content_hash="hash_a", relation_type="PRECEDES"
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_relation_self_edge(self, service_with_graph, mock_graph_client):
+        """Self-edge raises ValueError, caught by service layer."""
+        mock_graph_client.create_typed_edge.side_effect = ValueError(
+            "Cannot create a relationship from a memory to itself"
+        )
+
+        result = await service_with_graph.create_relation("same", "same", "RELATES_TO")
+
+        assert result["success"] is False
+        assert "itself" in result["error"]
