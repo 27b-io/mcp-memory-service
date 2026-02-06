@@ -251,7 +251,7 @@ class QdrantStorage(MemoryStorage):
         """
         # For now, we'll use a placeholder that matches the embedding service pattern
         # The actual embedding service will be injected from the MemoryService layer
-        # This matches the pattern used in sqlite_vec and cloudflare
+        # Embedding dimensions detected dynamically from the model
 
         # Common embedding model dimensions (will be detected dynamically in production)
         model_dimensions = {
@@ -783,7 +783,6 @@ class QdrantStorage(MemoryStorage):
                     )
 
                     # Qdrant score is already a similarity score (1.0 = perfect match for cosine)
-                    # No conversion needed unlike sqlite-vec distance
                     relevance_score = float(scored_point.score)
 
                     # Apply minimum similarity filter if specified
@@ -828,8 +827,7 @@ class QdrantStorage(MemoryStorage):
         Raises:
             RuntimeError: If embedding generation fails
         """
-        # This will be called by MemoryService which injects the embedding service
-        # For now, we use the same pattern as sqlite_vec
+        # Called by MemoryService which injects the embedding service
         if not self.embedding_service:
             raise RuntimeError("No embedding service available")
 

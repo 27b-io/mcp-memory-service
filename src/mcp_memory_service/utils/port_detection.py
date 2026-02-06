@@ -121,7 +121,7 @@ async def detect_server_coordination_mode(host: str = "localhost", port: int = H
     Returns:
         - "http_client": HTTP server is running, use client mode
         - "http_server": No server running, start HTTP server
-        - "direct": Use direct SQLite access (fallback)
+        - "direct": Use direct storage access (fallback)
     """
     # Check if MCP Memory Service HTTP server is already running
     is_running, server_info = await is_mcp_memory_server_running(host, port)

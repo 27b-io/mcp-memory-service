@@ -155,7 +155,7 @@ async def store_memory(
 
     Uses the MemoryService for consistent business logic including content processing,
     hostname tagging, and metadata enrichment. Write operations are queued to prevent
-    SQLite contention from concurrent requests.
+    contention from concurrent requests.
     """
     try:
         # Resolve hostname for consistent tagging (logic stays in API layer, tagging in service)
@@ -172,7 +172,7 @@ async def store_memory(
             else:
                 client_hostname = socket.gethostname()
 
-        # Enqueue write operation to prevent SQLite contention
+        # Enqueue write operation to prevent contention
         # Returns a Future that will contain the result when processed
         result_future = await write_queue.enqueue(
             memory_service.store_memory,

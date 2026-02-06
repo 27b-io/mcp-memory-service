@@ -87,7 +87,7 @@ class MemoryService:
         """Fallback to pure vector search (original behavior)."""
         offset = (page - 1) * page_size
 
-        # Use a reasonable limit for count to avoid sqlite-vec k limit (4096)
+        # Count matching memories for pagination
         try:
             total = await self.storage.count_semantic_search(
                 query=query, tags=tags, memory_type=memory_type, min_similarity=min_similarity

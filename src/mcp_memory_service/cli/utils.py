@@ -16,56 +16,15 @@
 CLI utilities for MCP Memory Service.
 """
 
-import os
-
 from ..storage.base import MemoryStorage
+from ..storage.factory import create_storage_instance
 
 
-async def get_storage(backend: str | None = None) -> MemoryStorage:
+async def get_storage() -> MemoryStorage:
     """
-    Get storage backend for CLI operations.
-
-    Args:
-        backend: Storage backend name ('sqlite_vec' or 'qdrant')
+    Get Qdrant storage backend for CLI operations.
 
     Returns:
-        Initialized storage backend
+        Initialized QdrantStorage instance
     """
-    if backend is None:
-        backend = os.getenv("MCP_MEMORY_STORAGE_BACKEND", "sqlite_vec").lower()
-
-    backend = backend.lower()
-
-    if backend in ("sqlite_vec", "sqlite-vec"):
-        from ..config import EMBEDDING_MODEL_NAME, SQLITE_VEC_PATH
-        from ..storage.sqlite_vec import SqliteVecMemoryStorage
-
-        storage = SqliteVecMemoryStorage(db_path=SQLITE_VEC_PATH, embedding_model=EMBEDDING_MODEL_NAME)
-        await storage.initialize()
-        return storage
-
-    elif backend == "qdrant":
-        from ..config import EMBEDDING_MODEL_NAME, settings
-        from ..storage.qdrant_storage import QdrantStorage
-
-        if settings.qdrant.url:
-            storage = QdrantStorage(
-                url=settings.qdrant.url,
-                embedding_model=EMBEDDING_MODEL_NAME,
-                collection_name=settings.qdrant.COLLECTION_NAME,
-                quantization_enabled=settings.qdrant.quantization_enabled,
-                distance_metric=settings.qdrant.DISTANCE_METRIC,
-            )
-        else:
-            storage = QdrantStorage(
-                storage_path=settings.qdrant.storage_path,
-                embedding_model=EMBEDDING_MODEL_NAME,
-                collection_name=settings.qdrant.COLLECTION_NAME,
-                quantization_enabled=settings.qdrant.quantization_enabled,
-                distance_metric=settings.qdrant.DISTANCE_METRIC,
-            )
-        await storage.initialize()
-        return storage
-
-    else:
-        raise ValueError(f"Unsupported storage backend: {backend}. Use 'sqlite_vec' or 'qdrant'.")
+    return await create_storage_instance()

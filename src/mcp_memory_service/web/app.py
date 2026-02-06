@@ -15,7 +15,7 @@
 """
 FastAPI application for MCP Memory Service HTTP/SSE interface.
 
-Provides REST API and Server-Sent Events using SQLite-vec backend.
+Provides REST API and Server-Sent Events using Qdrant backend.
 """
 
 import asyncio
@@ -692,7 +692,7 @@ def create_app() -> FastAPI:
                             <span>🐍</span> FastAPI
                         </div>
                         <div class="tech-badge">
-                            <span>🗄️</span> SQLite-vec
+                            <span>🗄️</span> Qdrant
                         </div>
                         <div class="tech-badge">
                             <span>🧠</span> Sentence Transformers
@@ -755,10 +755,7 @@ def create_app() -> FastAPI:
                 // Dynamic content loading for API overview
                 function getBackendDisplayName(backend) {
                     const backendMap = {
-                        'sqlite-vec': 'SQLite-vec',
-                        'sqlite_vec': 'SQLite-vec',
-                        'cloudflare': 'Cloudflare D1 + Vectorize',
-                        'hybrid': 'Hybrid (SQLite-vec + Cloudflare)'
+                        'qdrant': 'Qdrant'
                     };
                     return backendMap[backend] || backend || 'Unknown Backend';
                 }

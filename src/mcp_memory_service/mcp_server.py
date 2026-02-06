@@ -36,7 +36,7 @@ sys.path.insert(0, str(src_dir))
 from fastmcp import Context, FastMCP  # noqa: E402
 
 # Import existing memory service components
-from .config import SQLITE_VEC_PATH, STORAGE_BACKEND  # noqa: E402
+from .config import settings  # noqa: E402
 from .formatters.toon import format_search_results_as_toon  # noqa: E402
 from .resources.toon_documentation import TOON_FORMAT_DOCUMENTATION  # noqa: E402
 from .services.memory_service import MemoryService  # noqa: E402
@@ -71,7 +71,7 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
         logger.info("No shared storage found, initializing new instance (standalone mode)")
         from .storage.factory import create_storage_instance
 
-        storage = await create_storage_instance(SQLITE_VEC_PATH)
+        storage = await create_storage_instance()
 
     # Initialize memory service with shared business logic
     memory_service = MemoryService(storage)
@@ -168,8 +168,7 @@ async def store_memory(
         client_hostname: Source machine identifier (optional)
 
     Content Length Handling:
-        - SQLite-vec/Qdrant: No limit
-        - Cloudflare/Hybrid: 800 chars max (auto-splits if exceeded)
+        - No limit on content length
         - Auto-splitting preserves context with 50-char overlap
         - Respects natural boundaries: paragraphs → sentences → words
 
@@ -183,7 +182,7 @@ async def store_memory(
             - message: Status description
             - content_hash: Unique identifier for retrieval/deletion
 
-        Split memory (>800 chars on Cloudflare/Hybrid):
+        Split memory (when auto-split enabled):
             - success: True/False
             - message: Status description
             - chunks_created: Number of linked chunks
@@ -371,7 +370,7 @@ async def check_database_health(ctx: Context) -> dict[str, Any]:
     Returns:
         Dictionary with:
         - status: "healthy" or error state
-        - backend: Storage backend in use (sqlite_vec, cloudflare, hybrid, qdrant)
+        - backend: Storage backend in use (qdrant)
         - total_memories: Total count of stored memories
         - storage_info: Backend-specific statistics
         - version: Service version
@@ -454,7 +453,7 @@ def main():
     host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
 
     logger.info(f"Starting MCP Memory Service FastAPI server on {host}:{port}")
-    logger.info(f"Storage backend: {STORAGE_BACKEND}")
+    logger.info("Storage backend: Qdrant")
 
     # Check transport mode from environment
     transport_mode = os.getenv("MCP_TRANSPORT_MODE", "http")

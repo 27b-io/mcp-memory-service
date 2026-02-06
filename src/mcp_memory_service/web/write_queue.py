@@ -1,7 +1,7 @@
 """
-Write Queue Coordination for SQLite Concurrency Management
+Write Queue Coordination for Storage Concurrency Management
 
-Serializes concurrent write operations to prevent SQLite database locking
+Serializes concurrent write operations to prevent contention
 when multiple MCP clients attempt simultaneous writes. Uses asyncio.Queue
 with backpressure (HTTP 429) when queue is full.
 
@@ -58,9 +58,9 @@ class WriteOperation:
 
 class WriteQueue:
     """
-    Async queue for serializing concurrent write operations to SQLite.
+    Async queue for serializing concurrent write operations to storage.
 
-    Prevents database locking by ensuring writes are processed sequentially
+    Ensures writes are processed sequentially
     in FIFO order. Provides backpressure via HTTP 429 when queue is full.
 
     Attributes:
