@@ -335,7 +335,7 @@ async def memory_scan(
     ctx: Context,
     n_results: int = 5,
     min_relevance: float = 0.5,
-    format: str = "summary",
+    output_format: str = "summary",
 ) -> dict[str, Any]:
     """
     Token-efficient memory scanning — returns summaries instead of full content.
@@ -349,7 +349,7 @@ async def memory_scan(
         query: Natural language search query
         n_results: Maximum results to return (default: 5)
         min_relevance: Minimum similarity threshold (0.0-1.0, default: 0.5)
-        format: Output detail level:
+        output_format: Output detail level:
             - "summary" (default): Summary, relevance, tags, hash — cheapest
             - "full": Full content (same as retrieve_memory but simpler output)
             - "both": Summary + full content for spot-checking
@@ -362,11 +362,11 @@ async def memory_scan(
             - tags: Memory tags
             - created_at: Creation timestamp
             - memory_type: Memory classification
-            - summary: One-line summary (when format is "summary" or "both")
-            - content: Full content (when format is "full" or "both")
+            - summary: One-line summary (when output_format is "summary" or "both")
+            - content: Full content (when output_format is "full" or "both")
         - query: The search query used
         - count: Number of results returned
-        - format: The format used
+        - format: The output_format used
 
     Use this for: Quick memory triage, proactive context checks, deciding
     which memories to fetch in full with retrieve_memory.
@@ -376,7 +376,7 @@ async def memory_scan(
         query=query,
         n_results=n_results,
         min_relevance=min_relevance,
-        format=format,
+        output_format=output_format,
     )
 
 

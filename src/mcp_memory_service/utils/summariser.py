@@ -7,7 +7,7 @@ Strategy (in priority order):
 1. Client-provided summary (passthrough, skips extraction)
 2. Lines starting with Decision:/Conclusion:/Key insight:/Summary:
 3. First sentence of content
-4. Truncate to MAX_SUMMARY_TOKENS word boundary
+4. Truncate to MAX_SUMMARY_CHARS word boundary
 """
 
 import re

@@ -23,9 +23,9 @@ class TestExtractSummary:
         assert extract_summary("") is None
         assert extract_summary("   ") is None
 
-    def test_none_content_returns_none(self):
-        # Edge case: should handle gracefully
-        assert extract_summary("") is None
+    def test_whitespace_only_returns_none(self):
+        assert extract_summary("\t\n") is None
+        assert extract_summary("  \n  ") is None
 
     def test_decision_line_extracted(self):
         content = "Some preamble.\nDecision: Use Qdrant as the sole backend.\nMore details."

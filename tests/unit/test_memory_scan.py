@@ -72,7 +72,7 @@ class TestScanMemories:
         """Summary format returns summary, not content."""
         mock_storage.retrieve.return_value = sample_results
 
-        result = await memory_service.scan_memories(query="python", format="summary")
+        result = await memory_service.scan_memories(query="python", output_format="summary")
 
         assert result["count"] == 3
         assert result["format"] == "summary"
@@ -88,7 +88,7 @@ class TestScanMemories:
         """Full format returns content, not summary."""
         mock_storage.retrieve.return_value = sample_results
 
-        result = await memory_service.scan_memories(query="python", format="full")
+        result = await memory_service.scan_memories(query="python", output_format="full")
 
         assert result["format"] == "full"
         for entry in result["results"]:
@@ -100,7 +100,7 @@ class TestScanMemories:
         """Both format returns summary and content."""
         mock_storage.retrieve.return_value = sample_results
 
-        result = await memory_service.scan_memories(query="python", format="both")
+        result = await memory_service.scan_memories(query="python", output_format="both")
 
         assert result["format"] == "both"
         for entry in result["results"]:
@@ -112,7 +112,7 @@ class TestScanMemories:
         """Memories without stored summary get on-the-fly extraction."""
         mock_storage.retrieve.return_value = sample_results
 
-        result = await memory_service.scan_memories(query="test", format="summary")
+        result = await memory_service.scan_memories(query="test", output_format="summary")
 
         # Third entry has no stored summary — should be auto-generated
         third = result["results"][2]
@@ -167,3 +167,13 @@ class TestScanMemories:
             # Check it's a float with at most 4 decimal places
             assert isinstance(entry["relevance"], float)
             assert entry["relevance"] == round(entry["relevance"], 4)
+
+    @pytest.mark.asyncio
+    async def test_scan_invalid_format_returns_error(self, memory_service, mock_storage):
+        """Invalid output_format returns an error, not silent empty results."""
+        result = await memory_service.scan_memories(query="test", output_format="xml")
+
+        assert result["count"] == 0
+        assert "error" in result
+        assert "Invalid format" in result["error"]
+        mock_storage.retrieve.assert_not_called()

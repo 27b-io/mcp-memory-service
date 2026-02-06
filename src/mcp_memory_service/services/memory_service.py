@@ -1335,7 +1335,7 @@ class MemoryService:
         query: str,
         n_results: int = 5,
         min_relevance: float = 0.5,
-        format: str = "summary",
+        output_format: str = "summary",
     ) -> dict[str, Any]:
         """
         Token-efficient memory scanning — returns summaries instead of full content.
@@ -1347,11 +1347,19 @@ class MemoryService:
             query: Semantic search query
             n_results: Maximum results (default 5)
             min_relevance: Minimum similarity threshold (default 0.5)
-            format: Output format — "summary" (default), "full", or "both"
+            output_format: Output format — "summary" (default), "full", or "both"
 
         Returns:
             Dictionary with scan results and metadata
         """
+        valid_formats = {"summary", "full", "both"}
+        if output_format not in valid_formats:
+            return {
+                "error": f"Invalid format '{output_format}'. Must be one of: {', '.join(sorted(valid_formats))}",
+                "results": [],
+                "count": 0,
+            }
+
         try:
             results = await self.storage.retrieve(
                 query=query,
@@ -1361,20 +1369,27 @@ class MemoryService:
 
             scan_results = []
             for item in results:
-                mem = item.memory
+                # Support both MemoryQueryResult-like objects and raw Memory instances
+                if hasattr(item, "memory"):
+                    mem = item.memory
+                    relevance = getattr(item, "relevance_score", 1.0)
+                else:
+                    mem = item
+                    relevance = 1.0
+
                 entry: dict[str, Any] = {
                     "content_hash": mem.content_hash,
-                    "relevance": round(item.relevance_score, 4),
+                    "relevance": round(relevance, 4),
                     "tags": mem.tags,
                     "created_at": mem.created_at,
                     "memory_type": mem.memory_type,
                 }
 
-                if format in ("summary", "both"):
+                if output_format in ("summary", "both"):
                     # Use stored summary, or generate on-the-fly for old memories
                     entry["summary"] = mem.summary or extract_summary(mem.content)
 
-                if format in ("full", "both"):
+                if output_format in ("full", "both"):
                     entry["content"] = mem.content
 
                 scan_results.append(entry)
@@ -1383,7 +1398,7 @@ class MemoryService:
                 "results": scan_results,
                 "query": query,
                 "count": len(scan_results),
-                "format": format,
+                "format": output_format,
             }
 
         except Exception as e:
@@ -1392,7 +1407,7 @@ class MemoryService:
                 "results": [],
                 "query": query,
                 "count": 0,
-                "format": format,
+                "format": output_format,
                 "error": f"Failed to scan memories: {str(e)}",
             }
 
