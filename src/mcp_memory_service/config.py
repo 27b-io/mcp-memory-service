@@ -590,6 +590,35 @@ class EncodingContextSettings(BaseSettings):
     )
 
 
+class ThreeTierSettings(BaseSettings):
+    """Three-tier memory model configuration (Cowan's embedded-processes model).
+
+    Controls the sensory buffer and working memory tiers.
+    Long-term memory (tier 3) is the existing Qdrant storage.
+    Both tiers are in-process and session-scoped — not persisted.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_THREE_TIER_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable three-tier memory model")
+
+    sensory_capacity: int = Field(default=7, ge=1, le=50, description="Sensory buffer capacity (Miller's magic number)")
+    sensory_decay_ms: int = Field(default=1000, ge=100, le=30000, description="Sensory buffer item TTL in milliseconds")
+
+    working_capacity: int = Field(default=4, ge=1, le=20, description="Working memory capacity (Cowan's limit)")
+    working_decay_minutes: float = Field(default=30.0, ge=1.0, le=1440.0, description="Working memory item decay in minutes")
+
+    auto_consolidate: bool = Field(
+        default=True, description="Automatically consolidate working memory items to LTM on access threshold"
+    )
+
+
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
 
@@ -664,6 +693,7 @@ class Settings(BaseSettings):
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
     spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)
     encoding_context: EncodingContextSettings = Field(default_factory=EncodingContextSettings)
+    three_tier: ThreeTierSettings = Field(default_factory=ThreeTierSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
