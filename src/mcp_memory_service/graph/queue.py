@@ -84,9 +84,7 @@ class HebbianWriteQueue:
 
     # ── Producer methods (called from any service instance) ─────────────
 
-    async def enqueue_strengthen(
-        self, source_hash: str, target_hash: str, spacing_quality: float = 0.0
-    ) -> None:
+    async def enqueue_strengthen(self, source_hash: str, target_hash: str, spacing_quality: float = 0.0) -> None:
         """
         Enqueue a Hebbian strengthening event for co-accessed memories.
 
@@ -98,36 +96,38 @@ class HebbianWriteQueue:
             spacing_quality: How well-spaced the access pattern is (0.0–1.0).
                 Used for adaptive LTP modulation of the strengthen rate.
         """
-        await self._enqueue({
-            "op": "strengthen",
-            "source": source_hash,
-            "target": target_hash,
-            "spacing_quality": spacing_quality,
-            "ts": time.time(),
-        })
+        await self._enqueue(
+            {
+                "op": "strengthen",
+                "source": source_hash,
+                "target": target_hash,
+                "spacing_quality": spacing_quality,
+                "ts": time.time(),
+            }
+        )
 
-    async def enqueue_weaken(
-        self, source_hash: str, target_hash: str, decay_factor: float = 0.95
-    ) -> None:
+    async def enqueue_weaken(self, source_hash: str, target_hash: str, decay_factor: float = 0.95) -> None:
         """Enqueue edge weight decay (used by consolidation)."""
-        await self._enqueue({
-            "op": "weaken",
-            "source": source_hash,
-            "target": target_hash,
-            "decay": decay_factor,
-            "ts": time.time(),
-        })
+        await self._enqueue(
+            {
+                "op": "weaken",
+                "source": source_hash,
+                "target": target_hash,
+                "decay": decay_factor,
+                "ts": time.time(),
+            }
+        )
 
-    async def enqueue_delete_edge(
-        self, source_hash: str, target_hash: str
-    ) -> None:
+    async def enqueue_delete_edge(self, source_hash: str, target_hash: str) -> None:
         """Enqueue edge deletion (used by pruning)."""
-        await self._enqueue({
-            "op": "delete",
-            "source": source_hash,
-            "target": target_hash,
-            "ts": time.time(),
-        })
+        await self._enqueue(
+            {
+                "op": "delete",
+                "source": source_hash,
+                "target": target_hash,
+                "ts": time.time(),
+            }
+        )
 
     async def _enqueue(self, payload: dict[str, Any]) -> None:
         """LPUSH a JSON-encoded write operation to the queue."""
@@ -226,7 +226,10 @@ class HebbianWriteQueue:
             logger.warning(f"Unknown write op: {op_type}")
 
     async def _strengthen_edge(
-        self, source: str, target: str, timestamp: float,
+        self,
+        source: str,
+        target: str,
+        timestamp: float,
         spacing_quality: float = 0.0,
     ) -> None:
         """
@@ -266,9 +269,7 @@ class HebbianWriteQueue:
             },
         )
 
-    async def _weaken_edge(
-        self, source: str, target: str, decay: float
-    ) -> None:
+    async def _weaken_edge(self, source: str, target: str, decay: float) -> None:
         """Apply decay to an edge weight."""
         await self._graph.query(
             "MATCH (a:Memory {content_hash: $src})"
@@ -281,10 +282,7 @@ class HebbianWriteQueue:
     async def _delete_edge(self, source: str, target: str) -> None:
         """Delete a specific Hebbian edge."""
         await self._graph.query(
-            "MATCH (a:Memory {content_hash: $src})"
-            "-[e:HEBBIAN]->"
-            "(b:Memory {content_hash: $dst}) "
-            "DELETE e",
+            "MATCH (a:Memory {content_hash: $src})-[e:HEBBIAN]->(b:Memory {content_hash: $dst}) DELETE e",
             params={"src": source, "dst": target},
         )
 

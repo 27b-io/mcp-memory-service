@@ -47,9 +47,7 @@ class TestSpreadingActivation:
         mock_graph.query.return_value = mock_result
 
         client = _make_graph_client(mock_graph)
-        activations = await client.spreading_activation(
-            seed_hashes=["seed_1"], decay_factor=0.5
-        )
+        activations = await client.spreading_activation(seed_hashes=["seed_1"], decay_factor=0.5)
 
         assert "neighbor_a" in activations
         assert activations["neighbor_a"] == pytest.approx(0.4)
@@ -65,9 +63,7 @@ class TestSpreadingActivation:
         mock_graph.query.return_value = mock_result
 
         client = _make_graph_client(mock_graph)
-        activations = await client.spreading_activation(
-            seed_hashes=["seed_1"], decay_factor=0.5
-        )
+        activations = await client.spreading_activation(seed_hashes=["seed_1"], decay_factor=0.5)
 
         assert activations["neighbor_b"] == pytest.approx(0.16)
 
@@ -85,9 +81,7 @@ class TestSpreadingActivation:
         mock_graph.query.return_value = mock_result
 
         client = _make_graph_client(mock_graph)
-        activations = await client.spreading_activation(
-            seed_hashes=["seed_1", "seed_2"], decay_factor=0.5
-        )
+        activations = await client.spreading_activation(seed_hashes=["seed_1", "seed_2"], decay_factor=0.5)
 
         # Should take the max: 0.45
         assert activations["neighbor_c"] == pytest.approx(0.45)
@@ -106,9 +100,7 @@ class TestSpreadingActivation:
         mock_graph.query.return_value = mock_result
 
         client = _make_graph_client(mock_graph)
-        activations = await client.spreading_activation(
-            seed_hashes=["seed_1"], decay_factor=0.5, min_activation=0.01
-        )
+        activations = await client.spreading_activation(seed_hashes=["seed_1"], decay_factor=0.5, min_activation=0.01)
 
         assert "above" in activations
         assert "below" not in activations
@@ -126,9 +118,7 @@ class TestSpreadingActivation:
         mock_graph.query.return_value = mock_result
 
         client = _make_graph_client(mock_graph)
-        activations = await client.spreading_activation(
-            seed_hashes=["seed_1"], decay_factor=0.5, limit=2
-        )
+        activations = await client.spreading_activation(seed_hashes=["seed_1"], decay_factor=0.5, limit=2)
 
         assert len(activations) == 2
         # Top 2 by activation
@@ -144,9 +134,7 @@ class TestSpreadingActivation:
         mock_graph.query.return_value = mock_result
 
         client = _make_graph_client(mock_graph)
-        await client.spreading_activation(
-            seed_hashes=["seed_1"], max_hops=10
-        )
+        await client.spreading_activation(seed_hashes=["seed_1"], max_hops=10)
 
         query = mock_graph.query.call_args[0][0]
         assert "*1..3" in query
@@ -174,9 +162,7 @@ class TestSpreadingActivation:
         mock_graph.query.return_value = mock_result
 
         client = _make_graph_client(mock_graph)
-        activations = await client.spreading_activation(
-            seed_hashes=["orphan_hash"]
-        )
+        activations = await client.spreading_activation(seed_hashes=["orphan_hash"])
 
         assert activations == {}
 
@@ -191,9 +177,7 @@ def _make_memory(content_hash: str, content: str = "test") -> Memory:
 
 def _make_query_result(content_hash: str, score: float) -> MemoryQueryResult:
     """Helper to create a MemoryQueryResult."""
-    return MemoryQueryResult(
-        memory=_make_memory(content_hash), relevance_score=score
-    )
+    return MemoryQueryResult(memory=_make_memory(content_hash), relevance_score=score)
 
 
 class TestMemoryServiceGraphBoost:
@@ -217,24 +201,32 @@ class TestMemoryServiceGraphBoost:
         # Mock storage
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=3)
-        mock_storage.retrieve = AsyncMock(return_value=[
-            _make_query_result("hash_a", 0.9),
-            _make_query_result("hash_b", 0.8),
-            _make_query_result("hash_c", 0.7),
-        ])
+        mock_storage.retrieve = AsyncMock(
+            return_value=[
+                _make_query_result("hash_a", 0.9),
+                _make_query_result("hash_b", 0.8),
+                _make_query_result("hash_c", 0.7),
+            ]
+        )
 
         # Mock graph: hash_b is activated by hash_a's neighbors
         mock_graph = AsyncMock()
-        mock_graph.spreading_activation = AsyncMock(return_value={
-            "hash_b": 0.4,  # hash_b gets boosted
-        })
+        mock_graph.spreading_activation = AsyncMock(
+            return_value={
+                "hash_b": 0.4,  # hash_b gets boosted
+            }
+        )
 
         mock_write_queue = None
 
         service = MemoryService(mock_storage, mock_graph, mock_write_queue)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         memories = result["memories"]
@@ -259,16 +251,22 @@ class TestMemoryServiceGraphBoost:
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=2)
-        mock_storage.retrieve = AsyncMock(return_value=[
-            _make_query_result("hash_a", 0.9),
-            _make_query_result("hash_b", 0.8),
-        ])
+        mock_storage.retrieve = AsyncMock(
+            return_value=[
+                _make_query_result("hash_a", 0.9),
+                _make_query_result("hash_b", 0.8),
+            ]
+        )
 
         # No graph client
         service = MemoryService(mock_storage, graph_client=None, write_queue=None)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         memories = result["memories"]
@@ -294,21 +292,29 @@ class TestMemoryServiceGraphBoost:
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=2)
-        mock_storage.retrieve = AsyncMock(return_value=[
-            _make_query_result("hash_a", 0.7),
-            _make_query_result("hash_b", 0.6),
-        ])
+        mock_storage.retrieve = AsyncMock(
+            return_value=[
+                _make_query_result("hash_a", 0.7),
+                _make_query_result("hash_b", 0.6),
+            ]
+        )
 
         # hash_b gets a strong activation
         mock_graph = AsyncMock()
-        mock_graph.spreading_activation = AsyncMock(return_value={
-            "hash_b": 0.8,  # 0.6 + 0.5*0.8 = 1.0
-        })
+        mock_graph.spreading_activation = AsyncMock(
+            return_value={
+                "hash_b": 0.8,  # 0.6 + 0.5*0.8 = 1.0
+            }
+        )
 
         service = MemoryService(mock_storage, mock_graph, write_queue=None)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         memories = result["memories"]
@@ -332,20 +338,24 @@ class TestMemoryServiceGraphBoost:
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=1)
-        mock_storage.retrieve = AsyncMock(return_value=[
-            _make_query_result("hash_a", 0.9),
-        ])
+        mock_storage.retrieve = AsyncMock(
+            return_value=[
+                _make_query_result("hash_a", 0.9),
+            ]
+        )
 
         # Graph raises an error
         mock_graph = AsyncMock()
-        mock_graph.spreading_activation = AsyncMock(
-            side_effect=ConnectionError("FalkorDB down")
-        )
+        mock_graph.spreading_activation = AsyncMock(side_effect=ConnectionError("FalkorDB down"))
 
         service = MemoryService(mock_storage, mock_graph, write_queue=None)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         # Still returns results, unboosted
@@ -366,15 +376,21 @@ class TestMemoryServiceGraphBoost:
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=1)
-        mock_storage.retrieve = AsyncMock(return_value=[
-            _make_query_result("hash_a", 0.9),
-        ])
+        mock_storage.retrieve = AsyncMock(
+            return_value=[
+                _make_query_result("hash_a", 0.9),
+            ]
+        )
 
         mock_graph = AsyncMock()
         service = MemoryService(mock_storage, mock_graph, write_queue=None)
         await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         # Graph should NOT be queried when boost=0

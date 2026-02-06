@@ -10,7 +10,6 @@ from mcp_memory_service.utils.emotional_analysis import (
     analyze_emotion,
 )
 
-
 # =============================================================================
 # Basic Detection Tests
 # =============================================================================
@@ -129,8 +128,7 @@ class TestMagnitudeScaling:
     def test_magnitude_bounded(self):
         """Magnitude should never exceed 1.0."""
         result = analyze_emotion(
-            "extremely very incredibly amazingly happy great excellent "
-            "awesome fantastic wonderful perfect brilliant"
+            "extremely very incredibly amazingly happy great excellent awesome fantastic wonderful perfect brilliant"
         )
         assert result.magnitude <= 1.0
 

@@ -4,7 +4,6 @@ Unit tests for graph schema definitions.
 Validates the schema statements are well-formed Cypher and relation type whitelist.
 """
 
-
 from mcp_memory_service.graph.schema import RELATION_TYPES, SCHEMA_STATEMENTS
 
 

@@ -110,9 +110,7 @@ class MemoryService:
             logger.warning(f"Spreading activation failed (non-fatal): {e}")
             return {}
 
-    async def _fire_hebbian_co_access(
-        self, content_hashes: list[str], spacing_qualities: list[float] | None = None
-    ) -> None:
+    async def _fire_hebbian_co_access(self, content_hashes: list[str], spacing_qualities: list[float] | None = None) -> None:
         """
         Enqueue Hebbian strengthening for all pairs of co-retrieved memories.
 
@@ -581,7 +579,8 @@ class MemoryService:
                     # Create graph edges for each stored chunk
                     for mem_dict in stored_memories:
                         await self._create_contradiction_edges(
-                            mem_dict["content_hash"], interference.contradictions,
+                            mem_dict["content_hash"],
+                            interference.contradictions,
                         )
 
                 return result
@@ -615,7 +614,8 @@ class MemoryService:
                     if interference.has_contradictions:
                         result["interference"] = interference.to_dict()
                         await self._create_contradiction_edges(
-                            content_hash, interference.contradictions,
+                            content_hash,
+                            interference.contradictions,
                         )
 
                     return result
@@ -674,7 +674,13 @@ class MemoryService:
             # Distinguishes "no tags" (None) from "explicit empty tags" ([])
             if tags is not None:
                 return await self._retrieve_vector_only(
-                    query, page, page_size, tags, memory_type, min_similarity, encoding_context,
+                    query,
+                    page,
+                    page_size,
+                    tags,
+                    memory_type,
+                    min_similarity,
+                    encoding_context,
                 )
 
             # Get cached tags for keyword extraction
@@ -686,7 +692,13 @@ class MemoryService:
             # If no keywords match existing tags, fall back to vector-only
             if not keywords:
                 return await self._retrieve_vector_only(
-                    query, page, page_size, None, memory_type, min_similarity, encoding_context,
+                    query,
+                    page,
+                    page_size,
+                    None,
+                    memory_type,
+                    min_similarity,
+                    encoding_context,
                 )
 
             # Determine alpha (explicit > env > adaptive)
@@ -696,7 +708,13 @@ class MemoryService:
             # If alpha is 1.0, pure vector search (opt-out)
             if alpha >= 1.0:
                 return await self._retrieve_vector_only(
-                    query, page, page_size, None, memory_type, min_similarity, encoding_context,
+                    query,
+                    page,
+                    page_size,
+                    None,
+                    memory_type,
+                    min_similarity,
+                    encoding_context,
                 )
 
             # Fetch larger result set for RRF combination
@@ -775,7 +793,9 @@ class MemoryService:
                         ctx_sim = compute_context_similarity(stored_ctx, current_ctx)
                         if ctx_sim > 0:
                             score = apply_context_boost(
-                                score, ctx_sim, settings.encoding_context.boost_weight,
+                                score,
+                                ctx_sim,
+                                settings.encoding_context.boost_weight,
                             )
                             debug_info = {**debug_info, "context_similarity": ctx_sim}
                     context_boosted.append((memory, score, debug_info))
@@ -796,9 +816,7 @@ class MemoryService:
                 results.append(memory_dict)
                 result_hashes.append(memory.content_hash)
                 result_spacing.append(
-                    compute_spacing_quality(memory.access_timestamps)
-                    if settings.spaced_repetition.enabled
-                    else 0.0
+                    compute_spacing_quality(memory.access_timestamps) if settings.spaced_repetition.enabled else 0.0
                 )
 
             # Fire Hebbian co-access events with spacing qualities for LTP
@@ -1156,10 +1174,7 @@ class MemoryService:
                             await self._graph.delete_memory_node(victim.content_hash)
 
                         merged += 1
-                        logger.info(
-                            f"Merged duplicate: kept {keeper.content_hash[:8]}, "
-                            f"removed {victim.content_hash[:8]}"
-                        )
+                        logger.info(f"Merged duplicate: kept {keeper.content_hash[:8]}, removed {victim.content_hash[:8]}")
                     except Exception as e:
                         logger.warning(f"Failed to merge duplicate pair: {e}")
 

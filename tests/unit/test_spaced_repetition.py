@@ -41,9 +41,9 @@ class TestComputeSpacingQuality:
         # Access at 0, 1 hour, 1 day, 1 week — classic spaced repetition
         timestamps = [
             now,
-            now + 3600,         # +1 hour
-            now + 86400,        # +1 day
-            now + 604800,       # +1 week
+            now + 3600,  # +1 hour
+            now + 86400,  # +1 day
+            now + 604800,  # +1 week
         ]
         quality = compute_spacing_quality(timestamps)
         assert quality > 0.5
@@ -176,19 +176,13 @@ class TestComputeLTPRate:
 
     def test_rate_decreases_with_weight(self):
         """Rate should monotonically decrease as weight increases."""
-        rates = [
-            compute_ltp_rate(0.15, w, 1.0, 0.5)
-            for w in [0.0, 0.25, 0.5, 0.75, 1.0]
-        ]
+        rates = [compute_ltp_rate(0.15, w, 1.0, 0.5) for w in [0.0, 0.25, 0.5, 0.75, 1.0]]
         for i in range(len(rates) - 1):
             assert rates[i] >= rates[i + 1]
 
     def test_rate_increases_with_spacing(self):
         """Rate should increase with better spacing quality."""
-        rates = [
-            compute_ltp_rate(0.15, 0.3, 1.0, sq)
-            for sq in [0.0, 0.25, 0.5, 0.75, 1.0]
-        ]
+        rates = [compute_ltp_rate(0.15, 0.3, 1.0, sq) for sq in [0.0, 0.25, 0.5, 0.75, 1.0]]
         for i in range(len(rates) - 1):
             assert rates[i] <= rates[i + 1]
 
@@ -213,8 +207,8 @@ class TestSpacedRepetitionIntegration:
         timestamps = [
             now - 604800 * 4,  # 4 weeks ago
             now - 604800 * 2,  # 2 weeks ago
-            now - 604800,      # 1 week ago
-            now,               # now
+            now - 604800,  # 1 week ago
+            now,  # now
         ]
         quality = compute_spacing_quality(timestamps)
         assert quality > 0.3  # Decent spacing

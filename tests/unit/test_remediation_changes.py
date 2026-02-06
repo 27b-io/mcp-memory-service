@@ -8,8 +8,6 @@ NOTE: Tests that verify removed code stays removed are kept.
 Tests that were empty/pass statements have been removed.
 """
 
-from unittest.mock import patch
-
 import pytest
 
 

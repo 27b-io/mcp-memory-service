@@ -27,9 +27,9 @@ from typing import Any
 # Time-of-day buckets (hour ranges, UTC)
 # ---------------------------------------------------------------------------
 _TIME_BUCKETS = {
-    "morning": range(6, 12),    # 06:00–11:59
+    "morning": range(6, 12),  # 06:00–11:59
     "afternoon": range(12, 18),  # 12:00–17:59
-    "evening": range(18, 22),    # 18:00–21:59
+    "evening": range(18, 22),  # 18:00–21:59
     "night": list(range(22, 24)) + list(range(0, 6)),  # 22:00–05:59
 }
 
@@ -64,9 +64,9 @@ def _bucket_distance(a: str, b: str) -> int:
 class EncodingContext:
     """Environmental context captured at memory encoding time."""
 
-    time_of_day: str = "morning"     # morning | afternoon | evening | night
-    day_type: str = "weekday"        # weekday | weekend
-    agent: str = ""                  # Source agent/hostname
+    time_of_day: str = "morning"  # morning | afternoon | evening | night
+    day_type: str = "weekday"  # weekday | weekend
+    agent: str = ""  # Source agent/hostname
     task_tags: tuple[str, ...] = ()  # Primary tags at encoding time
 
     def to_dict(self) -> dict[str, Any]:
@@ -187,10 +187,7 @@ def compute_context_similarity(
         return 0.0
 
     similarity = (
-        time_weight * time_score
-        + day_weight * day_score
-        + agent_weight * agent_score
-        + task_weight * task_score
+        time_weight * time_score + day_weight * day_score + agent_weight * agent_score + task_weight * task_score
     ) / total_weight
 
     return max(0.0, min(1.0, similarity))

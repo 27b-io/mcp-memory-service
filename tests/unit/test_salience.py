@@ -5,14 +5,11 @@ Tests score computation, boost application, weight configuration,
 boundary conditions, and the logarithmic frequency normalization.
 """
 
-import math
-
 from mcp_memory_service.utils.salience import (
     SalienceFactors,
     apply_salience_boost,
     compute_salience,
 )
-
 
 # =============================================================================
 # Basic Computation Tests

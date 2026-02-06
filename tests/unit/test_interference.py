@@ -84,7 +84,11 @@ class TestNegationDetection:
         new = "The API does not support pagination"
         existing = "The API supports pagination with page and page_size parameters"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.85, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.85,
+            min_confidence=0.1,
         )
         negation_signals = [s for s in signals if s.signal_type == "negation"]
         assert len(negation_signals) >= 1
@@ -95,7 +99,11 @@ class TestNegationDetection:
         new = "The system is not ready and cannot handle load"
         existing = "The system was not tested and has not been deployed"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.85, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.85,
+            min_confidence=0.1,
         )
         # Both have negation, so asymmetry is small/zero
         negation_signals = [s for s in signals if s.signal_type == "negation"]
@@ -109,7 +117,11 @@ class TestNegationDetection:
         new = "Python does not support goto statements"
         existing = "Redis supports cluster mode with automatic sharding"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.3, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.3,
+            min_confidence=0.1,
         )
         # Low similarity should produce low confidence or no signals
         negation_signals = [s for s in signals if s.signal_type == "negation"]
@@ -126,7 +138,11 @@ class TestAntonymDetection:
         new = "Feature flag oauth_v2 is now disabled in production"
         existing = "Feature flag oauth_v2 is enabled in production"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.9, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.9,
+            min_confidence=0.1,
         )
         antonym_signals = [s for s in signals if s.signal_type == "antonym"]
         assert len(antonym_signals) >= 1
@@ -137,7 +153,11 @@ class TestAntonymDetection:
         new = "Database migration failed with connection timeout"
         existing = "Database migration succeeded and all tables created"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.85, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.85,
+            min_confidence=0.1,
         )
         antonym_signals = [s for s in signals if s.signal_type == "antonym"]
         assert len(antonym_signals) >= 1
@@ -147,7 +167,11 @@ class TestAntonymDetection:
         new = "Feature X is enabled and working correctly"
         existing = "Feature X was enabled last week and is active"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.9, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.9,
+            min_confidence=0.1,
         )
         antonym_signals = [s for s in signals if s.signal_type == "antonym"]
         assert len(antonym_signals) == 0
@@ -157,7 +181,11 @@ class TestAntonymDetection:
         new = "To enable the feature, first disable the legacy mode"
         existing = "Enable the new API by disabling the old endpoints"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.9, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.9,
+            min_confidence=0.1,
         )
         # Both texts contain both sides, so no cross-match should fire
         antonym_signals = [s for s in signals if s.signal_type == "antonym"]
@@ -168,7 +196,11 @@ class TestAntonymDetection:
         new = "Removed the caching layer from the API gateway"
         existing = "Added a caching layer to the API gateway"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.88, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.88,
+            min_confidence=0.1,
         )
         antonym_signals = [s for s in signals if s.signal_type == "antonym"]
         assert len(antonym_signals) >= 1
@@ -183,7 +215,11 @@ class TestTemporalSupersession:
         new = "The system no longer uses Redis for caching"
         existing = "Redis is used for caching layer"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.82, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.82,
+            min_confidence=0.1,
         )
         temporal_signals = [s for s in signals if s.signal_type == "temporal"]
         assert len(temporal_signals) >= 1
@@ -194,7 +230,11 @@ class TestTemporalSupersession:
         new = "Switched from PostgreSQL to MongoDB for the events collection"
         existing = "PostgreSQL stores all event data with JSONB columns"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.78, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.78,
+            min_confidence=0.1,
         )
         temporal_signals = [s for s in signals if s.signal_type == "temporal"]
         assert len(temporal_signals) >= 1
@@ -204,7 +244,11 @@ class TestTemporalSupersession:
         new = "The old auth system was replaced by OAuth 2.1"
         existing = "Authentication uses custom JWT tokens with HS256"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.75, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.75,
+            min_confidence=0.1,
         )
         temporal_signals = [s for s in signals if s.signal_type == "temporal"]
         assert len(temporal_signals) >= 1
@@ -214,7 +258,11 @@ class TestTemporalSupersession:
         new = "The API uses REST endpoints for all CRUD operations"
         existing = "GraphQL is the primary API interface"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.8, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.8,
+            min_confidence=0.1,
         )
         temporal_signals = [s for s in signals if s.signal_type == "temporal"]
         assert len(temporal_signals) == 0
@@ -226,13 +274,19 @@ class TestTemporalSupersession:
 class TestEdgeCases:
     def test_empty_new_content(self):
         signals = detect_contradiction_signals(
-            "", "some existing content", "hash1", similarity=0.9,
+            "",
+            "some existing content",
+            "hash1",
+            similarity=0.9,
         )
         assert signals == []
 
     def test_empty_existing_content(self):
         signals = detect_contradiction_signals(
-            "some new content", "", "hash1", similarity=0.9,
+            "some new content",
+            "",
+            "hash1",
+            similarity=0.9,
         )
         assert signals == []
 
@@ -244,7 +298,11 @@ class TestEdgeCases:
         """Identical content shouldn't produce contradiction signals."""
         content = "The server runs on port 8080 with TLS enabled"
         signals = detect_contradiction_signals(
-            content, content, "hash1", similarity=1.0, min_confidence=0.1,
+            content,
+            content,
+            "hash1",
+            similarity=1.0,
+            min_confidence=0.1,
         )
         # No negation asymmetry, no antonym cross-match, no temporal pattern
         assert len(signals) == 0
@@ -255,11 +313,19 @@ class TestEdgeCases:
         existing = "The API supports pagination"
         # With very high confidence threshold, weak signals get filtered
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.85, min_confidence=0.95,
+            new,
+            existing,
+            "hash1",
+            similarity=0.85,
+            min_confidence=0.95,
         )
         # Should have fewer or no signals compared to lower threshold
         weak_signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.85, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.85,
+            min_confidence=0.1,
         )
         assert len(signals) <= len(weak_signals)
 
@@ -268,7 +334,11 @@ class TestEdgeCases:
         new = "Feature X is disabled"
         existing = "Feature Y is enabled"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.3, min_confidence=0.0,
+            new,
+            existing,
+            "hash1",
+            similarity=0.3,
+            min_confidence=0.0,
         )
         for s in signals:
             # Low similarity should produce low confidence
@@ -284,7 +354,11 @@ class TestCombinedSignals:
         new = "The system no longer uses caching and the feature is disabled"
         existing = "Caching is enabled and actively used in production"
         signals = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.85, min_confidence=0.1,
+            new,
+            existing,
+            "hash1",
+            similarity=0.85,
+            min_confidence=0.1,
         )
         signal_types = {s.signal_type for s in signals}
         # Should detect at least temporal + antonym
@@ -295,10 +369,18 @@ class TestCombinedSignals:
         new = "Feature X is disabled"
         existing = "Feature X is enabled"
         low_sim = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.6, min_confidence=0.0,
+            new,
+            existing,
+            "hash1",
+            similarity=0.6,
+            min_confidence=0.0,
         )
         high_sim = detect_contradiction_signals(
-            new, existing, "hash1", similarity=0.95, min_confidence=0.0,
+            new,
+            existing,
+            "hash1",
+            similarity=0.95,
+            min_confidence=0.0,
         )
         # Get max confidence for antonym signals at each similarity
         low_max = max((s.confidence for s in low_sim if s.signal_type == "antonym"), default=0)

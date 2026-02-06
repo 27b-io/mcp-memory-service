@@ -39,9 +39,7 @@ class TestGraphClientInit:
     @pytest.mark.asyncio
     @patch("mcp_memory_service.graph.client.BlockingConnectionPool")
     @patch("mcp_memory_service.graph.client.FalkorDB")
-    async def test_initialize_creates_pool_and_applies_schema(
-        self, mock_falkordb_cls, mock_pool_cls
-    ):
+    async def test_initialize_creates_pool_and_applies_schema(self, mock_falkordb_cls, mock_pool_cls):
         from mcp_memory_service.graph.client import GraphClient
 
         mock_pool_instance = MagicMock()
@@ -53,9 +51,7 @@ class TestGraphClientInit:
         mock_db_instance.select_graph.return_value = mock_graph_instance
         mock_falkordb_cls.return_value = mock_db_instance
 
-        client = GraphClient(
-            host="testhost", port=6380, graph_name="test_graph", max_connections=8
-        )
+        client = GraphClient(host="testhost", port=6380, graph_name="test_graph", max_connections=8)
         await client.initialize()
 
         # Pool created with correct params
@@ -81,9 +77,7 @@ class TestGraphClientInit:
     @pytest.mark.asyncio
     @patch("mcp_memory_service.graph.client.BlockingConnectionPool")
     @patch("mcp_memory_service.graph.client.FalkorDB")
-    async def test_initialize_handles_existing_index(
-        self, mock_falkordb_cls, mock_pool_cls
-    ):
+    async def test_initialize_handles_existing_index(self, mock_falkordb_cls, mock_pool_cls):
         """Schema statements that fail with 'already indexed' are silently ignored."""
         from mcp_memory_service.graph.client import GraphClient
 
@@ -224,8 +218,11 @@ class TestGraphClientReads:
         relates_result = MagicMock()
         relates_result.result_set = [[5]]
         mock_graph.query.side_effect = [
-            node_result, hebbian_result,
-            contradicts_result, precedes_result, relates_result,
+            node_result,
+            hebbian_result,
+            contradicts_result,
+            precedes_result,
+            relates_result,
         ]
 
         client = GraphClient.__new__(GraphClient)
@@ -238,7 +235,9 @@ class TestGraphClientReads:
         assert stats["hebbian_edge_count"] == 100
         assert stats["edge_count"] == 110  # 100 hebbian + 2 + 3 + 5
         assert stats["typed_edge_counts"] == {
-            "contradicts": 2, "precedes": 3, "relates_to": 5,
+            "contradicts": 2,
+            "precedes": 3,
+            "relates_to": 5,
         }
         assert stats["status"] == "operational"
 
@@ -387,9 +386,12 @@ class TestGraphClientTypedEdges:
         # For each type: outgoing + incoming queries. 3 types = 6 queries.
         # CONTRADICTS out, CONTRADICTS in, PRECEDES out, PRECEDES in, RELATES_TO out, RELATES_TO in
         mock_graph.query.side_effect = [
-            empty_result, empty_result,  # CONTRADICTS out, in
-            empty_result, empty_result,  # PRECEDES out, in
-            out_result, empty_result,    # RELATES_TO out, in
+            empty_result,
+            empty_result,  # CONTRADICTS out, in
+            empty_result,
+            empty_result,  # PRECEDES out, in
+            out_result,
+            empty_result,  # RELATES_TO out, in
         ]
 
         client = GraphClient.__new__(GraphClient)

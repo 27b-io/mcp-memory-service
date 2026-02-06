@@ -190,10 +190,7 @@ class TestPopBatch:
     @pytest.mark.asyncio
     async def test_pop_batch_multiple_items(self, queue):
         """BRPOP returns one, then RPOP returns more."""
-        items = [
-            json.dumps({"op": "strengthen", "source": f"s{i}", "target": f"t{i}", "ts": 0})
-            for i in range(5)
-        ]
+        items = [json.dumps({"op": "strengthen", "source": f"s{i}", "target": f"t{i}", "ts": 0}) for i in range(5)]
 
         mock_conn = AsyncMock()
         mock_conn.brpop.return_value = ("test:queue", items[0])
