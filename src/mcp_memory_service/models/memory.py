@@ -60,6 +60,9 @@ class Memory:
     # Encoding context: environmental context captured at storage time
     encoding_context: dict[str, Any] | None = None
 
+    # Extractive summary: one-line summary for token-efficient scanning (~50 tokens)
+    summary: str | None = None
+
     # Legacy timestamp field (maintain for backward compatibility)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -239,6 +242,8 @@ class Memory:
             "access_timestamps": self.access_timestamps,
             # Encoding context
             "encoding_context": self.encoding_context,
+            # Extractive summary
+            "summary": self.summary,
             **self.metadata,
         }
 
@@ -275,6 +280,9 @@ class Memory:
         # Extract encoding context
         encoding_context = data.get("encoding_context")
 
+        # Extract summary
+        summary = data.get("summary")
+
         # Create metadata dictionary without special fields
         metadata = {
             k: v
@@ -297,6 +305,7 @@ class Memory:
                 "access_count",
                 "access_timestamps",
                 "encoding_context",
+                "summary",
             ]
         }
 
@@ -317,6 +326,7 @@ class Memory:
             access_count=access_count,
             access_timestamps=access_timestamps,
             encoding_context=encoding_context,
+            summary=summary,
         )
 
 

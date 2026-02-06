@@ -660,6 +660,7 @@ class QdrantStorage(MemoryStorage):
                     "salience_score": memory.salience_score,
                     "access_count": memory.access_count,
                     "access_timestamps": memory.access_timestamps,
+                    "summary": memory.summary,
                 },
             )
 
@@ -793,6 +794,7 @@ class QdrantStorage(MemoryStorage):
                         salience_score=float(payload.get("salience_score", 0.0)),
                         access_count=int(payload.get("access_count", 0)),
                         access_timestamps=payload.get("access_timestamps", []),
+                        summary=payload.get("summary"),
                     )
 
                     # Qdrant score is already a similarity score (1.0 = perfect match for cosine)
@@ -963,6 +965,7 @@ class QdrantStorage(MemoryStorage):
                     salience_score=float(payload.get("salience_score", 0.0)),
                     access_count=int(payload.get("access_count", 0)),
                     access_timestamps=payload.get("access_timestamps", []),
+                    summary=payload.get("summary"),
                 )
                 memories.append(memory)
 
@@ -1018,6 +1021,7 @@ class QdrantStorage(MemoryStorage):
                 salience_score=float(payload.get("salience_score", 0.0)),
                 access_count=int(payload.get("access_count", 0)),
                 access_timestamps=payload.get("access_timestamps", []),
+                summary=payload.get("summary"),
             )
 
             self._record_success()
@@ -1216,6 +1220,7 @@ class QdrantStorage(MemoryStorage):
                 "metadata": updates.get("metadata", memory.metadata),
                 "created_at": memory.created_at if preserve_timestamps else datetime.now().timestamp(),
                 "updated_at": datetime.now().timestamp(),
+                "summary": updates.get("summary", memory.summary),
             }
 
             # Update the point payload in Qdrant
@@ -1429,6 +1434,7 @@ class QdrantStorage(MemoryStorage):
                     salience_score=float(payload.get("salience_score", 0.0)),
                     access_count=int(payload.get("access_count", 0)),
                     access_timestamps=payload.get("access_timestamps", []),
+                    summary=payload.get("summary"),
                 )
                 memories.append(memory)
 
@@ -1546,6 +1552,7 @@ class QdrantStorage(MemoryStorage):
                         salience_score=float(payload.get("salience_score", 0.0)),
                         access_count=int(payload.get("access_count", 0)),
                         access_timestamps=payload.get("access_timestamps", []),
+                        summary=payload.get("summary"),
                     )
                     memories.append(memory)
 
@@ -1606,6 +1613,7 @@ class QdrantStorage(MemoryStorage):
                 salience_score=float(payload.get("salience_score", 0.0)),
                 access_count=int(payload.get("access_count", 0)),
                 access_timestamps=payload.get("access_timestamps", []),
+                summary=payload.get("summary"),
             )
 
             self._record_success()
@@ -1703,6 +1711,7 @@ class QdrantStorage(MemoryStorage):
                         salience_score=float(payload.get("salience_score", 0.0)),
                         access_count=int(payload.get("access_count", 0)),
                         access_timestamps=payload.get("access_timestamps", []),
+                        summary=payload.get("summary"),
                     )
                     memories.append(memory)
 
