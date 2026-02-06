@@ -25,7 +25,7 @@ import secrets
 import threading
 import time
 from platformdirs import user_data_dir
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
