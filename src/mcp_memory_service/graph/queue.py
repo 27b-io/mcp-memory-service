@@ -29,9 +29,9 @@ import redis.asyncio as aioredis
 
 logger = logging.getLogger(__name__)
 
-# Hebbian learning constants
+# Hebbian learning defaults (overridden by FalkorDBSettings)
 INITIAL_WEIGHT = 0.1
-STRENGTHEN_DELTA = 0.05
+STRENGTHEN_RATE = 0.15
 MAX_WEIGHT = 1.0
 
 
@@ -42,6 +42,10 @@ class HebbianWriteQueue:
     Uses LPUSH to enqueue from any instance, BRPOP to dequeue
     from the single consumer. Both operations use the same
     FalkorDB/Redis connection since FalkorDB IS Redis.
+
+    Weight updates are multiplicative: w *= (1 + rate), capped at max_weight.
+    This matches biological Hebbian plasticity where stronger connections
+    reinforce faster (Bi & Poo 1998).
     """
 
     def __init__(
@@ -51,6 +55,9 @@ class HebbianWriteQueue:
         queue_key: str = "mcp:graph:write_queue",
         batch_size: int = 50,
         poll_interval: float = 0.5,
+        initial_weight: float = INITIAL_WEIGHT,
+        strengthen_rate: float = STRENGTHEN_RATE,
+        max_weight: float = MAX_WEIGHT,
     ):
         """
         Args:
@@ -59,12 +66,18 @@ class HebbianWriteQueue:
             queue_key: Redis key for the write queue
             batch_size: Max operations per consumer tick
             poll_interval: Seconds to wait on empty BRPOP
+            initial_weight: Weight for newly created edges
+            strengthen_rate: Multiplicative rate per co-access (w *= 1 + rate)
+            max_weight: Maximum edge weight ceiling
         """
         self._pool = pool
         self._graph = graph
         self._queue_key = queue_key
         self._batch_size = batch_size
         self._poll_interval = poll_interval
+        self._initial_weight = initial_weight
+        self._strengthen_rate = strengthen_rate
+        self._max_weight = max_weight
         self._running = False
         self._consumer_task: asyncio.Task | None = None
         self._stats = {"enqueued": 0, "processed": 0, "errors": 0}
@@ -211,8 +224,11 @@ class HebbianWriteQueue:
         """
         Strengthen or create a Hebbian edge between two memories.
 
-        Uses MERGE for idempotent edge creation, then increments weight
-        and co-access count atomically.
+        Uses MERGE for idempotent edge creation, then applies multiplicative
+        weight update: w *= (1 + rate), capped at max_weight.
+
+        Multiplicative strengthening means stronger connections reinforce
+        faster — matching biological Hebbian plasticity.
         """
         await self._graph.query(
             "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
@@ -220,16 +236,16 @@ class HebbianWriteQueue:
             "ON CREATE SET e.weight = $init_w, e.co_access_count = 1, "
             "  e.created_at = $ts, e.last_co_access = $ts "
             "ON MATCH SET e.weight = toFloat(CASE "
-            "  WHEN e.weight + $delta > $max_w THEN $max_w "
-            "  ELSE e.weight + $delta END), "
+            "  WHEN e.weight * (1.0 + $rate) > $max_w THEN $max_w "
+            "  ELSE e.weight * (1.0 + $rate) END), "
             "  e.co_access_count = e.co_access_count + 1, "
             "  e.last_co_access = $ts",
             params={
                 "src": source,
                 "dst": target,
-                "init_w": INITIAL_WEIGHT,
-                "delta": STRENGTHEN_DELTA,
-                "max_w": MAX_WEIGHT,
+                "init_w": self._initial_weight,
+                "rate": self._strengthen_rate,
+                "max_w": self._max_weight,
                 "ts": timestamp,
             },
         )

@@ -88,14 +88,48 @@ class TestExecuteWrite:
     """Test write operation execution against the graph."""
 
     @pytest.mark.asyncio
-    async def test_strengthen_edge(self, queue, mock_graph):
+    async def test_strengthen_edge_uses_multiplicative_update(self, queue, mock_graph):
+        """Verify the Cypher uses multiplicative w * (1 + rate), not additive w + delta."""
         await queue._strengthen_edge("src", "dst", 1700000000.0)
 
         mock_graph.query.assert_called_once()
         query = mock_graph.query.call_args[0][0]
+        params = mock_graph.query.call_args[1]["params"]
+
+        # Core Cypher structure
         assert "MERGE" in query
         assert "HEBBIAN" in query
         assert "co_access_count" in query
+
+        # Multiplicative formula: w * (1.0 + $rate)
+        assert "e.weight * (1.0 + $rate)" in query
+
+        # Must NOT contain additive formula
+        assert "e.weight + $delta" not in query
+
+        # Params use instance config values
+        assert params["init_w"] == 0.1
+        assert params["rate"] == 0.15
+        assert params["max_w"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_strengthen_edge_uses_custom_config(self, mock_pool, mock_graph):
+        """Verify custom Hebbian parameters are passed through to Cypher."""
+        from mcp_memory_service.graph.queue import HebbianWriteQueue
+
+        custom_queue = HebbianWriteQueue(
+            pool=mock_pool,
+            graph=mock_graph,
+            initial_weight=0.2,
+            strengthen_rate=0.25,
+            max_weight=2.0,
+        )
+        await custom_queue._strengthen_edge("src", "dst", 1700000000.0)
+
+        params = mock_graph.query.call_args[1]["params"]
+        assert params["init_w"] == 0.2
+        assert params["rate"] == 0.25
+        assert params["max_w"] == 2.0
 
     @pytest.mark.asyncio
     async def test_weaken_edge(self, queue, mock_graph):

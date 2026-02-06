@@ -45,6 +45,9 @@ async def create_graph_layer() -> tuple[GraphClient, HebbianWriteQueue] | None:
         queue_key=config.write_queue_key,
         batch_size=config.write_queue_batch_size,
         poll_interval=config.write_queue_poll_interval,
+        initial_weight=config.hebbian_initial_weight,
+        strengthen_rate=config.hebbian_strengthen_rate,
+        max_weight=config.hebbian_max_weight,
     )
 
     logger.info(f"Graph layer initialized: {config.host}:{config.port}/{config.graph_name}")

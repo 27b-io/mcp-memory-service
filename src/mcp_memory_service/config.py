@@ -390,6 +390,20 @@ class FalkorDBSettings(BaseSettings):
     # Connection pool
     max_connections: int = Field(default=16, ge=1, le=128, description="Max connections in Redis pool (for concurrent reads)")
 
+    # Hebbian learning parameters
+    hebbian_initial_weight: float = Field(
+        default=0.1, ge=0.01, le=1.0, description="Initial weight for new Hebbian edges"
+    )
+    hebbian_strengthen_rate: float = Field(
+        default=0.15,
+        ge=0.01,
+        le=1.0,
+        description="Multiplicative strengthen rate per co-access (w *= 1 + rate)",
+    )
+    hebbian_max_weight: float = Field(
+        default=1.0, ge=0.1, le=10.0, description="Maximum Hebbian edge weight"
+    )
+
     # Feature flag
     enabled: bool = Field(default=False, description="Enable FalkorDB graph layer")
 

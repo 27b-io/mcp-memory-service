@@ -26,6 +26,11 @@ class TestFalkorDBSettings:
         assert cfg.max_connections == 16
         assert cfg.enabled is False
 
+        # Hebbian learning defaults
+        assert cfg.hebbian_initial_weight == 0.1
+        assert cfg.hebbian_strengthen_rate == 0.15
+        assert cfg.hebbian_max_weight == 1.0
+
     def test_env_override(self):
         from mcp_memory_service.config import FalkorDBSettings
 
@@ -70,6 +75,36 @@ class TestFalkorDBSettings:
 
         with pytest.raises(ValidationError):
             FalkorDBSettings(port=70000)
+
+    def test_hebbian_env_override(self):
+        from mcp_memory_service.config import FalkorDBSettings
+
+        env = {
+            "MCP_FALKORDB_HEBBIAN_INITIAL_WEIGHT": "0.2",
+            "MCP_FALKORDB_HEBBIAN_STRENGTHEN_RATE": "0.25",
+            "MCP_FALKORDB_HEBBIAN_MAX_WEIGHT": "2.0",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            cfg = FalkorDBSettings()
+
+        assert cfg.hebbian_initial_weight == 0.2
+        assert cfg.hebbian_strengthen_rate == 0.25
+        assert cfg.hebbian_max_weight == 2.0
+
+    def test_hebbian_validation(self):
+        from pydantic import ValidationError
+
+        from mcp_memory_service.config import FalkorDBSettings
+
+        with pytest.raises(ValidationError):
+            FalkorDBSettings(hebbian_initial_weight=0.0)  # Below ge=0.01
+
+        with pytest.raises(ValidationError):
+            FalkorDBSettings(hebbian_strengthen_rate=0.0)  # Below ge=0.01
+
+        with pytest.raises(ValidationError):
+            FalkorDBSettings(hebbian_max_weight=0.05)  # Below ge=0.1
 
     def test_batch_size_validation(self):
         from pydantic import ValidationError
