@@ -8,6 +8,18 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.1.0](https://github.com/27b-io/mcp-memory-service/compare/v10.0.1...v10.1.0) (2026-02-06)
+
+
+### Features
+
+* V2 Cognitive Memory Architecture ([#31](https://github.com/27b-io/mcp-memory-service/issues/31)) ([3ec966b](https://github.com/27b-io/mcp-memory-service/commit/3ec966baeb3fd26be8f09ccde64f6c18b46094a6))
+
+
+### Bug Fixes
+
+* handle non-hex content hashes in UUID conversion, fix lint/format ([#33](https://github.com/27b-io/mcp-memory-service/issues/33)) ([d0f2f8d](https://github.com/27b-io/mcp-memory-service/commit/d0f2f8dfb28860058bd82bbea98045e0972ebe35))
+
 ## [10.0.1](https://github.com/27b-io/mcp-memory-service/compare/v10.0.0...v10.0.1) (2026-02-06)
 
 
