@@ -8,6 +8,14 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.1](https://github.com/27b-io/mcp-memory-service/compare/v10.0.0...v10.0.1) (2026-02-06)
+
+
+### Bug Fixes
+
+* broken semantic search - missing base class methods ([#11](https://github.com/27b-io/mcp-memory-service/issues/11)) ([c8b8de7](https://github.com/27b-io/mcp-memory-service/commit/c8b8de72b2c272ce1a4843ece2ead720fe1ef426))
+* **ci:** switch docker cache from GHA to GHCR registry ([#13](https://github.com/27b-io/mcp-memory-service/issues/13)) ([b18fc85](https://github.com/27b-io/mcp-memory-service/commit/b18fc85281dabb92624d165b3310f8e73389d953))
+
 ## [10.0.0](https://github.com/27Bslash6/mcp-memory-service/compare/v9.0.0...v10.0.0) (2026-02-05)
 
 
