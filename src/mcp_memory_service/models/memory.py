@@ -57,6 +57,9 @@ class Memory:
     # Spaced repetition: recent access timestamps (ring buffer, newest last)
     access_timestamps: list[float] = field(default_factory=list)
 
+    # Encoding context: environmental context captured at storage time
+    encoding_context: dict[str, Any] | None = None
+
     # Legacy timestamp field (maintain for backward compatibility)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -234,6 +237,8 @@ class Memory:
             "access_count": self.access_count,
             # Spaced repetition
             "access_timestamps": self.access_timestamps,
+            # Encoding context
+            "encoding_context": self.encoding_context,
             **self.metadata,
         }
 
@@ -267,6 +272,9 @@ class Memory:
         # Extract spaced repetition fields
         access_timestamps = data.get("access_timestamps", [])
 
+        # Extract encoding context
+        encoding_context = data.get("encoding_context")
+
         # Create metadata dictionary without special fields
         metadata = {
             k: v
@@ -288,6 +296,7 @@ class Memory:
                 "salience_score",
                 "access_count",
                 "access_timestamps",
+                "encoding_context",
             ]
         }
 
@@ -307,6 +316,7 @@ class Memory:
             salience_score=salience_score,
             access_count=access_count,
             access_timestamps=access_timestamps,
+            encoding_context=encoding_context,
         )
 
 

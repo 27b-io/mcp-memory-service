@@ -24,6 +24,12 @@ from ..models.memory import Memory
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
 from ..utils.emotional_analysis import analyze_emotion
+from ..utils.encoding_context import (
+    EncodingContext,
+    apply_context_boost,
+    capture_encoding_context,
+    compute_context_similarity,
+)
 from ..utils.hashing import generate_content_hash
 from ..utils.hybrid_search import (
     apply_recency_decay,
@@ -288,6 +294,7 @@ class MemoryService:
         tags: list[str] | None,
         memory_type: str | None,
         min_similarity: float | None,
+        encoding_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Fallback to pure vector search (original behavior)."""
         offset = (page - 1) * page_size
@@ -362,6 +369,23 @@ class MemoryService:
                         settings.spaced_repetition.boost_weight,
                     )
                     result["spacing_quality"] = spacing
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
+        # Apply encoding context boost (context-dependent retrieval)
+        if settings.encoding_context.enabled and encoding_context:
+            current_ctx = EncodingContext.from_dict(encoding_context)
+            for result, mem in zip(results, result_memories):
+                stored_ctx_data = mem.encoding_context
+                if stored_ctx_data:
+                    stored_ctx = EncodingContext.from_dict(stored_ctx_data)
+                    ctx_sim = compute_context_similarity(stored_ctx, current_ctx)
+                    if ctx_sim > 0:
+                        result["similarity_score"] = apply_context_boost(
+                            result.get("similarity_score", 0.0),
+                            ctx_sim,
+                            settings.encoding_context.boost_weight,
+                        )
+                        result["context_similarity"] = ctx_sim
             results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
 
         # Fire Hebbian co-access events for co-retrieved memories
@@ -493,6 +517,14 @@ class MemoryService:
                 explicit_importance=explicit_importance,
             )
 
+            # Capture encoding context (environmental context at storage time)
+            enc_context = None
+            if settings.encoding_context.enabled:
+                enc_context = capture_encoding_context(
+                    tags=final_tags,
+                    agent=client_hostname or "",
+                ).to_dict()
+
             # Process content if auto-splitting is enabled and content exceeds max length
             max_length = self.storage.max_content_length
             if ENABLE_AUTO_SPLIT and max_length and len(content) > max_length:
@@ -528,6 +560,7 @@ class MemoryService:
                         metadata=chunk_metadata,
                         emotional_valence=chunk_valence,
                         salience_score=chunk_salience,
+                        encoding_context=enc_context,
                     )
 
                     success, message = await self.storage.store(memory)
@@ -562,6 +595,7 @@ class MemoryService:
                     metadata=final_metadata,
                     emotional_valence=emotional_valence,
                     salience_score=salience_score,
+                    encoding_context=enc_context,
                 )
 
                 success, message = await self.storage.store(memory)
@@ -609,6 +643,7 @@ class MemoryService:
         tags: list[str] | None = None,
         memory_type: str | None = None,
         min_similarity: float | None = None,
+        encoding_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Retrieve memories using hybrid search (semantic + tag matching).
@@ -638,7 +673,9 @@ class MemoryService:
             # If tags explicitly provided (even empty list), skip hybrid and use pure vector search
             # Distinguishes "no tags" (None) from "explicit empty tags" ([])
             if tags is not None:
-                return await self._retrieve_vector_only(query, page, page_size, tags, memory_type, min_similarity)
+                return await self._retrieve_vector_only(
+                    query, page, page_size, tags, memory_type, min_similarity, encoding_context,
+                )
 
             # Get cached tags for keyword extraction
             existing_tags = await self._get_cached_tags()
@@ -648,7 +685,9 @@ class MemoryService:
 
             # If no keywords match existing tags, fall back to vector-only
             if not keywords:
-                return await self._retrieve_vector_only(query, page, page_size, None, memory_type, min_similarity)
+                return await self._retrieve_vector_only(
+                    query, page, page_size, None, memory_type, min_similarity, encoding_context,
+                )
 
             # Determine alpha (explicit > env > adaptive)
             corpus_size = await self.storage.count()
@@ -656,7 +695,9 @@ class MemoryService:
 
             # If alpha is 1.0, pure vector search (opt-out)
             if alpha >= 1.0:
-                return await self._retrieve_vector_only(query, page, page_size, None, memory_type, min_similarity)
+                return await self._retrieve_vector_only(
+                    query, page, page_size, None, memory_type, min_similarity, encoding_context,
+                )
 
             # Fetch larger result set for RRF combination
             # Must cover offset + page_size to support pagination beyond page 1
@@ -722,6 +763,23 @@ class MemoryService:
                         debug_info = {**debug_info, "spacing_quality": spacing}
                     spacing_boosted.append((memory, score, debug_info))
                 combined = sorted(spacing_boosted, key=lambda x: x[1], reverse=True)
+
+            # Apply encoding context boost (context-dependent retrieval)
+            if settings.encoding_context.enabled and encoding_context:
+                current_ctx = EncodingContext.from_dict(encoding_context)
+                context_boosted = []
+                for memory, score, debug_info in combined:
+                    stored_ctx_data = memory.encoding_context
+                    if stored_ctx_data:
+                        stored_ctx = EncodingContext.from_dict(stored_ctx_data)
+                        ctx_sim = compute_context_similarity(stored_ctx, current_ctx)
+                        if ctx_sim > 0:
+                            score = apply_context_boost(
+                                score, ctx_sim, settings.encoding_context.boost_weight,
+                            )
+                            debug_info = {**debug_info, "context_similarity": ctx_sim}
+                    context_boosted.append((memory, score, debug_info))
+                combined = sorted(context_boosted, key=lambda x: x[1], reverse=True)
 
             # Apply pagination to combined results (offset calculated above for fetch_size)
             total = len(combined)
@@ -1271,4 +1329,5 @@ class MemoryService:
             "updated_at_iso": memory.updated_at_iso,
             "emotional_valence": memory.emotional_valence,
             "salience_score": memory.salience_score,
+            "encoding_context": memory.encoding_context,
         }

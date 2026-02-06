@@ -255,7 +255,14 @@ async def store_memory(
 
 
 @mcp.tool()
-async def retrieve_memory(query: str, ctx: Context, page: int = 1, page_size: int = 10, min_similarity: float = 0.6) -> str:
+async def retrieve_memory(
+    query: str,
+    ctx: Context,
+    page: int = 1,
+    page_size: int = 10,
+    min_similarity: float = 0.6,
+    encoding_context: dict[str, Any] | None = None,
+) -> str:
     """
     Retrieve memories using hybrid search (semantic + tag matching).
 
@@ -276,6 +283,11 @@ async def retrieve_memory(query: str, ctx: Context, page: int = 1, page_size: in
             - 0.7-0.9: Very similar matches
             - 0.9+: Nearly identical
             - Lower for exploratory search, higher for precision
+        encoding_context: Optional current context for context-dependent retrieval.
+            Memories stored in a similar context receive a score boost.
+            Keys: time_of_day (morning|afternoon|evening|night),
+            day_type (weekday|weekend), agent (hostname/agent name),
+            task_tags (list of current task/project tags)
 
     Response Format:
         Returns memories in TOON (Terser Object Notation) format - a compact, pipe-delimited
@@ -293,7 +305,13 @@ async def retrieve_memory(query: str, ctx: Context, page: int = 1, page_size: in
     """
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.retrieve_memories(query=query, page=page, page_size=page_size, min_similarity=min_similarity)
+    result = await memory_service.retrieve_memories(
+        query=query,
+        page=page,
+        page_size=page_size,
+        min_similarity=min_similarity,
+        encoding_context=encoding_context,
+    )
 
     # Extract pagination metadata
     pagination = {

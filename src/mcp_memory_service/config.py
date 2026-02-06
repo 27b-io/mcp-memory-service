@@ -576,6 +576,32 @@ class SpacedRepetitionSettings(BaseSettings):
     )
 
 
+class EncodingContextSettings(BaseSettings):
+    """Encoding context capture and context-dependent retrieval configuration.
+
+    Implements the encoding specificity principle (Tulving & Thomson, 1973):
+    memories encoded in a particular context are retrieved more effectively
+    when that same context is present at retrieval time.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_ENCODING_CONTEXT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable encoding context capture and context-dependent retrieval")
+
+    boost_weight: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Max context similarity boost on retrieval scores (0.1 = up to +10%)",
+    )
+
+
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
 
@@ -649,6 +675,7 @@ class Settings(BaseSettings):
     interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
     spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)
+    encoding_context: EncodingContextSettings = Field(default_factory=EncodingContextSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
