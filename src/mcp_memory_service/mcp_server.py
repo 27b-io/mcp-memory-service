@@ -159,6 +159,7 @@ async def store_memory(
     memory_type: str = "note",
     metadata: dict[str, Any] | None = None,
     client_hostname: str | None = None,
+    summary: str | None = None,
 ) -> StoreMemorySuccess | StoreMemorySplitSuccess | StoreMemoryFailure:
     """
     Store a new memory for future semantic retrieval.
@@ -185,6 +186,7 @@ async def store_memory(
         metadata: Additional structured data to attach. Special keys:
             - importance: float (0.0-1.0) - explicit importance weight for salience scoring
         client_hostname: Source machine identifier (optional)
+        summary: Optional one-line summary (~50 tokens). Auto-generated if not provided.
 
     Content Length Handling:
         - No limit on content length
@@ -220,6 +222,7 @@ async def store_memory(
         memory_type=memory_type,
         metadata=metadata,
         client_hostname=client_hostname,
+        summary=summary,
     )
 
     # Transform MemoryService response to MCP schema
@@ -324,6 +327,57 @@ async def retrieve_memory(
     # Convert results to TOON format with pagination
     toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
     return toon_output
+
+
+@mcp.tool()
+async def memory_scan(
+    query: str,
+    ctx: Context,
+    n_results: int = 5,
+    min_relevance: float = 0.5,
+    format: str = "summary",
+) -> dict[str, Any]:
+    """
+    Token-efficient memory scanning — returns summaries instead of full content.
+
+    Use this BEFORE retrieve_memory for quick, cheap lookups. Returns ~50-token
+    summaries per result instead of full content (500-3000+ tokens each).
+
+    Typical token budget: ~250-500 tokens for 5 results vs 5000-15000 for retrieve_memory.
+
+    Args:
+        query: Natural language search query
+        n_results: Maximum results to return (default: 5)
+        min_relevance: Minimum similarity threshold (0.0-1.0, default: 0.5)
+        format: Output detail level:
+            - "summary" (default): Summary, relevance, tags, hash — cheapest
+            - "full": Full content (same as retrieve_memory but simpler output)
+            - "both": Summary + full content for spot-checking
+
+    Returns:
+        Dictionary with:
+        - results: List of scan entries, each containing:
+            - content_hash: Unique identifier
+            - relevance: Similarity score (0.0-1.0)
+            - tags: Memory tags
+            - created_at: Creation timestamp
+            - memory_type: Memory classification
+            - summary: One-line summary (when format is "summary" or "both")
+            - content: Full content (when format is "full" or "both")
+        - query: The search query used
+        - count: Number of results returned
+        - format: The format used
+
+    Use this for: Quick memory triage, proactive context checks, deciding
+    which memories to fetch in full with retrieve_memory.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.scan_memories(
+        query=query,
+        n_results=n_results,
+        min_relevance=min_relevance,
+        format=format,
+    )
 
 
 @mcp.tool()
