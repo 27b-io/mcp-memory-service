@@ -36,7 +36,6 @@ sys.path.insert(0, str(src_dir))
 from fastmcp import Context, FastMCP  # noqa: E402
 
 # Import existing memory service components
-from .config import settings  # noqa: E402
 from .formatters.toon import format_search_results_as_toon  # noqa: E402
 from .resources.toon_documentation import TOON_FORMAT_DOCUMENTATION  # noqa: E402
 from .services.memory_service import MemoryService  # noqa: E402

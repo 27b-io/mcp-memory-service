@@ -391,23 +391,17 @@ class FalkorDBSettings(BaseSettings):
     max_connections: int = Field(default=16, ge=1, le=128, description="Max connections in Redis pool (for concurrent reads)")
 
     # Hebbian learning parameters
-    hebbian_initial_weight: float = Field(
-        default=0.1, ge=0.01, le=1.0, description="Initial weight for new Hebbian edges"
-    )
+    hebbian_initial_weight: float = Field(default=0.1, ge=0.01, le=1.0, description="Initial weight for new Hebbian edges")
     hebbian_strengthen_rate: float = Field(
         default=0.15,
         ge=0.01,
         le=1.0,
         description="Multiplicative strengthen rate per co-access (w *= 1 + rate)",
     )
-    hebbian_max_weight: float = Field(
-        default=1.0, ge=0.1, le=10.0, description="Maximum Hebbian edge weight"
-    )
+    hebbian_max_weight: float = Field(default=1.0, ge=0.1, le=10.0, description="Maximum Hebbian edge weight")
 
     # Spreading activation parameters
-    spreading_activation_max_hops: int = Field(
-        default=2, ge=1, le=3, description="Max BFS hops for spreading activation"
-    )
+    spreading_activation_max_hops: int = Field(default=2, ge=1, le=3, description="Max BFS hops for spreading activation")
     spreading_activation_decay: float = Field(
         default=0.5, ge=0.01, le=1.0, description="Per-hop exponential decay factor (activation *= decay^hops)"
     )
@@ -524,15 +518,9 @@ class SalienceSettings(BaseSettings):
     enabled: bool = Field(default=True, description="Enable emotional tagging and salience scoring")
 
     # Salience computation weights (must sum to ~1.0 for interpretability)
-    emotional_weight: float = Field(
-        default=0.3, ge=0.0, le=1.0, description="Weight for emotional magnitude in salience score"
-    )
-    frequency_weight: float = Field(
-        default=0.3, ge=0.0, le=1.0, description="Weight for access frequency in salience score"
-    )
-    importance_weight: float = Field(
-        default=0.4, ge=0.0, le=1.0, description="Weight for explicit importance in salience score"
-    )
+    emotional_weight: float = Field(default=0.3, ge=0.0, le=1.0, description="Weight for emotional magnitude in salience score")
+    frequency_weight: float = Field(default=0.3, ge=0.0, le=1.0, description="Weight for access frequency in salience score")
+    importance_weight: float = Field(default=0.4, ge=0.0, le=1.0, description="Weight for explicit importance in salience score")
 
     # Retrieval boost
     boost_weight: float = Field(

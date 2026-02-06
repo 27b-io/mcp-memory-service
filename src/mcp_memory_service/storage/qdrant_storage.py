@@ -18,7 +18,9 @@ Provides embedded vector storage using Qdrant with circuit breaker and model tra
 """
 
 import asyncio
+import hashlib
 import logging
+import re
 import threading
 import time
 import uuid
@@ -477,21 +479,23 @@ class QdrantStorage(MemoryStorage):
 
     def _hash_to_uuid(self, hash_string: str) -> str | uuid.UUID:
         """
-        Convert a SHA256 hash to a UUID format for Qdrant compatibility.
+        Convert a hash string to a UUID format for Qdrant compatibility.
 
         Qdrant's embedded mode requires UUID format for point IDs.
-        We convert the first 32 chars of the hash to UUID format.
+        If the input is already a valid hex string (>= 32 chars), use directly.
+        Otherwise, SHA256 hash it first to produce valid hex.
 
         Args:
-            hash_string: SHA256 hash string (64 chars)
+            hash_string: Hash string or arbitrary identifier
 
         Returns:
             UUID derived from the hash
         """
-        # Take first 32 chars of the hash (UUID needs 32 hex chars)
-        # SHA256 gives us 64 chars, so we have plenty
-        uuid_hex = hash_string[:32]
-        # Convert to UUID format
+        # If already valid hex, use directly; otherwise hash to produce hex
+        if len(hash_string) >= 32 and re.fullmatch(r"[0-9a-fA-F]+", hash_string[:32]):
+            uuid_hex = hash_string[:32]
+        else:
+            uuid_hex = hashlib.sha256(hash_string.encode()).hexdigest()[:32]
         return str(uuid.UUID(uuid_hex))
 
     def _generate_embedding(self, text: str) -> list[float]:

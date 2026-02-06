@@ -26,7 +26,7 @@ class SalienceFactors:
     """Input factors for salience computation."""
 
     emotional_magnitude: float = 0.0  # 0.0–1.0 from emotional analysis
-    access_count: int = 0             # Times retrieved
+    access_count: int = 0  # Times retrieved
     explicit_importance: float = 0.0  # 0.0–1.0 user-assigned
 
 

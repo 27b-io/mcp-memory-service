@@ -576,16 +576,12 @@ class TestRelationOperations:
 
         await service_with_graph.get_relations("hash_a", relation_type="PRECEDES")
 
-        mock_graph_client.get_typed_edges.assert_called_once_with(
-            content_hash="hash_a", relation_type="PRECEDES"
-        )
+        mock_graph_client.get_typed_edges.assert_called_once_with(content_hash="hash_a", relation_type="PRECEDES")
 
     @pytest.mark.asyncio
     async def test_create_relation_self_edge(self, service_with_graph, mock_graph_client):
         """Self-edge raises ValueError, caught by service layer."""
-        mock_graph_client.create_typed_edge.side_effect = ValueError(
-            "Cannot create a relationship from a memory to itself"
-        )
+        mock_graph_client.create_typed_edge.side_effect = ValueError("Cannot create a relationship from a memory to itself")
 
         result = await service_with_graph.create_relation("same", "same", "RELATES_TO")
 

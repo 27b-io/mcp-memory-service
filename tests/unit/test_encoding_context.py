@@ -171,7 +171,7 @@ class TestComputeContextSimilarity:
         current = EncodingContext(time_of_day="afternoon", agent="x", task_tags=("a",))
         score = compute_context_similarity(stored, current)
         # Adjacent time (0.5*0.25) + same day (1.0*0.10) + same agent (1.0*0.25) + same tags (1.0*0.40)
-        expected_approx = (0.5 * 0.25 + 1.0 * 0.10 + 1.0 * 0.25 + 1.0 * 0.40)
+        expected_approx = 0.5 * 0.25 + 1.0 * 0.10 + 1.0 * 0.25 + 1.0 * 0.40
         assert abs(score - expected_approx) < 0.01
 
     def test_opposite_time_buckets_zero(self):
@@ -181,7 +181,7 @@ class TestComputeContextSimilarity:
         # With all empty tags/agents, we get neutral scores for those dims
         score = compute_context_similarity(stored, current)
         # time=0.0 (dist 2), day=1.0 (both weekday), agent=0.5, tags=0.5
-        expected = (0.0 * 0.25 + 1.0 * 0.10 + 0.5 * 0.25 + 0.5 * 0.40)
+        expected = 0.0 * 0.25 + 1.0 * 0.10 + 0.5 * 0.25 + 0.5 * 0.40
         assert abs(score - expected) < 0.01
 
     def test_tag_jaccard_partial_overlap(self):
@@ -199,7 +199,7 @@ class TestComputeContextSimilarity:
         current = EncodingContext()
         score = compute_context_similarity(stored, current)
         # time=1.0, day=1.0, agent=0.5, tags=0.5
-        expected = (1.0 * 0.25 + 1.0 * 0.10 + 0.5 * 0.25 + 0.5 * 0.40)
+        expected = 1.0 * 0.25 + 1.0 * 0.10 + 0.5 * 0.25 + 0.5 * 0.40
         assert abs(score - expected) < 0.01
 
     def test_agent_case_insensitive(self):

@@ -279,7 +279,7 @@ class MemoryStorage(ABC):
         success, _ = await self.update_memory_metadata(memory.content_hash, updates, preserve_timestamps=True)
         return success
 
-    async def increment_access_count(self, content_hash: str) -> None:
+    async def increment_access_count(self, content_hash: str) -> None:  # noqa: B027
         """Increment retrieval counter for salience scoring. Override in backends."""
         pass
 

@@ -103,8 +103,7 @@ class GraphClient:
         MERGE is atomic in FalkorDB.
         """
         await self._graph.query(
-            "MERGE (m:Memory {content_hash: $hash}) "
-            "ON CREATE SET m.created_at = $ts",
+            "MERGE (m:Memory {content_hash: $hash}) ON CREATE SET m.created_at = $ts",
             params={"hash": content_hash, "ts": created_at},
         )
 
@@ -151,10 +150,7 @@ class GraphClient:
             params={"hash": content_hash, "min_w": min_weight, "lim": limit},
         )
 
-        return [
-            {"content_hash": row[0], "weight": float(row[1]), "hops": int(row[2])}
-            for row in result.result_set
-        ]
+        return [{"content_hash": row[0], "weight": float(row[1]), "hops": int(row[2])} for row in result.result_set]
 
     async def spreading_activation(
         self,
@@ -258,10 +254,7 @@ class GraphClient:
         """Validate and normalize a relation type against the whitelist."""
         normalized = relation_type.upper()
         if normalized not in RELATION_TYPES:
-            raise ValueError(
-                f"Invalid relation type: {relation_type!r}. "
-                f"Must be one of: {', '.join(sorted(RELATION_TYPES))}"
-            )
+            raise ValueError(f"Invalid relation type: {relation_type!r}. Must be one of: {', '.join(sorted(RELATION_TYPES))}")
         return normalized
 
     async def create_typed_edge(
@@ -330,10 +323,7 @@ class GraphClient:
             List of dicts with source, target, relation_type, created_at
         """
         if direction not in self._VALID_DIRECTIONS:
-            raise ValueError(
-                f"Invalid direction: {direction!r}. "
-                f"Must be one of: {', '.join(sorted(self._VALID_DIRECTIONS))}"
-            )
+            raise ValueError(f"Invalid direction: {direction!r}. Must be one of: {', '.join(sorted(self._VALID_DIRECTIONS))}")
 
         if relation_type is not None:
             rel_types = [self._validate_relation_type(relation_type)]
@@ -350,13 +340,15 @@ class GraphClient:
                     params={"hash": content_hash, "lim": limit},
                 )
                 for row in out.result_set:
-                    results.append({
-                        "source": row[0],
-                        "target": row[1],
-                        "relation_type": rel,
-                        "direction": "outgoing",
-                        "created_at": float(row[2]) if row[2] is not None else None,
-                    })
+                    results.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "relation_type": rel,
+                            "direction": "outgoing",
+                            "created_at": float(row[2]) if row[2] is not None else None,
+                        }
+                    )
 
             if direction in ("incoming", "both"):
                 inc = await self._graph.query(
@@ -366,19 +358,19 @@ class GraphClient:
                     params={"hash": content_hash, "lim": limit},
                 )
                 for row in inc.result_set:
-                    results.append({
-                        "source": row[0],
-                        "target": row[1],
-                        "relation_type": rel,
-                        "direction": "incoming",
-                        "created_at": float(row[2]) if row[2] is not None else None,
-                    })
+                    results.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "relation_type": rel,
+                            "direction": "incoming",
+                            "created_at": float(row[2]) if row[2] is not None else None,
+                        }
+                    )
 
         return results[:limit]
 
-    async def delete_typed_edge(
-        self, source_hash: str, target_hash: str, relation_type: str
-    ) -> bool:
+    async def delete_typed_edge(self, source_hash: str, target_hash: str, relation_type: str) -> bool:
         """
         Delete a typed relationship edge between two memories.
 
@@ -387,9 +379,7 @@ class GraphClient:
         """
         rel = self._validate_relation_type(relation_type)
         result = await self._graph.query(
-            f"MATCH (a:Memory {{content_hash: $src}})-[e:{rel}]->(b:Memory {{content_hash: $dst}}) "
-            "DELETE e "
-            "RETURN count(e)",
+            f"MATCH (a:Memory {{content_hash: $src}})-[e:{rel}]->(b:Memory {{content_hash: $dst}}) DELETE e RETURN count(e)",
             params={"src": source_hash, "dst": target_hash},
         )
         count = int(result.result_set[0][0]) if result.result_set else 0
@@ -414,19 +404,14 @@ class GraphClient:
             Number of edges decayed
         """
         result = await self._graph.query(
-            "MATCH ()-[e:HEBBIAN]->() "
-            "WITH e LIMIT $lim "
-            "SET e.weight = toFloat(e.weight * $decay) "
-            "RETURN count(e)",
+            "MATCH ()-[e:HEBBIAN]->() WITH e LIMIT $lim SET e.weight = toFloat(e.weight * $decay) RETURN count(e)",
             params={"decay": decay_factor, "lim": limit},
         )
         count = int(result.result_set[0][0]) if result.result_set else 0
         logger.info(f"Decayed {count} edges by factor {decay_factor}")
         return count
 
-    async def decay_stale_edges(
-        self, stale_before: float, decay_factor: float, limit: int = 10000
-    ) -> int:
+    async def decay_stale_edges(self, stale_before: float, decay_factor: float, limit: int = 10000) -> int:
         """
         Apply extra decay to edges not co-accessed since the given timestamp.
 
@@ -469,11 +454,7 @@ class GraphClient:
             Number of edges pruned
         """
         result = await self._graph.query(
-            "MATCH ()-[e:HEBBIAN]->() "
-            "WHERE e.weight < $thresh "
-            "WITH e LIMIT $lim "
-            "DELETE e "
-            "RETURN count(e)",
+            "MATCH ()-[e:HEBBIAN]->() WHERE e.weight < $thresh WITH e LIMIT $lim DELETE e RETURN count(e)",
             params={"thresh": threshold, "lim": limit},
         )
         count = int(result.result_set[0][0]) if result.result_set else 0
@@ -497,8 +478,7 @@ class GraphClient:
         where_clause = " AND ".join(edge_checks)
 
         result = await self._graph.query(
-            f"MATCH (m:Memory) WHERE {where_clause} "
-            "RETURN m.content_hash LIMIT $lim",
+            f"MATCH (m:Memory) WHERE {where_clause} RETURN m.content_hash LIMIT $lim",
             params={"lim": limit},
         )
         return [row[0] for row in result.result_set]
@@ -506,12 +486,8 @@ class GraphClient:
     async def get_graph_stats(self) -> dict[str, Any]:
         """Get graph statistics for health checks."""
         try:
-            node_result = await self._graph.query(
-                "MATCH (m:Memory) RETURN count(m)"
-            )
-            edge_result = await self._graph.query(
-                "MATCH ()-[e:HEBBIAN]->() RETURN count(e)"
-            )
+            node_result = await self._graph.query("MATCH (m:Memory) RETURN count(m)")
+            edge_result = await self._graph.query("MATCH ()-[e:HEBBIAN]->() RETURN count(e)")
 
             node_count = node_result.result_set[0][0] if node_result.result_set else 0
             hebbian_count = edge_result.result_set[0][0] if edge_result.result_set else 0
@@ -519,12 +495,8 @@ class GraphClient:
             # Count typed relationship edges
             typed_counts: dict[str, int] = {}
             for rel in sorted(RELATION_TYPES):
-                rel_result = await self._graph.query(
-                    f"MATCH ()-[e:{rel}]->() RETURN count(e)"
-                )
-                typed_counts[rel.lower()] = (
-                    int(rel_result.result_set[0][0]) if rel_result.result_set else 0
-                )
+                rel_result = await self._graph.query(f"MATCH ()-[e:{rel}]->() RETURN count(e)")
+                typed_counts[rel.lower()] = int(rel_result.result_set[0][0]) if rel_result.result_set else 0
 
             total_typed = sum(typed_counts.values())
 

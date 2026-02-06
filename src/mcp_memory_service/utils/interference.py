@@ -65,40 +65,74 @@ class InterferenceResult:
 # ── Negation patterns ──────────────────────────────────────────────────
 
 # Words that negate a statement's meaning
-_NEGATION_WORDS: frozenset[str] = frozenset({
-    "not", "no", "never", "none", "neither", "nor",
-    "dont", "doesnt", "didnt", "isnt", "wasnt", "arent", "werent",
-    "cant", "couldnt", "shouldnt", "wouldnt", "wont", "hasnt", "havent",
-    "without", "lack", "lacks", "lacking", "absent", "missing",
-    "false", "incorrect", "wrong", "invalid",
-})
+_NEGATION_WORDS: frozenset[str] = frozenset(
+    {
+        "not",
+        "no",
+        "never",
+        "none",
+        "neither",
+        "nor",
+        "dont",
+        "doesnt",
+        "didnt",
+        "isnt",
+        "wasnt",
+        "arent",
+        "werent",
+        "cant",
+        "couldnt",
+        "shouldnt",
+        "wouldnt",
+        "wont",
+        "hasnt",
+        "havent",
+        "without",
+        "lack",
+        "lacks",
+        "lacking",
+        "absent",
+        "missing",
+        "false",
+        "incorrect",
+        "wrong",
+        "invalid",
+    }
+)
 
 # ── Antonym pairs (bidirectional) ──────────────────────────────────────
 
 # Each tuple is a pair of opposing concepts. Order doesn't matter.
 _ANTONYM_PAIRS: list[tuple[frozenset[str], frozenset[str]]] = [
-    (frozenset({"enable", "enabled", "activate", "activated", "on"}),
-     frozenset({"disable", "disabled", "deactivate", "deactivated", "off"})),
-    (frozenset({"true", "yes", "correct", "right"}),
-     frozenset({"false", "no", "incorrect", "wrong"})),
-    (frozenset({"add", "added", "include", "included", "install", "installed"}),
-     frozenset({"remove", "removed", "exclude", "excluded", "uninstall", "uninstalled"})),
-    (frozenset({"success", "succeeded", "pass", "passed", "works", "working"}),
-     frozenset({"fail", "failed", "failure", "broken", "crash", "crashed"})),
-    (frozenset({"increase", "increased", "raise", "raised", "up", "higher", "more"}),
-     frozenset({"decrease", "decreased", "lower", "lowered", "down", "less", "fewer"})),
-    (frozenset({"start", "started", "begin", "began", "open", "opened"}),
-     frozenset({"stop", "stopped", "end", "ended", "close", "closed"})),
-    (frozenset({"allow", "allowed", "permit", "permitted", "accept", "accepted"}),
-     frozenset({"deny", "denied", "reject", "rejected", "block", "blocked", "forbid"})),
-    (frozenset({"safe", "secure", "protected"}),
-     frozenset({"unsafe", "insecure", "vulnerable", "exposed"})),
-    (frozenset({"required", "mandatory", "necessary", "must"}),
-     frozenset({"optional", "unnecessary", "redundant"})),
-    (frozenset({"deprecated", "obsolete", "legacy", "outdated"}),
-     frozenset({"current", "modern", "recommended", "preferred"})),
-    (frozenset({"sync", "synchronous", "blocking"}),
-     frozenset({"async", "asynchronous", "non-blocking"})),
+    (
+        frozenset({"enable", "enabled", "activate", "activated", "on"}),
+        frozenset({"disable", "disabled", "deactivate", "deactivated", "off"}),
+    ),
+    (frozenset({"true", "yes", "correct", "right"}), frozenset({"false", "no", "incorrect", "wrong"})),
+    (
+        frozenset({"add", "added", "include", "included", "install", "installed"}),
+        frozenset({"remove", "removed", "exclude", "excluded", "uninstall", "uninstalled"}),
+    ),
+    (
+        frozenset({"success", "succeeded", "pass", "passed", "works", "working"}),
+        frozenset({"fail", "failed", "failure", "broken", "crash", "crashed"}),
+    ),
+    (
+        frozenset({"increase", "increased", "raise", "raised", "up", "higher", "more"}),
+        frozenset({"decrease", "decreased", "lower", "lowered", "down", "less", "fewer"}),
+    ),
+    (
+        frozenset({"start", "started", "begin", "began", "open", "opened"}),
+        frozenset({"stop", "stopped", "end", "ended", "close", "closed"}),
+    ),
+    (
+        frozenset({"allow", "allowed", "permit", "permitted", "accept", "accepted"}),
+        frozenset({"deny", "denied", "reject", "rejected", "block", "blocked", "forbid"}),
+    ),
+    (frozenset({"safe", "secure", "protected"}), frozenset({"unsafe", "insecure", "vulnerable", "exposed"})),
+    (frozenset({"required", "mandatory", "necessary", "must"}), frozenset({"optional", "unnecessary", "redundant"})),
+    (frozenset({"deprecated", "obsolete", "legacy", "outdated"}), frozenset({"current", "modern", "recommended", "preferred"})),
+    (frozenset({"sync", "synchronous", "blocking"}), frozenset({"async", "asynchronous", "non-blocking"})),
 ]
 
 # ── Temporal supersession patterns ─────────────────────────────────────
@@ -156,8 +190,12 @@ def detect_contradiction_signals(
     # Signal 1: Negation asymmetry
     # One text negates concepts present in the other
     negation_signal = _check_negation_asymmetry(
-        new_tokens, existing_tokens, new_content, existing_content,
-        existing_hash, similarity,
+        new_tokens,
+        existing_tokens,
+        new_content,
+        existing_content,
+        existing_hash,
+        similarity,
     )
     if negation_signal and negation_signal.confidence >= min_confidence:
         signals.append(negation_signal)
@@ -165,8 +203,10 @@ def detect_contradiction_signals(
     # Signal 2: Antonym pairs
     # Texts use opposing terms for same concept
     antonym_signal = _check_antonym_pairs(
-        new_tokens, existing_tokens,
-        existing_hash, similarity,
+        new_tokens,
+        existing_tokens,
+        existing_hash,
+        similarity,
     )
     if antonym_signal and antonym_signal.confidence >= min_confidence:
         signals.append(antonym_signal)
@@ -174,7 +214,9 @@ def detect_contradiction_signals(
     # Signal 3: Temporal supersession
     # New content explicitly states something changed
     temporal_signal = _check_temporal_supersession(
-        new_content, existing_hash, similarity,
+        new_content,
+        existing_hash,
+        similarity,
     )
     if temporal_signal and temporal_signal.confidence >= min_confidence:
         signals.append(temporal_signal)
@@ -229,8 +271,8 @@ def _check_negation_asymmetry(
         signal_type="negation",
         confidence=min(confidence, 1.0),
         detail=f"Negation asymmetry: {negator} memory contains negation "
-               f"({', '.join(sorted(new_negations | existing_negations))}), "
-               f"topic overlap: {len(content_tokens)} words",
+        f"({', '.join(sorted(new_negations | existing_negations))}), "
+        f"topic overlap: {len(content_tokens)} words",
     )
 
 
@@ -260,10 +302,12 @@ def _check_antonym_pairs(
             if not (new_a and new_b) and not (existing_a and existing_b):
                 pair_new = new_a | new_b
                 pair_existing = existing_a | existing_b
-                found_pairs.append((
-                    next(iter(pair_new)),
-                    next(iter(pair_existing)),
-                ))
+                found_pairs.append(
+                    (
+                        next(iter(pair_new)),
+                        next(iter(pair_existing)),
+                    )
+                )
 
     if not found_pairs:
         return None

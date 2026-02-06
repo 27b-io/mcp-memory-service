@@ -125,7 +125,9 @@ class TestConsolidationOrchestration:
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
-    async def test_consolidation_continues_on_phase_failure(self, mock_settings, service_with_graph, mock_graph, consolidation_config):
+    async def test_consolidation_continues_on_phase_failure(
+        self, mock_settings, service_with_graph, mock_graph, consolidation_config
+    ):
         """Consolidation should continue even if one phase fails."""
         mock_settings.consolidation = consolidation_config
         mock_graph.decay_all_edges.side_effect = RuntimeError("Redis down")
@@ -166,7 +168,9 @@ class TestStaleEdgeDecay:
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
-    async def test_stale_threshold_calculated_from_config(self, mock_settings, service_with_graph, mock_graph, consolidation_config):
+    async def test_stale_threshold_calculated_from_config(
+        self, mock_settings, service_with_graph, mock_graph, consolidation_config
+    ):
         mock_settings.consolidation = consolidation_config
 
         await service_with_graph.consolidate()
@@ -246,9 +250,7 @@ class TestDuplicateDetection:
             [newer],  # We iterate newer first
             [],
         ]
-        mock_storage.retrieve.return_value = [
-            MemoryQueryResult(memory=older, relevance_score=0.98, debug_info={})
-        ]
+        mock_storage.retrieve.return_value = [MemoryQueryResult(memory=older, relevance_score=0.98, debug_info={})]
 
         result = await service_without_graph.consolidate()
 
@@ -258,7 +260,9 @@ class TestDuplicateDetection:
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
-    async def test_skips_self_in_duplicate_search(self, mock_settings, service_without_graph, mock_storage, consolidation_config):
+    async def test_skips_self_in_duplicate_search(
+        self, mock_settings, service_without_graph, mock_storage, consolidation_config
+    ):
         mock_settings.consolidation = consolidation_config
 
         memory = _make_memory("hash_1", "unique content")
@@ -268,9 +272,7 @@ class TestDuplicateDetection:
             [],
         ]
         # Search returns only the memory itself
-        mock_storage.retrieve.return_value = [
-            MemoryQueryResult(memory=memory, relevance_score=1.0, debug_info={})
-        ]
+        mock_storage.retrieve.return_value = [MemoryQueryResult(memory=memory, relevance_score=1.0, debug_info={})]
 
         result = await service_without_graph.consolidate()
 
@@ -289,9 +291,7 @@ class TestDuplicateDetection:
         mock_storage.get_all_memories.side_effect = [memories, []]
 
         # Each search finds the "original" (hash_0) as duplicate
-        mock_storage.retrieve.return_value = [
-            MemoryQueryResult(memory=memories[0], relevance_score=0.99, debug_info={})
-        ]
+        mock_storage.retrieve.return_value = [MemoryQueryResult(memory=memories[0], relevance_score=0.99, debug_info={})]
 
         result = await service_without_graph.consolidate()
 
@@ -300,7 +300,9 @@ class TestDuplicateDetection:
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
-    async def test_no_duplicates_when_storage_empty(self, mock_settings, service_without_graph, mock_storage, consolidation_config):
+    async def test_no_duplicates_when_storage_empty(
+        self, mock_settings, service_without_graph, mock_storage, consolidation_config
+    ):
         mock_settings.consolidation = consolidation_config
         mock_storage.get_all_memories.return_value = []
 
@@ -311,16 +313,16 @@ class TestDuplicateDetection:
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
-    async def test_duplicate_merge_failure_is_non_fatal(self, mock_settings, service_without_graph, mock_storage, consolidation_config):
+    async def test_duplicate_merge_failure_is_non_fatal(
+        self, mock_settings, service_without_graph, mock_storage, consolidation_config
+    ):
         mock_settings.consolidation = consolidation_config
 
         original = _make_memory("hash_1", "content", created_at=1.0)
         duplicate = _make_memory("hash_2", "content copy", created_at=2.0)
 
         mock_storage.get_all_memories.side_effect = [[original, duplicate], []]
-        mock_storage.retrieve.return_value = [
-            MemoryQueryResult(memory=duplicate, relevance_score=0.99, debug_info={})
-        ]
+        mock_storage.retrieve.return_value = [MemoryQueryResult(memory=duplicate, relevance_score=0.99, debug_info={})]
         mock_storage.delete.side_effect = RuntimeError("storage error")
 
         result = await service_without_graph.consolidate()
