@@ -71,6 +71,33 @@ class MemoryService:
         self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
 
+    async def _compute_graph_boosts(self, seed_hashes: list[str]) -> dict[str, float]:
+        """
+        Run spreading activation from seed memories to find graph-boosted neighbors.
+
+        Non-blocking, non-fatal — graph failures don't affect the read path.
+
+        Returns:
+            Dict of {content_hash: activation_score} for activated neighbors.
+        """
+        if self._graph is None or not seed_hashes:
+            return {}
+
+        config = settings.falkordb
+        if config.spreading_activation_boost <= 0:
+            return {}
+
+        try:
+            return await self._graph.spreading_activation(
+                seed_hashes=seed_hashes,
+                max_hops=config.spreading_activation_max_hops,
+                decay_factor=config.spreading_activation_decay,
+                min_activation=config.spreading_activation_min_activation,
+            )
+        except Exception as e:
+            logger.warning(f"Spreading activation failed (non-fatal): {e}")
+            return {}
+
     async def _fire_hebbian_co_access(self, content_hashes: list[str]) -> None:
         """
         Enqueue Hebbian strengthening for all pairs of co-retrieved memories.
@@ -132,6 +159,8 @@ class MemoryService:
             min_similarity=min_similarity,
             offset=offset,
         )
+
+        # Extract hashes and scores for graph boosting
         results = []
         result_hashes = []
         for item in memories:
@@ -143,6 +172,17 @@ class MemoryService:
             else:
                 results.append(self._format_memory_response(item))
                 result_hashes.append(item.content_hash)
+
+        # Apply spreading activation boost from graph layer
+        graph_boosts = await self._compute_graph_boosts(result_hashes)
+        if graph_boosts:
+            boost_weight = settings.falkordb.spreading_activation_boost
+            for result in results:
+                activation = graph_boosts.get(result["content_hash"], 0.0)
+                if activation > 0:
+                    result["similarity_score"] = result.get("similarity_score", 0.0) + boost_weight * activation
+                    result["graph_boost"] = activation
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
 
         # Fire Hebbian co-access events for co-retrieved memories
         await self._fire_hebbian_co_access(result_hashes)
@@ -405,6 +445,20 @@ class MemoryService:
             # Apply recency decay
             if config.recency_decay > 0:
                 combined = apply_recency_decay(combined, config.recency_decay)
+
+            # Apply spreading activation boost from graph layer
+            all_hashes = [m.content_hash for m, _, _ in combined]
+            graph_boosts = await self._compute_graph_boosts(all_hashes)
+            if graph_boosts:
+                boost_weight = settings.falkordb.spreading_activation_boost
+                boosted = []
+                for memory, score, debug_info in combined:
+                    activation = graph_boosts.get(memory.content_hash, 0.0)
+                    if activation > 0:
+                        score += boost_weight * activation
+                        debug_info = {**debug_info, "graph_boost": activation}
+                    boosted.append((memory, score, debug_info))
+                combined = sorted(boosted, key=lambda x: x[1], reverse=True)
 
             # Apply pagination to combined results (offset calculated above for fetch_size)
             total = len(combined)

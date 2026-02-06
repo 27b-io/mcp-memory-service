@@ -404,6 +404,20 @@ class FalkorDBSettings(BaseSettings):
         default=1.0, ge=0.1, le=10.0, description="Maximum Hebbian edge weight"
     )
 
+    # Spreading activation parameters
+    spreading_activation_max_hops: int = Field(
+        default=2, ge=1, le=3, description="Max BFS hops for spreading activation"
+    )
+    spreading_activation_decay: float = Field(
+        default=0.5, ge=0.01, le=1.0, description="Per-hop exponential decay factor (activation *= decay^hops)"
+    )
+    spreading_activation_boost: float = Field(
+        default=0.2, ge=0.0, le=1.0, description="Weight of graph activation boost on vector scores"
+    )
+    spreading_activation_min_activation: float = Field(
+        default=0.01, ge=0.0, le=1.0, description="Minimum activation threshold to consider a neighbor"
+    )
+
     # Feature flag
     enabled: bool = Field(default=False, description="Enable FalkorDB graph layer")
 

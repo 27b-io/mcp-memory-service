@@ -155,6 +155,61 @@ class GraphClient:
             for row in result.result_set
         ]
 
+    async def spreading_activation(
+        self,
+        seed_hashes: list[str],
+        max_hops: int = 2,
+        decay_factor: float = 0.5,
+        min_activation: float = 0.01,
+        limit: int = 50,
+    ) -> dict[str, float]:
+        """
+        Multi-seed BFS with exponential hop decay (spreading activation).
+
+        For each seed node, traverses up to max_hops via HEBBIAN edges.
+        Activation = path_weight * decay_factor^hops.
+        When a node is reachable from multiple seeds/paths, takes max activation.
+
+        Args:
+            seed_hashes: Content hashes of seed memories (from vector search)
+            max_hops: Maximum traversal depth (capped at 3)
+            decay_factor: Per-hop exponential decay
+            min_activation: Minimum score to include a neighbor
+            limit: Maximum activated neighbors to return
+
+        Returns:
+            Dict of {content_hash: activation_score}, sorted by score descending
+        """
+        if not seed_hashes:
+            return {}
+
+        max_hops = min(max_hops, 3)
+
+        result = await self._graph.query(
+            "MATCH (src:Memory)-"
+            f"[e:HEBBIAN*1..{max_hops}]->"
+            "(dst:Memory) "
+            "WHERE src.content_hash IN $seeds "
+            "AND NOT dst.content_hash IN $seeds "
+            "WITH dst.content_hash AS hash, "
+            "reduce(w = 1.0, r IN e | w * r.weight) AS path_weight, "
+            "length(e) AS hops "
+            "RETURN hash, path_weight, hops",
+            params={"seeds": seed_hashes},
+        )
+
+        # Aggregate: for each destination, take max activation across all paths
+        activations: dict[str, float] = {}
+        for row in result.result_set:
+            hash_val, path_weight, hops = row[0], float(row[1]), int(row[2])
+            activation = path_weight * (decay_factor**hops)
+            if activation >= min_activation:
+                activations[hash_val] = max(activations.get(hash_val, 0.0), activation)
+
+        # Sort by activation descending, apply limit
+        sorted_items = sorted(activations.items(), key=lambda x: x[1], reverse=True)[:limit]
+        return dict(sorted_items)
+
     async def get_edge(self, source_hash: str, target_hash: str) -> dict[str, Any] | None:
         """Get a specific Hebbian edge between two memories."""
         result = await self._graph.query(
