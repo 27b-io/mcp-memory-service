@@ -3,9 +3,6 @@ name: QA
 on:
   pull_request:
     branches: [main]
-  push:
-    branches:
-      - 'release-please--branches--main--components--*'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
