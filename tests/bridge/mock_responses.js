@@ -15,7 +15,7 @@ const mockResponses = {
                 version: '6.6.1',
                 timestamp: '2025-08-24T12:00:00Z',
                 uptime_seconds: 3600,
-                storage_type: 'sqlite_vec',
+                storage_type: 'qdrant',
                 statistics: {
                     total_memories: 100,
                     total_tags: 25

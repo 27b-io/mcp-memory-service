@@ -181,44 +181,17 @@ def function_three():
                 assert "return" in chunk or chunk == chunks[-1]
 
 
-class TestBackendLimits:
-    """Test backend-specific content length limits.
-
-    Note: Cloudflare, ChromaDB, and Hybrid backends were removed in codebase remediation.
-    Only SQLite-vec and Qdrant remain.
-    """
-
-    def test_sqlitevec_supports_chunking(self):
-        """Test that SQLite-vec backend supports chunking."""
-        import os
-        import tempfile
-
-        from src.mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            storage = SqliteVecMemoryStorage(db_path=db_path)
-
-            # SQLite-vec supports unlimited content
-            assert storage.supports_chunking is True
-
-
 class TestConfigurationConstants:
-    """Test configuration constants for content limits.
-
-    Note: Cloudflare/ChromaDB/Hybrid constants were removed in codebase remediation.
-    """
+    """Test configuration constants for content limits."""
 
     def test_config_constants_exist(self):
-        """Test that remaining content limit constants are defined."""
+        """Test that content splitting constants are defined."""
         from src.mcp_memory_service.config import (
             CONTENT_PRESERVE_BOUNDARIES,
             CONTENT_SPLIT_OVERLAP,
             ENABLE_AUTO_SPLIT,
-            SQLITEVEC_MAX_CONTENT_LENGTH,
         )
 
-        assert SQLITEVEC_MAX_CONTENT_LENGTH is None  # Unlimited
         assert isinstance(ENABLE_AUTO_SPLIT, bool)
         assert isinstance(CONTENT_SPLIT_OVERLAP, int)
         assert isinstance(CONTENT_PRESERVE_BOUNDARIES, bool)

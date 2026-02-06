@@ -4,20 +4,16 @@ Integration tests for QdrantStorage with REAL Qdrant embedded mode.
 Tests:
 1. End-to-end workflow: Store, search, filter, delete with real Qdrant
 2. Performance benchmarks: Latency <50ms @ 1K memories, memory <100MB @ 10K memories
-3. Migration validation: 1K memories from SQLite, verify count/embeddings/tags
-4. Migration failure scenarios: Interrupt/resume, checkpoint corruption, partial batch, disk full
-5. Concurrent access: 5 writes + 10 reads, write-write, circuit breaker under load, mixed workload
+3. Concurrent access: 5 writes + 10 reads, write-write, circuit breaker under load, mixed workload
 """
 
 import asyncio
 import hashlib
-import json
 import platform
 import random
 import shutil
 import time
 import uuid
-from unittest.mock import patch
 
 import numpy as np
 import psutil
@@ -26,7 +22,6 @@ from src.mcp_memory_service.models.memory import Memory
 
 # Import real Qdrant and storage classes
 from src.mcp_memory_service.storage.qdrant_storage import QdrantStorage
-from src.mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
 
 
 def create_deterministic_embedding(text: str, vector_size: int = 384) -> list[float]:
@@ -92,23 +87,6 @@ class TestQdrantIntegration:
         # Clean up temp directory
         if storage_path.exists():
             shutil.rmtree(storage_path, ignore_errors=True)
-
-    @pytest.fixture(scope="function")
-    async def sqlite_storage(self, tmp_path, monkeypatch):
-        """Create SQLite storage for migration tests with mocked embeddings."""
-        db_path = tmp_path / "sqlite_vec.db"
-        storage = SqliteVecMemoryStorage(db_path=str(db_path), embedding_model="all-MiniLM-L6-v2")
-
-        # Mock the embedding generation to avoid downloading models
-        def mock_embedding(text: str) -> list[float]:
-            return create_deterministic_embedding(text, vector_size=384)
-
-        monkeypatch.setattr(storage, "_generate_embedding", mock_embedding)
-
-        await storage.initialize()
-        yield storage
-        if hasattr(storage, "close"):
-            await storage.close()
 
     @pytest.mark.asyncio
     async def test_end_to_end_workflow(self, qdrant_storage):
@@ -222,144 +200,6 @@ class TestQdrantIntegration:
         print(f"  P95 latency @ 1K: {p95_latency:.2f}ms")
         print(f"  P50 latency @ 10K: {p50_latency_10k:.2f}ms")
         print(f"  Memory usage @ 10K: {memory_mb:.2f}MB")
-
-    @pytest.mark.asyncio
-    async def test_migration_validation(self, sqlite_storage, qdrant_storage):
-        """Test migration of 1K memories from SQLite to Qdrant."""
-        # Store 1K memories in SQLite
-        sqlite_memories = []
-        for i in range(1000):
-            content = f"Migration test memory {i}: Testing SQLite to Qdrant migration"
-            content_hash = hashlib.sha256(content.encode()).hexdigest()
-            memory = Memory(
-                content=content,
-                content_hash=content_hash,
-                tags=[f"migrate{i % 5}", "sqlite", "test"],
-                metadata={"index": i, "source": "sqlite"},
-            )
-            await sqlite_storage.store(memory)
-            sqlite_memories.append(memory)
-
-        # Migrate to Qdrant
-        migrated_count = 0
-        for memory in sqlite_memories:
-            # Get full memory from SQLite
-            full_memory = await sqlite_storage.get_memory_by_hash(memory.content_hash)
-            if full_memory:
-                success, msg = await qdrant_storage.store(full_memory)
-                if success:
-                    migrated_count += 1
-
-        # Verify count matches
-        assert migrated_count == 1000
-
-        # Verify sample embedding similarity
-        sample_memory = sqlite_memories[0]
-        sqlite_result = await sqlite_storage.retrieve(sample_memory.content, n_results=1)
-        qdrant_result = await qdrant_storage.retrieve(sample_memory.content, n_results=1)
-
-        assert len(sqlite_result) > 0 and len(qdrant_result) > 0
-        assert sqlite_result[0].content == qdrant_result[0].content
-        assert set(sqlite_result[0].tags) == set(qdrant_result[0].tags)
-
-        # Verify tags preserved
-        tag_results = await qdrant_storage.retrieve("memory", n_results=500, tags=["migrate0"])
-        assert len(tag_results) == 200  # 1000 memories, i % 5 == 0 for 200
-
-        # Verify metadata preserved
-        for result in tag_results[:10]:
-            assert "index" in result.metadata
-            assert result.metadata["source"] == "sqlite"
-
-    @pytest.mark.asyncio
-    async def test_migration_failure_scenarios(self, sqlite_storage, qdrant_storage, tmp_path):
-        """Test migration failure scenarios with checkpointing."""
-        checkpoint_file = tmp_path / "migration_checkpoint.json"
-
-        # Store 100 memories in SQLite for faster testing
-        sqlite_memories = []
-        for i in range(100):
-            content = f"Failure test memory {i}: {uuid.uuid4()}"
-            content_hash = hashlib.sha256(content.encode()).hexdigest()
-            memory = Memory(content=content, content_hash=content_hash, tags=[f"fail{i % 5}", "test"], metadata={"index": i})
-            await sqlite_storage.store(memory)
-            sqlite_memories.append(memory)
-
-        # Test 1: Interrupted migration with checkpoint
-        batch_size = 10
-        checkpoint = {"migrated": [], "failed": [], "last_index": 0}
-
-        # Migrate first 50, then simulate interruption
-        for i in range(50):
-            memory = sqlite_memories[i]
-            full_memory = await sqlite_storage.get_memory_by_hash(memory.content_hash)
-            if full_memory:
-                success, msg = await qdrant_storage.store(full_memory)
-                if success:
-                    checkpoint["migrated"].append(memory.content_hash)
-                    checkpoint["last_index"] = i
-
-                    # Save checkpoint every batch
-                    if (i + 1) % batch_size == 0:
-                        with open(checkpoint_file, "w") as f:
-                            json.dump(checkpoint, f)
-
-        # Resume from checkpoint
-        with open(checkpoint_file) as f:
-            resumed_checkpoint = json.load(f)
-
-        assert resumed_checkpoint["last_index"] == 49
-        assert len(resumed_checkpoint["migrated"]) == 50
-
-        # Continue migration from checkpoint
-        for i in range(resumed_checkpoint["last_index"] + 1, 100):
-            memory = sqlite_memories[i]
-            full_memory = await sqlite_storage.get_memory_by_hash(memory.content_hash)
-            if full_memory:
-                success, msg = await qdrant_storage.store(full_memory)
-                if success:
-                    resumed_checkpoint["migrated"].append(memory.content_hash)
-
-        assert len(resumed_checkpoint["migrated"]) == 100
-
-        # Test 2: Partial batch failure with retry
-        failed_indexes = [25, 26, 27]  # Simulate failures
-        retry_checkpoint = {"migrated": [], "failed": [], "retries": {}}
-
-        for i, memory in enumerate(sqlite_memories[:30]):
-            if i in failed_indexes and i not in retry_checkpoint.get("retries", {}):
-                # Simulate failure on first attempt
-                retry_checkpoint["failed"].append(memory.content_hash)
-                retry_checkpoint["retries"][str(i)] = 1
-            else:
-                # Success or retry success
-                full_memory = await sqlite_storage.get_memory_by_hash(memory.content_hash)
-                if full_memory:
-                    success, msg = await qdrant_storage.store(full_memory)
-                    if success:
-                        retry_checkpoint["migrated"].append(memory.content_hash)
-
-        # Retry failed items
-        for hash_val in retry_checkpoint["failed"]:
-            full_memory = await sqlite_storage.get_memory_by_hash(hash_val)
-            if full_memory:
-                success, msg = await qdrant_storage.store(full_memory)
-                if success:
-                    retry_checkpoint["migrated"].append(hash_val)
-
-        assert len(retry_checkpoint["migrated"]) == 30
-
-        # Test 3: Disk full simulation
-        with patch("pathlib.Path.mkdir") as mock_mkdir:
-            mock_mkdir.side_effect = OSError("No space left on device")
-
-            with pytest.raises(OSError) as exc_info:
-                temp_storage = QdrantStorage(
-                    storage_path="/tmp/full_disk_test", embedding_model="all-MiniLM-L6-v2", collection_name="test"
-                )
-                await temp_storage.initialize()
-
-            assert "No space left on device" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_concurrent_access(self, qdrant_storage):

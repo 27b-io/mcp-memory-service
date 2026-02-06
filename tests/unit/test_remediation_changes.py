@@ -55,15 +55,15 @@ class TestSecurityFixes:
 
 
 class TestStorageConsolidation:
-    """Test storage backend consolidation from Phase 2."""
+    """Test storage backend consolidation."""
 
-    def test_only_two_storage_backends_exist(self):
-        """Verify only SQLite-vec and Qdrant backends remain."""
-        # Verify removed backends are not importable
+    def test_removed_backends_not_importable(self):
+        """Verify all removed backends are not importable."""
         removed_backends = [
             ("cloudflare", "mcp_memory_service.storage.cloudflare", "CloudflareStorage"),
             ("hybrid", "mcp_memory_service.storage.hybrid", "HybridStorage"),
             ("http_client", "mcp_memory_service.storage.http_client", "HTTPStorageClient"),
+            ("sqlite_vec", "mcp_memory_service.storage.sqlite_vec", "SqliteVecMemoryStorage"),
         ]
 
         for _name, module_path, class_name in removed_backends:
@@ -71,39 +71,12 @@ class TestStorageConsolidation:
                 module = __import__(module_path, fromlist=[class_name])
                 getattr(module, class_name)
 
-    def test_storage_factory_returns_correct_backend(self):
-        """Verify storage factory creates correct backend types."""
-        import importlib
-        import os
+    def test_qdrant_is_sole_storage_backend(self):
+        """Verify QdrantStorage is the only concrete storage backend."""
+        from mcp_memory_service.storage import QdrantStorage
+        from mcp_memory_service.storage.base import MemoryStorage
 
-        from mcp_memory_service.storage.factory import get_storage_backend_class
-        from mcp_memory_service.storage.qdrant_storage import QdrantStorage
-        from mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
-
-        # Test SQLite-vec backend
-        with patch.dict(os.environ, {"MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec"}):
-            import mcp_memory_service.config
-
-            importlib.reload(mcp_memory_service.config)
-            sqlite_class = get_storage_backend_class()
-            assert sqlite_class == SqliteVecMemoryStorage
-
-        # Test Qdrant backend
-        with patch.dict(os.environ, {"MCP_MEMORY_STORAGE_BACKEND": "qdrant"}):
-            importlib.reload(mcp_memory_service.config)
-            qdrant_class = get_storage_backend_class()
-            assert qdrant_class == QdrantStorage
-
-    def test_base_storage_protocol_exists(self):
-        """Verify BaseStorage Protocol interface is defined."""
-        from typing import Protocol
-
-        from mcp_memory_service.storage import BaseStorage
-
-        # BaseStorage should be a Protocol (or have Protocol-like behavior)
-        assert hasattr(BaseStorage, "__protocol_attrs__") or issubclass(
-            type(BaseStorage), type(Protocol)
-        ), "BaseStorage should be a Protocol"
+        assert issubclass(QdrantStorage, MemoryStorage)
 
 
 class TestConfigCleanup:
@@ -141,6 +114,13 @@ class TestConfigCleanup:
         HTTPSettings()
         OAuthSettings()
         QdrantSettings()
+
+    def test_sqlite_settings_removed(self):
+        """Verify SQLite-specific settings are gone."""
+        from mcp_memory_service.config import StorageSettings
+
+        settings = StorageSettings()
+        assert not hasattr(settings, "storage_backend"), "storage_backend field should be removed"
 
 
 class TestRemovedModules:
