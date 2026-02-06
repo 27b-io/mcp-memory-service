@@ -1,0 +1,105 @@
+---
+# FalkorDB StatefulSet for MCP Memory Service graph layer.
+#
+# FalkorDB runs as a Redis module, so this is essentially a Redis deployment
+# with the FalkorDB module loaded. Persistent storage via PVC ensures the
+# graph survives pod restarts.
+#
+# Resource sizing: FalkorDB uses GraphBLAS sparse matrices in-memory.
+# At 10K nodes with Hebbian edges, expect ~50-100MB RAM usage.
+# The 512Mi-1Gi range gives comfortable headroom.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: falkordb-data
+  labels:
+    app: falkordb
+    component: mcp-memory
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  # Use default StorageClass (local-path on k3s)
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: falkordb
+  labels:
+    app: falkordb
+    component: mcp-memory
+spec:
+  serviceName: falkordb
+  replicas: 1  # Single writer instance (CQRS consumer)
+  selector:
+    matchLabels:
+      app: falkordb
+  template:
+    metadata:
+      labels:
+        app: falkordb
+        component: mcp-memory
+    spec:
+      containers:
+        - name: falkordb
+          image: falkordb/falkordb:latest
+          ports:
+            - containerPort: 6379
+              name: redis
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          # FalkorDB persistence: Redis AOF + RDB for durability
+          args:
+            - "--appendonly"
+            - "yes"
+            - "--appendfsync"
+            - "everysec"
+            - "--save"
+            - "60 1000"  # RDB snapshot every 60s if 1000+ changes
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: falkordb-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: falkordb
+  labels:
+    app: falkordb
+    component: mcp-memory
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: redis
+      protocol: TCP
+      name: redis
+  selector:
+    app: falkordb

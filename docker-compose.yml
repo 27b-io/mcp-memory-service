@@ -27,6 +27,27 @@ services:
     networks:
       - mcp-memory-network
 
+  # FalkorDB graph database (runs on Redis protocol)
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: mcp-memory-falkordb
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb-data:/data
+    command: ["--appendonly", "yes", "--appendfsync", "everysec"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    networks:
+      - mcp-memory-network
+
   # Unified MCP Memory Service (HTTP + MCP SSE)
   mcp-memory:
     build:
@@ -35,6 +56,7 @@ services:
     container_name: mcp-memory-unified
     depends_on:
       - qdrant  # Wait for qdrant to start (no healthcheck)
+      - falkordb
     ports:
       - "8000:8000"  # HTTP API
       - "8001:8001"  # MCP SSE Server
@@ -46,6 +68,11 @@ services:
       - MCP_QDRANT_URL=http://qdrant:6333
       - MCP_QDRANT_QUANTIZATION_ENABLED=false
       - MCP_EMBEDDING_MODEL=intfloat/e5-small
+
+      # FalkorDB graph layer (CQRS pattern)
+      - MCP_FALKORDB_ENABLED=true
+      - MCP_FALKORDB_HOST=falkordb
+      - MCP_FALKORDB_PORT=6379
 
       # HTTP Server configuration (enabled)
       - MCP_HTTP_ENABLED=true
@@ -91,6 +118,9 @@ services:
       - mcp-memory-network
 
 volumes:
+  # FalkorDB persistent storage
+  falkordb-data:
+    driver: local
   # Qdrant server persistent storage
   qdrant-server-data:
     driver: local

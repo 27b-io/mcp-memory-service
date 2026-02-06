@@ -18,6 +18,8 @@ from ..config import (
     ENABLE_AUTO_SPLIT,
     settings,
 )
+from ..graph.client import GraphClient
+from ..graph.queue import HebbianWriteQueue
 from ..models.memory import Memory
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
@@ -58,9 +60,35 @@ class MemoryService:
     # Tag cache TTL in seconds
     _TAG_CACHE_TTL = 60
 
-    def __init__(self, storage: MemoryStorage):
+    def __init__(
+        self,
+        storage: MemoryStorage,
+        graph_client: GraphClient | None = None,
+        write_queue: HebbianWriteQueue | None = None,
+    ):
         self.storage = storage
+        self._graph = graph_client
+        self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
+
+    async def _fire_hebbian_co_access(self, content_hashes: list[str]) -> None:
+        """
+        Enqueue Hebbian strengthening for all pairs of co-retrieved memories.
+
+        Called after a retrieval returns multiple results. Non-blocking,
+        non-fatal — write failures don't affect the read path.
+        """
+        if self._write_queue is None or len(content_hashes) < 2:
+            return
+
+        try:
+            # Create edges for all pairs (bidirectional)
+            for i, src in enumerate(content_hashes):
+                for dst in content_hashes[i + 1 :]:
+                    await self._write_queue.enqueue_strengthen(src, dst)
+                    await self._write_queue.enqueue_strengthen(dst, src)
+        except Exception as e:
+            logger.warning(f"Hebbian co-access enqueue failed (non-fatal): {e}")
 
     async def _get_cached_tags(self) -> set[str]:
         """Get all tags with 60-second TTL caching for performance."""
@@ -105,13 +133,20 @@ class MemoryService:
             offset=offset,
         )
         results = []
+        result_hashes = []
         for item in memories:
             if hasattr(item, "memory"):
                 memory_dict = self._format_memory_response(item.memory)
                 memory_dict["similarity_score"] = item.similarity_score
                 results.append(memory_dict)
+                result_hashes.append(item.memory.content_hash)
             else:
                 results.append(self._format_memory_response(item))
+                result_hashes.append(item.content_hash)
+
+        # Fire Hebbian co-access events for co-retrieved memories
+        await self._fire_hebbian_co_access(result_hashes)
+
         return {
             "memories": results,
             "query": query,
@@ -262,6 +297,12 @@ class MemoryService:
                 success, message = await self.storage.store(memory)
 
                 if success:
+                    # Create corresponding graph node (non-blocking, non-fatal)
+                    if self._graph is not None:
+                        try:
+                            await self._graph.ensure_memory_node(content_hash, memory.created_at)
+                        except Exception as e:
+                            logger.warning(f"Graph node creation failed (non-fatal): {e}")
                     return {"success": True, "memory": self._format_memory_response(memory)}
                 else:
                     return {"success": False, "error": message}
@@ -369,13 +410,18 @@ class MemoryService:
             total = len(combined)
             paginated = combined[offset : offset + page_size]
 
-            # Format results
+            # Format results and collect hashes for Hebbian co-access
             results = []
+            result_hashes = []
             for memory, score, debug_info in paginated:
                 memory_dict = self._format_memory_response(memory)
                 memory_dict["similarity_score"] = score
                 memory_dict["hybrid_debug"] = debug_info
                 results.append(memory_dict)
+                result_hashes.append(memory.content_hash)
+
+            # Fire Hebbian co-access events
+            await self._fire_hebbian_co_access(result_hashes)
 
             return {
                 "memories": results,
@@ -513,6 +559,12 @@ class MemoryService:
         try:
             success, message = await self.storage.delete(content_hash)
             if success:
+                # Clean up graph node and edges (non-blocking, non-fatal)
+                if self._graph is not None:
+                    try:
+                        await self._graph.delete_memory_node(content_hash)
+                    except Exception as e:
+                        logger.warning(f"Graph node deletion failed (non-fatal): {e}")
                 return {"success": True, "content_hash": content_hash}
             else:
                 return {"success": False, "content_hash": content_hash, "error": message}
@@ -530,13 +582,25 @@ class MemoryService:
         """
         try:
             stats = await self.storage.get_stats()
-            return {
+            result = {
                 "healthy": True,
                 "storage_type": stats.get("backend", "unknown"),
                 "total_memories": stats.get("total_memories", 0),
                 "last_updated": datetime.now().isoformat(),
                 **stats,
             }
+
+            # Include graph stats if graph layer is available
+            if self._graph is not None:
+                try:
+                    result["graph"] = await self._graph.get_graph_stats()
+                except Exception as e:
+                    result["graph"] = {"status": "error", "error": str(e)}
+
+            if self._write_queue is not None:
+                result["write_queue"] = self._write_queue.get_stats()
+
+            return result
 
         except Exception as e:
             logger.error(f"Health check failed: {e}")

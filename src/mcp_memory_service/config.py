@@ -24,6 +24,7 @@ import os
 import secrets
 import threading
 import time
+
 from platformdirs import user_data_dir
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -364,6 +365,35 @@ class QdrantSettings(BaseSettings):
         return self
 
 
+class FalkorDBSettings(BaseSettings):
+    """FalkorDB graph database configuration for cognitive memory graph layer."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_FALKORDB_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+    )
+
+    # Connection
+    host: str = Field(default="localhost", description="FalkorDB host (runs on Redis protocol)")
+    port: int = Field(default=6379, ge=1, le=65535, description="FalkorDB port")
+    password: SecretStr | None = Field(default=None, description="FalkorDB/Redis password")
+
+    # Graph
+    graph_name: str = Field(default="memory_graph", description="Name of the graph within FalkorDB")
+
+    # CQRS write queue (uses Redis LPUSH/BRPOP on the same FalkorDB instance)
+    write_queue_key: str = Field(default="mcp:graph:write_queue", description="Redis key for Hebbian write queue")
+    write_queue_batch_size: int = Field(default=50, ge=1, le=500, description="Max edges to process per consumer tick")
+    write_queue_poll_interval: float = Field(
+        default=0.5, ge=0.1, le=10.0, description="Seconds between BRPOP polls when queue is empty"
+    )
+
+    # Connection pool
+    max_connections: int = Field(default=16, ge=1, le=128, description="Max connections in Redis pool (for concurrent reads)")
+
+    # Feature flag
+    enabled: bool = Field(default=False, description="Enable FalkorDB graph layer")
+
+
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
 
@@ -430,6 +460,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     content_limits: ContentLimitsSettings = Field(default_factory=ContentLimitsSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
+    falkordb: FalkorDBSettings = Field(default_factory=FalkorDBSettings)
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
@@ -460,7 +491,7 @@ class Settings(BaseSettings):
         logger.info("MCP Memory Service Configuration")
         logger.info("=" * 80)
         logger.info(f"Server: {self.server.name} v{self.server.version}")
-        logger.info(f"Storage Backend: Qdrant")
+        logger.info("Storage Backend: Qdrant")
         logger.info(f"Base Directory: {self.paths.base_dir}")
 
         if self.qdrant.url:

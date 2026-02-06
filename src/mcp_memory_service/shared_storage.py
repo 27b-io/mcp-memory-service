@@ -14,6 +14,9 @@ import logging
 from threading import Lock
 from typing import Optional
 
+from .graph.client import GraphClient
+from .graph.factory import create_graph_layer
+from .graph.queue import HebbianWriteQueue
 from .storage.base import MemoryStorage
 from .storage.factory import create_storage_instance
 
@@ -29,6 +32,8 @@ class StorageManager:
     def __init__(self):
         """Initialize storage manager."""
         self._storage: MemoryStorage | None = None
+        self._graph_client: GraphClient | None = None
+        self._write_queue: HebbianWriteQueue | None = None
         self._initialization_lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
 
@@ -71,17 +76,57 @@ class StorageManager:
 
             # Create storage using factory
             self._storage = await create_storage_instance()
+
+            # Initialize graph layer if enabled
+            try:
+                graph_result = await create_graph_layer()
+                if graph_result is not None:
+                    self._graph_client, self._write_queue = graph_result
+                    await self._write_queue.start_consumer()
+                    logger.info("Graph layer initialized with Hebbian write consumer")
+            except Exception as e:
+                logger.warning(f"Graph layer initialization failed (non-fatal): {e}")
+                self._graph_client = None
+                self._write_queue = None
+
             self._initialized = True
 
             logger.info(f"Shared storage initialized successfully: {type(self._storage).__name__}")
 
             return self._storage
 
+    @property
+    def graph_client(self) -> GraphClient | None:
+        """Get the graph client if graph layer is enabled."""
+        return self._graph_client
+
+    @property
+    def write_queue(self) -> HebbianWriteQueue | None:
+        """Get the Hebbian write queue if graph layer is enabled."""
+        return self._write_queue
+
     async def close(self) -> None:
-        """Close the storage instance if it exists.
+        """Close all managed instances.
 
         Safe to call even if storage was never initialized.
         """
+        # Close write queue consumer first
+        if self._write_queue is not None:
+            try:
+                await self._write_queue.stop_consumer()
+            except Exception as e:
+                logger.warning(f"Error stopping write queue consumer: {e}")
+            self._write_queue = None
+
+        # Close graph client
+        if self._graph_client is not None:
+            try:
+                await self._graph_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing graph client: {e}")
+            self._graph_client = None
+
+        # Close storage
         if self._storage is not None:
             try:
                 logger.info("Closing shared storage instance...")
@@ -133,3 +178,13 @@ def is_storage_initialized() -> bool:
         bool: True if storage is initialized, False otherwise
     """
     return _manager.is_initialized()
+
+
+def get_graph_client() -> GraphClient | None:
+    """Get the shared graph client if graph layer is enabled."""
+    return _manager.graph_client
+
+
+def get_write_queue() -> HebbianWriteQueue | None:
+    """Get the shared Hebbian write queue if graph layer is enabled."""
+    return _manager.write_queue

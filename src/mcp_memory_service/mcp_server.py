@@ -73,8 +73,14 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
 
         storage = await create_storage_instance()
 
-    # Initialize memory service with shared business logic
-    memory_service = MemoryService(storage)
+    # Initialize memory service with shared business logic (including graph layer if available)
+    from .shared_storage import get_graph_client, get_write_queue
+
+    memory_service = MemoryService(
+        storage,
+        graph_client=get_graph_client(),
+        write_queue=get_write_queue(),
+    )
 
     try:
         yield MCPServerContext(storage=storage, memory_service=memory_service)
