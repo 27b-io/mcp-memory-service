@@ -93,7 +93,7 @@ def check_critical_dependencies() -> tuple[bool, list]:
         logger.debug(f"sentence-transformers {st_version} is installed")
 
     # Check other critical packages
-    critical_packages = ["sqlite-vec", "mcp", "aiohttp", "fastapi", "uvicorn"]
+    critical_packages = ["qdrant-client", "mcp", "aiohttp", "fastapi", "uvicorn"]
 
     for package in critical_packages:
         try:

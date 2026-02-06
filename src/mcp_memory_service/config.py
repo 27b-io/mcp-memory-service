@@ -24,10 +24,8 @@ import os
 import secrets
 import threading
 import time
-from typing import Literal
-
 from platformdirs import user_data_dir
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -118,8 +116,6 @@ class PathSettings(BaseSettings):
 
     backups_path: str | None = Field(default=None, description="Path for database backups")
 
-    sqlite_path: str | None = Field(default=None, alias="SQLITEVEC_PATH", description="Path to SQLite-vec database file")
-
     @model_validator(mode="after")
     def validate_paths(self) -> "PathSettings":
         """Validate and create all paths."""
@@ -160,10 +156,6 @@ class StorageSettings(BaseSettings):
         env_prefix="MCP_MEMORY_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    storage_backend: Literal["sqlite_vec", "sqlite-vec", "qdrant"] = Field(
-        default="sqlite_vec", description="Storage backend to use"
-    )
-
     embedding_model: str = Field(
         default="intfloat/e5-base-v2",  # E5-base: ~63 MTEB avg, 768-dim, fast, no prefixes, CPU-optimized
         description="Embedding model name (env: MCP_MEMORY_EMBEDDING_MODEL)",
@@ -171,24 +163,12 @@ class StorageSettings(BaseSettings):
 
     use_onnx: bool = Field(default=False, description="Use ONNX for embeddings (PyTorch-free) (env: MCP_MEMORY_USE_ONNX)")
 
-    @field_validator("storage_backend")
-    @classmethod
-    def normalize_backend(cls, v: str) -> str:
-        """Normalize backend names."""
-        if v == "sqlite-vec":
-            return "sqlite_vec"
-        return v.lower()
-
 
 class ContentLimitsSettings(BaseSettings):
     """Content length limits and splitting configuration."""
 
     model_config = SettingsConfigDict(
         env_prefix="MCP_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
-    )
-
-    sqlitevec_max_content_length: int | None = Field(
-        default=None, ge=100, le=10000, description="SQLite-vec content length limit (None = unlimited)"
     )
 
     enable_auto_split: bool = Field(default=True, description="Enable automatic content splitting when limits exceeded")
@@ -459,19 +439,6 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_backend_requirements(self) -> "Settings":
         """Validate that required backend configuration is present."""
-        backend = self.storage.storage_backend
-
-        # Set SQLite path if needed
-        if backend == "sqlite_vec":
-            if not self.paths.sqlite_path:
-                self.paths.sqlite_path = os.path.join(self.paths.base_dir, "sqlite_vec.db")
-                logger.info(f"Using default SQLite path: {self.paths.sqlite_path}")
-
-            # Ensure directory exists
-            sqlite_dir = os.path.dirname(self.paths.sqlite_path)
-            if sqlite_dir:
-                os.makedirs(sqlite_dir, exist_ok=True)
-
         # Set OAuth issuer if not provided
         if self.oauth.enabled and not self.oauth.issuer:
             scheme = "https" if self.http.https_enabled else "http"
@@ -493,16 +460,13 @@ class Settings(BaseSettings):
         logger.info("MCP Memory Service Configuration")
         logger.info("=" * 80)
         logger.info(f"Server: {self.server.name} v{self.server.version}")
-        logger.info(f"Storage Backend: {self.storage.storage_backend}")
+        logger.info(f"Storage Backend: Qdrant")
         logger.info(f"Base Directory: {self.paths.base_dir}")
 
-        if self.storage.storage_backend == "sqlite_vec":
-            logger.info(f"SQLite Path: {self.paths.sqlite_path}")
-        elif self.storage.storage_backend == "qdrant":
-            if self.qdrant.url:
-                logger.info(f"Qdrant URL: {self.qdrant.url}")
-            else:
-                logger.info(f"Qdrant Storage: {self.qdrant.storage_path}")
+        if self.qdrant.url:
+            logger.info(f"Qdrant URL: {self.qdrant.url}")
+        else:
+            logger.info(f"Qdrant Storage: {self.qdrant.storage_path}")
 
         if self.http.http_enabled:
             logger.info(f"HTTP Server: {self.http.http_host}:{self.http.http_port}")
@@ -573,16 +537,13 @@ def __getattr__(name: str):
         # Paths
         "BASE_DIR": lambda: _settings.paths.base_dir,
         "BACKUPS_PATH": lambda: _settings.paths.backups_path,
-        "SQLITE_VEC_PATH": lambda: _settings.paths.sqlite_path,
         # Server
         "SERVER_NAME": lambda: _settings.server.name,
         "SERVER_VERSION": lambda: _settings.server.version,
         # Storage
-        "STORAGE_BACKEND": lambda: _settings.storage.storage_backend,
         "EMBEDDING_MODEL_NAME": lambda: _settings.storage.embedding_model,
         "USE_ONNX": lambda: _settings.storage.use_onnx,
         # Content limits
-        "SQLITEVEC_MAX_CONTENT_LENGTH": lambda: _settings.content_limits.sqlitevec_max_content_length,
         "ENABLE_AUTO_SPLIT": lambda: _settings.content_limits.enable_auto_split,
         "CONTENT_SPLIT_OVERLAP": lambda: _settings.content_limits.content_split_overlap,
         "CONTENT_PRESERVE_BOUNDARIES": lambda: _settings.content_limits.content_preserve_boundaries,
@@ -597,7 +558,6 @@ def __getattr__(name: str):
         "SSL_CERT_FILE": lambda: _settings.http.ssl_cert_file,
         "SSL_KEY_FILE": lambda: _settings.http.ssl_key_file,
         "MDNS_ENABLED": lambda: _settings.http.mdns_enabled,
-        "DATABASE_PATH": lambda: _settings.paths.sqlite_path or os.path.join(_settings.paths.base_dir, "memory_http.db"),
         # OAuth
         "OAUTH_ENABLED": lambda: _settings.oauth.enabled,
         "OAUTH_PRIVATE_KEY": lambda: _settings.oauth.private_key.get_secret_value() if _settings.oauth.private_key else None,
@@ -625,9 +585,6 @@ def __getattr__(name: str):
 
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-
-# Constants that don't need lazy loading
-SUPPORTED_BACKENDS = ["sqlite_vec", "sqlite-vec", "qdrant"]
 
 # Note: All config values are now lazy-loaded via __getattr__ above
 # Do not add assignments here - they will trigger eager Settings() instantiation

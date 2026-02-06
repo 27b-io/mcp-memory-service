@@ -14,7 +14,6 @@ import logging
 from threading import Lock
 from typing import Optional
 
-from .config import DATABASE_PATH, SQLITE_VEC_PATH
 from .storage.base import MemoryStorage
 from .storage.factory import create_storage_instance
 
@@ -70,16 +69,11 @@ class StorageManager:
 
             logger.info("Initializing shared storage instance...")
 
-            # Determine which path to use based on backend
-            # SQLite-vec and Hybrid use SQLITE_VEC_PATH
-            # Web interface uses DATABASE_PATH for compatibility
-            storage_path = SQLITE_VEC_PATH or DATABASE_PATH
-
             # Create storage using factory
-            self._storage = await create_storage_instance(storage_path)
+            self._storage = await create_storage_instance()
             self._initialized = True
 
-            logger.info(f"✓ Shared storage initialized successfully: {type(self._storage).__name__}")
+            logger.info(f"Shared storage initialized successfully: {type(self._storage).__name__}")
 
             return self._storage
 
@@ -94,7 +88,7 @@ class StorageManager:
                 await self._storage.close()
                 self._storage = None
                 self._initialized = False
-                logger.info("✓ Shared storage closed successfully")
+                logger.info("Shared storage closed successfully")
             except Exception as e:
                 logger.error(f"Error closing shared storage: {e}")
 
