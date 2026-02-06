@@ -660,6 +660,194 @@ class MemoryService:
             logger.error(f"Health check failed: {e}")
             return {"healthy": False, "error": f"Health check failed: {str(e)}"}
 
+    async def consolidate(self) -> dict[str, Any]:
+        """
+        Run a memory consolidation cycle: decay, prune, and detect duplicates.
+
+        Implements biological sleep consolidation:
+        1. Global decay: downscale ALL edge weights (synaptic homeostasis)
+        2. Stale decay: extra penalty for edges not accessed recently
+        3. Prune: delete edges that fell below threshold
+        4. Duplicate detection: find near-identical memories via vector similarity
+
+        Idempotent: safe to run multiple times. Each run applies one decay cycle.
+        Crash-safe: each phase uses atomic graph operations. Partial completion
+        leaves the graph in a valid state — the next run finishes the work.
+
+        Returns:
+            Dict with consolidation statistics
+        """
+        config = settings.consolidation
+        stats: dict[str, Any] = {
+            "edges_decayed": 0,
+            "stale_edges_decayed": 0,
+            "edges_pruned": 0,
+            "orphan_nodes": 0,
+            "duplicates_found": 0,
+            "duplicates_merged": 0,
+            "errors": [],
+        }
+
+        # Phase 1: Global edge decay (requires graph layer)
+        if self._graph is not None:
+            try:
+                stats["edges_decayed"] = await self._graph.decay_all_edges(
+                    decay_factor=config.decay_factor,
+                    limit=config.max_edges_per_run,
+                )
+            except Exception as e:
+                logger.error(f"Consolidation global decay failed: {e}")
+                stats["errors"].append(f"global_decay: {e}")
+
+            # Phase 2: Extra decay for stale edges
+            # Note: stale edges get BOTH global decay (phase 1) and stale decay (phase 2).
+            # E.g., with defaults: weight * 0.9 * 0.5 = weight * 0.45 per run.
+            # This aggressive compounding is intentional — unused synapses are pruned fast.
+            try:
+                stale_before = time.time() - (config.stale_edge_days * 86400)
+                stats["stale_edges_decayed"] = await self._graph.decay_stale_edges(
+                    stale_before=stale_before,
+                    decay_factor=config.stale_decay_factor,
+                    limit=config.max_edges_per_run,
+                )
+            except Exception as e:
+                logger.error(f"Consolidation stale decay failed: {e}")
+                stats["errors"].append(f"stale_decay: {e}")
+
+            # Phase 3: Prune weak edges
+            try:
+                stats["edges_pruned"] = await self._graph.prune_weak_edges(
+                    threshold=config.prune_threshold,
+                    limit=config.max_edges_per_run,
+                )
+            except Exception as e:
+                logger.error(f"Consolidation pruning failed: {e}")
+                stats["errors"].append(f"prune: {e}")
+
+            # Phase 4: Report orphan nodes (informational only)
+            try:
+                orphans = await self._graph.get_orphan_nodes(limit=100)
+                stats["orphan_nodes"] = len(orphans)
+            except Exception as e:
+                logger.error(f"Consolidation orphan detection failed: {e}")
+                stats["errors"].append(f"orphan_detection: {e}")
+        else:
+            logger.info("Consolidation: graph layer not enabled, skipping edge operations")
+
+        # Phase 5: Duplicate detection via vector similarity
+        try:
+            dup_stats = await self._find_and_merge_duplicates(
+                similarity_threshold=config.duplicate_similarity_threshold,
+                max_pairs=config.max_duplicates_per_run,
+            )
+            stats["duplicates_found"] = dup_stats["found"]
+            stats["duplicates_merged"] = dup_stats["merged"]
+        except Exception as e:
+            logger.error(f"Consolidation duplicate detection failed: {e}")
+            stats["errors"].append(f"duplicate_detection: {e}")
+
+        stats["success"] = len(stats["errors"]) == 0
+        logger.info(f"Consolidation complete: {stats}")
+        return stats
+
+    async def _find_and_merge_duplicates(
+        self,
+        similarity_threshold: float = 0.95,
+        max_pairs: int = 100,
+    ) -> dict[str, int]:
+        """
+        Find and merge near-duplicate memories using vector similarity.
+
+        Strategy: iterate recent memories in batches, search for near-duplicates,
+        merge by keeping the older memory and updating its tags/metadata.
+
+        Args:
+            similarity_threshold: Cosine similarity above which = duplicate
+            max_pairs: Max duplicate pairs to process per run
+
+        Returns:
+            Dict with 'found' and 'merged' counts
+        """
+        found = 0
+        merged = 0
+        seen_hashes: set[str] = set()
+
+        # Get recent memories in batches to check for duplicates
+        batch_size = 50
+        offset = 0
+        memories = await self.storage.get_all_memories(limit=batch_size, offset=offset)
+
+        while memories and found < max_pairs:
+            for memory in memories:
+                if memory.content_hash in seen_hashes:
+                    continue
+                seen_hashes.add(memory.content_hash)
+
+                # Search for near-duplicates of this memory's content
+                try:
+                    similar = await self.storage.retrieve(
+                        query=memory.content,
+                        n_results=5,
+                        min_similarity=similarity_threshold,
+                    )
+                except Exception:
+                    continue
+
+                for match in similar:
+                    match_hash = match.memory.content_hash
+                    if match_hash == memory.content_hash or match_hash in seen_hashes:
+                        continue
+
+                    found += 1
+                    seen_hashes.add(match_hash)
+
+                    # Merge: keep the older memory, absorb tags from the newer one
+                    keeper, victim = (
+                        (memory, match.memory)
+                        if (memory.created_at or 0) <= (match.memory.created_at or 0)
+                        else (match.memory, memory)
+                    )
+
+                    try:
+                        # Absorb victim's tags into keeper
+                        merged_tags = list(set(keeper.tags) | set(victim.tags))
+                        if merged_tags != keeper.tags:
+                            await self.storage.update_memory_metadata(
+                                keeper.content_hash,
+                                {"tags": merged_tags},
+                                preserve_timestamps=True,
+                            )
+
+                        # Delete victim from storage
+                        await self.storage.delete(victim.content_hash)
+
+                        # Clean up graph node for victim
+                        if self._graph is not None:
+                            await self._graph.delete_memory_node(victim.content_hash)
+
+                        merged += 1
+                        logger.info(
+                            f"Merged duplicate: kept {keeper.content_hash[:8]}, "
+                            f"removed {victim.content_hash[:8]}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to merge duplicate pair: {e}")
+
+                    # If current memory was the victim (deleted), stop searching against it
+                    if victim.content_hash == memory.content_hash:
+                        break
+
+                    if found >= max_pairs:
+                        break
+
+                if found >= max_pairs:
+                    break
+
+            offset += batch_size
+            memories = await self.storage.get_all_memories(limit=batch_size, offset=offset)
+
+        return {"found": found, "merged": merged}
+
     def _format_memory_response(self, memory: Memory) -> MemoryResult:
         """
         Format a memory object for API response.

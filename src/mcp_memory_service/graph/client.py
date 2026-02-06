@@ -250,6 +250,110 @@ class GraphClient:
             for row in result.result_set
         ]
 
+    # ── Consolidation operations (bulk, idempotent) ────────────────────
+
+    async def decay_all_edges(self, decay_factor: float, limit: int = 10000) -> int:
+        """
+        Apply global weight decay to all Hebbian edges (synaptic homeostasis).
+
+        This simulates biological sleep consolidation where all synapses
+        are downscaled. Strong edges survive; weak ones decay toward zero.
+
+        Idempotent: running twice applies double decay, which is expected.
+
+        Args:
+            decay_factor: Multiplicative decay (e.g., 0.9 = 10% reduction)
+            limit: Max edges to process per call (safety cap)
+
+        Returns:
+            Number of edges decayed
+        """
+        result = await self._graph.query(
+            "MATCH ()-[e:HEBBIAN]->() "
+            "WITH e LIMIT $lim "
+            "SET e.weight = toFloat(e.weight * $decay) "
+            "RETURN count(e)",
+            params={"decay": decay_factor, "lim": limit},
+        )
+        count = int(result.result_set[0][0]) if result.result_set else 0
+        logger.info(f"Decayed {count} edges by factor {decay_factor}")
+        return count
+
+    async def decay_stale_edges(
+        self, stale_before: float, decay_factor: float, limit: int = 10000
+    ) -> int:
+        """
+        Apply extra decay to edges not co-accessed since the given timestamp.
+
+        Targets edges that haven't been reinforced by recent retrieval activity.
+
+        Args:
+            stale_before: Unix timestamp — edges with last_co_access before this are stale
+            decay_factor: Additional multiplicative decay for stale edges
+            limit: Max edges to process
+
+        Returns:
+            Number of stale edges decayed
+        """
+        result = await self._graph.query(
+            "MATCH ()-[e:HEBBIAN]->() "
+            "WHERE e.last_co_access < $ts "
+            "WITH e LIMIT $lim "
+            "SET e.weight = toFloat(e.weight * $decay) "
+            "RETURN count(e)",
+            params={"ts": stale_before, "decay": decay_factor, "lim": limit},
+        )
+        count = int(result.result_set[0][0]) if result.result_set else 0
+        logger.info(f"Decayed {count} stale edges (before {stale_before}) by factor {decay_factor}")
+        return count
+
+    async def prune_weak_edges(self, threshold: float, limit: int = 10000) -> int:
+        """
+        Delete edges with weight below threshold.
+
+        This is the pruning phase of consolidation — removes synapses too
+        weak to be useful, reducing graph noise.
+
+        Idempotent: pruning already-deleted edges is a no-op.
+
+        Args:
+            threshold: Weight below which edges are pruned
+            limit: Max edges to delete per call
+
+        Returns:
+            Number of edges pruned
+        """
+        result = await self._graph.query(
+            "MATCH ()-[e:HEBBIAN]->() "
+            "WHERE e.weight < $thresh "
+            "WITH e LIMIT $lim "
+            "DELETE e "
+            "RETURN count(e)",
+            params={"thresh": threshold, "lim": limit},
+        )
+        count = int(result.result_set[0][0]) if result.result_set else 0
+        logger.info(f"Pruned {count} edges below weight {threshold}")
+        return count
+
+    async def get_orphan_nodes(self, limit: int = 1000) -> list[str]:
+        """
+        Find Memory nodes with no edges (orphans after pruning).
+
+        These nodes still exist in Qdrant but have no graph relationships.
+        They're not deleted — just returned for informational purposes.
+
+        Returns:
+            List of content_hash values for orphan nodes
+        """
+        result = await self._graph.query(
+            "MATCH (m:Memory) "
+            "WHERE NOT (m)-[:HEBBIAN]-() "
+            "RETURN m.content_hash "
+            "LIMIT $lim",
+            params={"lim": limit},
+        )
+        return [row[0] for row in result.result_set]
+
     async def get_graph_stats(self) -> dict[str, Any]:
         """Get graph statistics for health checks."""
         try:

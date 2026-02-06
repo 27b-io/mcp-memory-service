@@ -422,6 +422,61 @@ class FalkorDBSettings(BaseSettings):
     enabled: bool = Field(default=False, description="Enable FalkorDB graph layer")
 
 
+class ConsolidationSettings(BaseSettings):
+    """Memory consolidation configuration for periodic pruning and strengthening."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_CONSOLIDATION_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    decay_factor: float = Field(
+        default=0.9,
+        ge=0.01,
+        le=0.99,
+        description="Global edge weight decay per consolidation run (synaptic homeostasis)",
+    )
+    prune_threshold: float = Field(
+        default=0.05,
+        ge=0.001,
+        le=0.5,
+        description="Delete edges with weight below this after decay",
+    )
+    stale_edge_days: int = Field(
+        default=30,
+        ge=1,
+        le=365,
+        description="Edges not co-accessed within this many days are candidates for extra decay",
+    )
+    stale_decay_factor: float = Field(
+        default=0.5,
+        ge=0.01,
+        le=0.99,
+        description="Additional decay applied to stale edges (on top of global decay)",
+    )
+    max_edges_per_run: int = Field(
+        default=10000,
+        ge=100,
+        le=100000,
+        description="Maximum edges to process per consolidation run (safety limit)",
+    )
+    duplicate_similarity_threshold: float = Field(
+        default=0.95,
+        ge=0.8,
+        le=1.0,
+        description="Cosine similarity above which memories are considered duplicates",
+    )
+    max_duplicates_per_run: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum duplicate pairs to merge per run",
+    )
+
+
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
 
@@ -491,6 +546,7 @@ class Settings(BaseSettings):
     falkordb: FalkorDBSettings = Field(default_factory=FalkorDBSettings)
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
+    consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)

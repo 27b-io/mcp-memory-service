@@ -88,7 +88,6 @@ class TestConfigCleanup:
             "CloudflareSettings",
             "HybridSettings",
             "DocumentSettings",
-            "ConsolidationSettings",
         ]
 
         from mcp_memory_service import config
