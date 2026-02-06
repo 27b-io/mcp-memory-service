@@ -56,7 +56,7 @@ jobs:
           CUDA_VISIBLE_DEVICES: ""
 
   integration-tests:
-    runs-on: ubuntu-latest
+    runs-on: lab
     timeout-minutes: 45
     if: false  # Disabled for PRs - enable for nightly builds
     steps:
