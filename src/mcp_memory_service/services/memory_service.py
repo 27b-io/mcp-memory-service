@@ -31,6 +31,7 @@ from ..utils.hybrid_search import (
     extract_query_keywords,
     get_adaptive_alpha,
 )
+from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,87 @@ class MemoryService:
             frequency_weight=config.frequency_weight,
             importance_weight=config.importance_weight,
         )
+
+    async def _detect_contradictions(self, content: str) -> InterferenceResult:
+        """
+        Check for contradictions between new content and existing memories.
+
+        Searches for semantically similar memories, then applies lexical
+        contradiction signals to determine if they conflict.
+
+        Non-blocking to store: contradictions are flagged, not prevented.
+
+        Args:
+            content: The new memory content to check
+
+        Returns:
+            InterferenceResult with any detected contradictions
+        """
+        config = settings.interference
+        result = InterferenceResult()
+
+        if not config.enabled:
+            return result
+
+        try:
+            # Find semantically similar existing memories
+            similar = await self.storage.retrieve(
+                query=content,
+                n_results=config.max_candidates,
+                min_similarity=config.similarity_threshold,
+            )
+
+            for match in similar:
+                # Skip exact duplicates (same content hash)
+                if match.memory.content_hash == generate_content_hash(content):
+                    continue
+
+                signals = detect_contradiction_signals(
+                    new_content=content,
+                    existing_content=match.memory.content,
+                    existing_hash=match.memory.content_hash,
+                    similarity=match.similarity_score,
+                    min_confidence=config.min_confidence,
+                )
+                result.contradictions.extend(signals)
+
+        except Exception as e:
+            logger.warning(f"Contradiction detection failed (non-fatal): {e}")
+
+        return result
+
+    async def _create_contradiction_edges(
+        self,
+        new_hash: str,
+        contradictions: list[ContradictionSignal],
+    ) -> None:
+        """
+        Create CONTRADICTS edges in the graph for detected contradictions.
+
+        Non-blocking, non-fatal — graph failures don't affect storage.
+        """
+        if self._graph is None or not contradictions:
+            return
+
+        # Deduplicate by existing_hash (keep highest confidence per pair)
+        seen: dict[str, ContradictionSignal] = {}
+        for c in contradictions:
+            if c.existing_hash not in seen or c.confidence > seen[c.existing_hash].confidence:
+                seen[c.existing_hash] = c
+
+        for existing_hash, signal in seen.items():
+            try:
+                await self._graph.create_typed_edge(
+                    source_hash=new_hash,
+                    target_hash=existing_hash,
+                    relation_type="CONTRADICTS",
+                )
+                logger.info(
+                    f"Contradiction edge: {new_hash[:8]} -> {existing_hash[:8]} "
+                    f"({signal.signal_type}, confidence={signal.confidence:.2f})"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create contradiction edge (non-fatal): {e}")
 
     def _fire_access_count_updates(self, content_hashes: list[str]) -> None:
         """
@@ -424,7 +506,24 @@ class MemoryService:
                     if success:
                         stored_memories.append(self._format_memory_response(memory))
 
-                return {"success": True, "memories": stored_memories, "total_chunks": len(chunks), "original_hash": content_hash}
+                result = {
+                    "success": True,
+                    "memories": stored_memories,
+                    "total_chunks": len(chunks),
+                    "original_hash": content_hash,
+                }
+
+                # Detect contradictions against the full (unsplit) content
+                interference = await self._detect_contradictions(content)
+                if interference.has_contradictions:
+                    result["interference"] = interference.to_dict()
+                    # Create graph edges for each stored chunk
+                    for mem_dict in stored_memories:
+                        await self._create_contradiction_edges(
+                            mem_dict["content_hash"], interference.contradictions,
+                        )
+
+                return result
             else:
                 # Store as single memory
                 memory = Memory(
@@ -446,7 +545,18 @@ class MemoryService:
                             await self._graph.ensure_memory_node(content_hash, memory.created_at)
                         except Exception as e:
                             logger.warning(f"Graph node creation failed (non-fatal): {e}")
-                    return {"success": True, "memory": self._format_memory_response(memory)}
+
+                    result = {"success": True, "memory": self._format_memory_response(memory)}
+
+                    # Detect contradictions with existing memories
+                    interference = await self._detect_contradictions(content)
+                    if interference.has_contradictions:
+                        result["interference"] = interference.to_dict()
+                        await self._create_contradiction_edges(
+                            content_hash, interference.contradictions,
+                        )
+
+                    return result
                 else:
                     return {"success": False, "error": message}
 

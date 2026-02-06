@@ -125,6 +125,7 @@ class StoreMemorySuccess(TypedDict):
     success: bool
     message: str
     content_hash: str
+    interference: NotRequired[dict[str, Any]]
 
 
 class StoreMemorySplitSuccess(TypedDict):
@@ -134,6 +135,7 @@ class StoreMemorySplitSuccess(TypedDict):
     message: str
     chunks_created: int
     chunk_hashes: list[str]
+    interference: NotRequired[dict[str, Any]]
 
 
 class StoreMemoryFailure(TypedDict):
@@ -171,6 +173,12 @@ async def store_memory(
     - Salience score combines emotional intensity, access frequency, and explicit importance
     - Higher-salience memories receive a retrieval boost
 
+    Proactive interference detection:
+    - New memories are checked against existing ones for contradictions
+    - Contradictions are flagged (not blocked) with signal type and confidence
+    - CONTRADICTS edges are created in the knowledge graph for flagged pairs
+    - Signal types: negation, antonym, temporal (supersession)
+
     Args:
         content: The text content to store (will be embedded for semantic search)
         tags: Categorization labels (accepts ["tag1", "tag2"] or "tag1,tag2")
@@ -193,12 +201,14 @@ async def store_memory(
             - success: True/False
             - message: Status description
             - content_hash: Unique identifier for retrieval/deletion
+            - interference: (optional) Contradiction detection results if conflicts found
 
         Split memory (when auto-split enabled):
             - success: True/False
             - message: Status description
             - chunks_created: Number of linked chunks
             - chunk_hashes: List of content hashes
+            - interference: (optional) Contradiction detection results if conflicts found
 
     Use this for: Capturing information for later retrieval, building knowledge base,
     recording decisions, storing context across conversations.
@@ -215,20 +225,30 @@ async def store_memory(
 
     # Transform MemoryService response to MCP schema
     if result["success"]:
+        interference = result.get("interference")
+
         if "memory" in result:
             # Single memory case
-            return StoreMemorySuccess(
-                success=True, message="Memory stored successfully", content_hash=result["memory"]["content_hash"]
+            response = StoreMemorySuccess(
+                success=True,
+                message="Memory stored successfully",
+                content_hash=result["memory"]["content_hash"],
             )
+            if interference:
+                response["interference"] = interference
+            return response
         elif "memories" in result:
             # Chunked memory case
             chunk_hashes = [m["content_hash"] for m in result["memories"]]
-            return StoreMemorySplitSuccess(
+            response = StoreMemorySplitSuccess(
                 success=True,
                 message=f"Memory stored as {result['total_chunks']} chunks",
                 chunks_created=result["total_chunks"],
                 chunk_hashes=chunk_hashes,
             )
+            if interference:
+                response["interference"] = interference
+            return response
 
     # Failure case
     return StoreMemoryFailure(success=False, message=result.get("error", "Unknown error occurred"))

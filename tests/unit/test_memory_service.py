@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from mcp_memory_service.models.memory import Memory
+from mcp_memory_service.models.memory import Memory, MemoryQueryResult
 from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.storage.base import MemoryStorage
 
@@ -591,3 +591,197 @@ class TestRelationOperations:
 
         assert result["success"] is False
         assert "itself" in result["error"]
+
+
+# =============================================================================
+# Proactive Interference & Contradiction Detection Tests
+# =============================================================================
+
+
+class TestInterferenceDetection:
+    """Test contradiction detection during memory storage."""
+
+    @pytest.fixture
+    def mock_graph_client(self):
+        client = AsyncMock()
+        client.ensure_memory_node = AsyncMock()
+        client.create_typed_edge = AsyncMock(return_value=True)
+        return client
+
+    @pytest.fixture
+    def service_with_graph(self, mock_storage, mock_graph_client):
+        return MemoryService(
+            storage=mock_storage,
+            graph_client=mock_graph_client,
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_detects_contradiction(self, service_with_graph, mock_storage, mock_graph_client):
+        """When similar memory exists with contradicting content, interference is reported."""
+        # Existing memory says "enabled"
+        existing = Memory(
+            content="Feature flag oauth_v2 is enabled in production",
+            content_hash="existing_hash_123",
+            tags=["feature-flag"],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.9),
+        ]
+
+        # New memory says "disabled" — contradiction
+        result = await service_with_graph.store_memory(
+            content="Feature flag oauth_v2 is now disabled in production",
+        )
+
+        assert result["success"] is True
+        assert "interference" in result
+        assert result["interference"]["has_contradictions"] is True
+        assert result["interference"]["contradiction_count"] >= 1
+
+        # Should have created a CONTRADICTS edge in the graph
+        mock_graph_client.create_typed_edge.assert_any_call(
+            source_hash=result["memory"]["content_hash"],
+            target_hash="existing_hash_123",
+            relation_type="CONTRADICTS",
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_no_contradiction_when_consistent(self, service_with_graph, mock_storage):
+        """No interference when similar memories are consistent (not contradictory)."""
+        existing = Memory(
+            content="The API uses pagination with page and page_size parameters",
+            content_hash="existing_hash_456",
+            tags=["api"],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.85),
+        ]
+
+        result = await service_with_graph.store_memory(
+            content="The API supports pagination for all list endpoints",
+        )
+
+        assert result["success"] is True
+        # No interference key when no contradictions detected
+        assert "interference" not in result or not result.get("interference", {}).get("has_contradictions")
+
+    @pytest.mark.asyncio
+    async def test_store_no_interference_without_similar_memories(self, service_with_graph, mock_storage):
+        """No interference when no similar memories exist."""
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = []
+
+        result = await service_with_graph.store_memory(
+            content="Completely new topic with no related memories",
+        )
+
+        assert result["success"] is True
+        assert "interference" not in result
+
+    @pytest.mark.asyncio
+    async def test_store_succeeds_even_if_detection_fails(self, service_with_graph, mock_storage):
+        """Contradiction detection failure is non-fatal — memory still stored."""
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.side_effect = Exception("Search failed")
+
+        result = await service_with_graph.store_memory(
+            content="Some content that triggers a search failure",
+        )
+
+        # Memory should still be stored successfully
+        assert result["success"] is True
+        assert "memory" in result
+
+    @pytest.mark.asyncio
+    async def test_store_succeeds_without_graph_layer(self, memory_service, mock_storage):
+        """Without graph layer, contradiction detection still works (just no edges)."""
+        existing = Memory(
+            content="Feature X is enabled",
+            content_hash="existing_hash",
+            tags=[],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.9),
+        ]
+
+        result = await memory_service.store_memory(
+            content="Feature X is disabled",
+        )
+
+        assert result["success"] is True
+        # Should still detect and report contradictions
+        if "interference" in result:
+            assert result["interference"]["has_contradictions"] is True
+
+    @pytest.mark.asyncio
+    async def test_temporal_supersession_detected(self, service_with_graph, mock_storage, mock_graph_client):
+        """'No longer' phrasing triggers temporal supersession signal."""
+        existing = Memory(
+            content="Redis is used for caching in the API layer",
+            content_hash="redis_hash",
+            tags=["redis"],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.82),
+        ]
+
+        result = await service_with_graph.store_memory(
+            content="The system no longer uses Redis for caching",
+        )
+
+        assert result["success"] is True
+        assert "interference" in result
+        contradictions = result["interference"]["contradictions"]
+        temporal = [c for c in contradictions if c["signal_type"] == "temporal"]
+        assert len(temporal) >= 1
+
+    @pytest.mark.asyncio
+    async def test_skips_exact_duplicate_in_detection(self, service_with_graph, mock_storage):
+        """Exact duplicate (same content hash) is not flagged as contradiction."""
+        from mcp_memory_service.utils.hashing import generate_content_hash
+
+        content = "Test content for deduplication"
+        content_hash = generate_content_hash(content)
+        existing = Memory(
+            content=content,
+            content_hash=content_hash,
+            tags=[],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=1.0),
+        ]
+
+        result = await service_with_graph.store_memory(content=content)
+
+        assert result["success"] is True
+        # Should NOT report interference for exact same content
+        assert "interference" not in result
+
+    @pytest.mark.asyncio
+    async def test_graph_edge_failure_nonfatal(self, service_with_graph, mock_storage, mock_graph_client):
+        """Graph edge creation failure doesn't affect store result."""
+        existing = Memory(
+            content="Feature X is enabled in production",
+            content_hash="existing_hash",
+            tags=[],
+        )
+        mock_storage.store.return_value = (True, "Success")
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(memory=existing, relevance_score=0.9),
+        ]
+        # Graph edge creation fails
+        mock_graph_client.create_typed_edge.side_effect = ConnectionError("redis down")
+
+        result = await service_with_graph.store_memory(
+            content="Feature X is disabled in production",
+        )
+
+        # Store should still succeed with interference reported
+        assert result["success"] is True
+        if "interference" in result:
+            assert result["interference"]["has_contradictions"] is True

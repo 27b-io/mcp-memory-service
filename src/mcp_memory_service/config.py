@@ -477,6 +477,39 @@ class ConsolidationSettings(BaseSettings):
     )
 
 
+class InterferenceSettings(BaseSettings):
+    """Proactive interference and contradiction detection configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_INTERFERENCE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable contradiction detection at store time")
+
+    similarity_threshold: float = Field(
+        default=0.7,
+        ge=0.5,
+        le=0.95,
+        description="Minimum cosine similarity to consider a memory as potentially contradictory",
+    )
+    min_confidence: float = Field(
+        default=0.3,
+        ge=0.1,
+        le=0.9,
+        description="Minimum confidence for a contradiction signal to be reported",
+    )
+    max_candidates: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum similar memories to check for contradictions per store",
+    )
+
+
 class SalienceSettings(BaseSettings):
     """Salience scoring configuration for emotional tagging and retrieval boosting."""
 
@@ -577,6 +610,7 @@ class Settings(BaseSettings):
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
+    interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
