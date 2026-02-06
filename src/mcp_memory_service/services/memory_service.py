@@ -20,6 +20,7 @@ from ..config import (
 )
 from ..graph.client import GraphClient
 from ..graph.queue import HebbianWriteQueue
+from ..memory_tiers import ThreeTierMemory
 from ..models.memory import Memory
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
@@ -83,6 +84,54 @@ class MemoryService:
         self._graph = graph_client
         self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
+        self._three_tier: ThreeTierMemory | None = None
+        self._init_three_tier()
+
+    def _init_three_tier(self) -> None:
+        """Initialize three-tier memory if enabled in config.
+
+        Gracefully degrades: if config is unavailable or invalid, the feature
+        stays disabled rather than crashing the service.
+        """
+        try:
+            config = settings.three_tier
+            if not config.enabled:
+                return
+        except Exception:
+            return
+
+        async def _consolidation_callback(
+            content: str,
+            tags: list[str] | None,
+            memory_type: str | None,
+            metadata: dict[str, Any] | None,
+        ) -> dict[str, Any]:
+            """Store working memory item to LTM via the normal store pipeline."""
+            meta = metadata.copy() if metadata else {}
+            meta["source"] = "working_memory_consolidation"
+            return await self.store_memory(
+                content=content,
+                tags=tags,
+                memory_type=memory_type,
+                metadata=meta,
+            )
+
+        try:
+            self._three_tier = ThreeTierMemory(
+                sensory_capacity=config.sensory_capacity,
+                sensory_decay_ms=config.sensory_decay_ms,
+                working_capacity=config.working_capacity,
+                working_decay_minutes=config.working_decay_minutes,
+                consolidation_callback=_consolidation_callback if config.auto_consolidate else None,
+            )
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Three-tier memory initialization failed (non-fatal): {e}")
+            self._three_tier = None
+
+    @property
+    def three_tier(self) -> ThreeTierMemory | None:
+        """Access the three-tier memory manager (None if disabled)."""
+        return self._three_tier
 
     async def _compute_graph_boosts(self, seed_hashes: list[str]) -> dict[str, float]:
         """
