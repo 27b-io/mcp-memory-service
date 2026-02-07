@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.2.0](https://github.com/27b-io/mcp-memory-service/compare/v10.1.0...v10.2.0) (2026-02-07)
+
+
+### Features
+
+* memory_scan tool — token-efficient summarised retrieval ([#36](https://github.com/27b-io/mcp-memory-service/issues/36)) ([#38](https://github.com/27b-io/mcp-memory-service/issues/38)) ([fa9786d](https://github.com/27b-io/mcp-memory-service/commit/fa9786d0de68af4356e9ee3a9d57d99ae5919a5f))
+
 ## [10.1.0](https://github.com/27b-io/mcp-memory-service/compare/v10.0.1...v10.1.0) (2026-02-06)
 
 
