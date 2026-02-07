@@ -18,7 +18,6 @@ Configuration via MCP_SUMMARY_MODE env var:
 - None: Auto-detect (LLM if API key present, else extractive)
 """
 
-import asyncio
 import logging
 import re
 
