@@ -526,7 +526,7 @@ class MemoryService:
                     agent=client_hostname or "",
                 ).to_dict()
 
-            # Generate summary (LLM or extractive based on config, client-provided takes precedence)
+            # Generate summary (client-provided takes precedence, mode from config)
             final_summary = summarise(content, client_summary=summary, config=settings)
 
             # Process content if auto-splitting is enabled and content exceeds max length
