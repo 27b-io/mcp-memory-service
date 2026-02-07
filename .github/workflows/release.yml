@@ -43,10 +43,10 @@ jobs:
     strategy:
       matrix:
         include:
-          # CPU build - multi-platform (amd64 + arm64)
+          # CPU build - amd64 only (add linux/arm64 back when needed)
           - variant: cpu
             cuda_enabled: "false"
-            platforms: linux/amd64,linux/arm64
+            platforms: linux/amd64
             suffix: ""  # Default tag (no suffix) is CPU
           # CUDA build - amd64 only (CUDA not available on ARM)
           - variant: cuda
