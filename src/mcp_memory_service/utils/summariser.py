@@ -195,7 +195,7 @@ async def llm_summarise(
         return None
 
 
-def summarise(content: str, client_summary: str | None = None, config=None) -> str | None:
+async def summarise(content: str, client_summary: str | None = None, config=None) -> str | None:
     """Generate summary using configured mode (extractive or LLM).
 
     This is the main entrypoint for summary generation. It checks the config
@@ -224,15 +224,13 @@ def summarise(content: str, client_summary: str | None = None, config=None) -> s
     # LLM mode: try LLM first, fall back to extractive on error
     if mode == "llm" and config and config.summary.api_key:
         try:
-            # Run async llm_summarise in sync context
-            summary = asyncio.run(
-                llm_summarise(
-                    content,
-                    api_key=config.summary.api_key.get_secret_value(),
-                    model=config.summary.model,
-                    max_tokens=config.summary.max_tokens,
-                    timeout=config.summary.timeout_seconds,
-                )
+            # Await async llm_summarise
+            summary = await llm_summarise(
+                content,
+                api_key=config.summary.api_key.get_secret_value(),
+                model=config.summary.model,
+                max_tokens=config.summary.max_tokens,
+                timeout=config.summary.timeout_seconds,
             )
             if summary:
                 return summary

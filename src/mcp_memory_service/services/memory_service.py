@@ -527,7 +527,7 @@ class MemoryService:
                 ).to_dict()
 
             # Generate summary (client-provided takes precedence, mode from config)
-            final_summary = summarise(content, client_summary=summary, config=settings)
+            final_summary = await summarise(content, client_summary=summary, config=settings)
 
             # Process content if auto-splitting is enabled and content exceeds max length
             max_length = self.storage.max_content_length
@@ -565,7 +565,7 @@ class MemoryService:
                         emotional_valence=chunk_valence,
                         salience_score=chunk_salience,
                         encoding_context=enc_context,
-                        summary=summarise(chunk, config=settings),
+                        summary=await summarise(chunk, config=settings),
                     )
 
                     success, message = await self.storage.store(memory)
@@ -1387,7 +1387,7 @@ class MemoryService:
 
                 if output_format in ("summary", "both"):
                     # Use stored summary, or generate on-the-fly for old memories
-                    entry["summary"] = mem.summary or summarise(mem.content, config=settings)
+                    entry["summary"] = mem.summary or await summarise(mem.content, config=settings)
 
                 if output_format in ("full", "both"):
                     entry["content"] = mem.content

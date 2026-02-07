@@ -296,37 +296,37 @@ class TestLLMSummarise:
 class TestSummariseWrapper:
     """Test the main summarise() wrapper function with config-based mode detection."""
 
-    def test_summarise_client_summary_precedence(self):
+    async def test_summarise_client_summary_precedence(self):
         """Client-provided summary takes precedence over all modes."""
-        summary = summarise(
+        summary = await summarise(
             content="Long content",
             client_summary="Custom summary",
             config=None,
         )
         assert summary == "Custom summary"
 
-    def test_summarise_extractive_mode_explicit(self):
+    async def test_summarise_extractive_mode_explicit(self):
         """Explicit extractive mode uses extract_summary."""
         mock_config = MagicMock()
         mock_config.summary.get_effective_mode.return_value = "extractive"
 
         content = "First sentence. Second sentence."
-        summary = summarise(content, config=mock_config)
+        summary = await summarise(content, config=mock_config)
         assert summary == "First sentence."
 
-    def test_summarise_no_config_defaults_to_extractive(self):
+    async def test_summarise_no_config_defaults_to_extractive(self):
         """No config defaults to extractive mode."""
         content = "First sentence. Second sentence."
-        summary = summarise(content, config=None)
+        summary = await summarise(content, config=None)
         assert summary == "First sentence."
 
-    def test_summarise_empty_content(self):
+    async def test_summarise_empty_content(self):
         """Empty content returns None regardless of mode."""
-        assert summarise("", config=None) is None
-        assert summarise("   ", config=None) is None
+        assert await summarise("", config=None) is None
+        assert await summarise("   ", config=None) is None
 
-    @patch("mcp_memory_service.utils.summariser.asyncio.run")
-    def test_summarise_llm_mode_success(self, mock_asyncio_run):
+    @patch("mcp_memory_service.utils.summariser.llm_summarise")
+    async def test_summarise_llm_mode_success(self, mock_llm_summarise):
         """LLM mode uses llm_summarise when API key is present."""
         mock_config = MagicMock()
         mock_config.summary.get_effective_mode.return_value = "llm"
@@ -336,24 +336,24 @@ class TestSummariseWrapper:
         mock_config.summary.timeout_seconds = 5.0
 
         # Mock successful LLM response
-        mock_asyncio_run.return_value = "LLM summary"
+        mock_llm_summarise.return_value = "LLM summary"
 
-        summary = summarise("Content to summarise", config=mock_config)
+        summary = await summarise("Content to summarise", config=mock_config)
         assert summary == "LLM summary"
-        mock_asyncio_run.assert_called_once()
+        mock_llm_summarise.assert_called_once()
 
-    @patch("mcp_memory_service.utils.summariser.asyncio.run")
-    def test_summarise_llm_fallback_to_extractive(self, mock_asyncio_run):
+    @patch("mcp_memory_service.utils.summariser.llm_summarise")
+    async def test_summarise_llm_fallback_to_extractive(self, mock_llm_summarise):
         """LLM mode falls back to extractive on error."""
         mock_config = MagicMock()
         mock_config.summary.get_effective_mode.return_value = "llm"
         mock_config.summary.api_key.get_secret_value.return_value = "fake-key"
 
         # Mock LLM failure (returns None)
-        mock_asyncio_run.return_value = None
+        mock_llm_summarise.return_value = None
 
         content = "First sentence. Second sentence."
-        summary = summarise(content, config=mock_config)
+        summary = await summarise(content, config=mock_config)
         # Should fall back to extractive
         assert summary == "First sentence."
 
