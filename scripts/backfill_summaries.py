@@ -79,7 +79,7 @@ def backfill(client: QdrantClient, dry_run: bool = False, batch_size: int = 100)
                 stats["skipped"] += 1
                 continue
 
-            content_hash = payload.get("content_hash", pid)[:12]
+            content_hash = str(payload.get("content_hash", pid))[:12]
 
             if dry_run:
                 logger.info(f"[DRY RUN] {content_hash}: {summary[:80]}")
@@ -142,17 +142,18 @@ def main() -> None:
     logger.info(f"Connecting to Qdrant at {url}")
     client = QdrantClient(url=url, timeout=30)
 
-    # Verify connection
-    info = client.get_collection(COLLECTION)
-    logger.info(f"Collection '{COLLECTION}': {info.points_count} points")
+    try:
+        # Verify connection
+        info = client.get_collection(COLLECTION)
+        logger.info(f"Collection '{COLLECTION}': {info.points_count} points")
 
-    # Run backfill
-    mode = "DRY RUN" if args.dry_run else "LIVE"
-    logger.info(f"Starting backfill ({mode}, batch_size={args.batch_size})")
-    stats = backfill(client, dry_run=args.dry_run, batch_size=args.batch_size)
-    logger.info(f"Backfill complete: {stats}")
-
-    client.close()
+        # Run backfill
+        mode = "DRY RUN" if args.dry_run else "LIVE"
+        logger.info(f"Starting backfill ({mode}, batch_size={args.batch_size})")
+        stats = backfill(client, dry_run=args.dry_run, batch_size=args.batch_size)
+        logger.info(f"Backfill complete: {stats}")
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
