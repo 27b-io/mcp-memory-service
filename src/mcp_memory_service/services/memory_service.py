@@ -40,6 +40,7 @@ from ..utils.hybrid_search import (
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
+from ..utils.summariser import extract_summary
 
 logger = logging.getLogger(__name__)
 
@@ -476,6 +477,7 @@ class MemoryService:
         memory_type: str | None = None,
         metadata: dict[str, Any] | None = None,
         client_hostname: str | None = None,
+        summary: str | None = None,
     ) -> dict[str, Any]:
         """
         Store a new memory with validation and content processing.
@@ -486,6 +488,7 @@ class MemoryService:
             memory_type: Optional memory type classification
             metadata: Optional additional metadata
             client_hostname: Optional client hostname for source tagging
+            summary: Optional client-provided summary (auto-generated if not provided)
 
         Returns:
             Dictionary with operation result
@@ -523,6 +526,9 @@ class MemoryService:
                     agent=client_hostname or "",
                 ).to_dict()
 
+            # Generate extractive summary (client-provided takes precedence)
+            final_summary = extract_summary(content, client_summary=summary)
+
             # Process content if auto-splitting is enabled and content exceeds max length
             max_length = self.storage.max_content_length
             if ENABLE_AUTO_SPLIT and max_length and len(content) > max_length:
@@ -559,6 +565,7 @@ class MemoryService:
                         emotional_valence=chunk_valence,
                         salience_score=chunk_salience,
                         encoding_context=enc_context,
+                        summary=extract_summary(chunk),
                     )
 
                     success, message = await self.storage.store(memory)
@@ -595,6 +602,7 @@ class MemoryService:
                     emotional_valence=emotional_valence,
                     salience_score=salience_score,
                     encoding_context=enc_context,
+                    summary=final_summary,
                 )
 
                 success, message = await self.storage.store(memory)
@@ -1321,6 +1329,87 @@ class MemoryService:
         except Exception as e:
             logger.error(f"Failed to delete relation: {e}")
             return {"success": False, "error": f"Failed to delete relation: {e}"}
+
+    async def scan_memories(
+        self,
+        query: str,
+        n_results: int = 5,
+        min_relevance: float = 0.5,
+        output_format: str = "summary",
+    ) -> dict[str, Any]:
+        """
+        Token-efficient memory scanning — returns summaries instead of full content.
+
+        Uses the same Qdrant vector search as retrieve_memories but projects
+        only lightweight fields (summary, tags, relevance, hash).
+
+        Args:
+            query: Semantic search query
+            n_results: Maximum results (default 5)
+            min_relevance: Minimum similarity threshold (default 0.5)
+            output_format: Output format — "summary" (default), "full", or "both"
+
+        Returns:
+            Dictionary with scan results and metadata
+        """
+        valid_formats = {"summary", "full", "both"}
+        if output_format not in valid_formats:
+            return {
+                "error": f"Invalid format '{output_format}'. Must be one of: {', '.join(sorted(valid_formats))}",
+                "results": [],
+                "count": 0,
+            }
+
+        try:
+            results = await self.storage.retrieve(
+                query=query,
+                n_results=n_results,
+                min_similarity=min_relevance,
+            )
+
+            scan_results = []
+            for item in results:
+                # Support both MemoryQueryResult-like objects and raw Memory instances
+                if hasattr(item, "memory"):
+                    mem = item.memory
+                    relevance = getattr(item, "relevance_score", 1.0)
+                else:
+                    mem = item
+                    relevance = 1.0
+
+                entry: dict[str, Any] = {
+                    "content_hash": mem.content_hash,
+                    "relevance": round(relevance, 4),
+                    "tags": mem.tags,
+                    "created_at": mem.created_at,
+                    "memory_type": mem.memory_type,
+                }
+
+                if output_format in ("summary", "both"):
+                    # Use stored summary, or generate on-the-fly for old memories
+                    entry["summary"] = mem.summary or extract_summary(mem.content)
+
+                if output_format in ("full", "both"):
+                    entry["content"] = mem.content
+
+                scan_results.append(entry)
+
+            return {
+                "results": scan_results,
+                "query": query,
+                "count": len(scan_results),
+                "format": output_format,
+            }
+
+        except Exception as e:
+            logger.error(f"Error scanning memories: {e}")
+            return {
+                "results": [],
+                "query": query,
+                "count": 0,
+                "format": output_format,
+                "error": f"Failed to scan memories: {str(e)}",
+            }
 
     def _format_memory_response(self, memory: Memory) -> MemoryResult:
         """
