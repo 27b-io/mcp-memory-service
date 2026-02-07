@@ -1,6 +1,10 @@
-"""Unit tests for extractive summariser."""
+"""Unit tests for extractive and LLM summarisers."""
 
-from mcp_memory_service.utils.summariser import extract_summary
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from mcp_memory_service.utils.summariser import extract_summary, llm_summarise, summarise
 
 
 class TestExtractSummary:
@@ -161,3 +165,237 @@ class TestMemorySummaryField:
         data = {"content": "Content", "content_hash": "abc123"}
         mem = Memory.from_dict(data)
         assert mem.summary is None
+
+
+class TestNumberedListRegexFix:
+    """Test that numbered lists don't trigger sentence boundary detection (mm-yy6k)."""
+
+    def test_numbered_list_not_truncated(self):
+        """Numbered lists like '1. Item' should not be treated as sentence boundaries."""
+        content = "Steps: 1. First step 2. Second step 3. Third step. Done."
+        summary = extract_summary(content)
+        # Should extract the first sentence including all numbered items
+        assert "1. First step 2. Second step 3. Third step." in summary
+        assert "Done." not in summary  # Real sentence boundary stops here
+
+    def test_numbered_list_in_middle(self):
+        """Number before period mid-content should not split."""
+        content = "We have 3 options here. Option A is best."
+        summary = extract_summary(content)
+        assert summary == "We have 3 options here."
+
+    def test_decimal_number_not_sentence_boundary(self):
+        """Decimals like '2.5' should not split sentences."""
+        content = "The value is 2.5 units. More text follows."
+        summary = extract_summary(content)
+        assert summary == "The value is 2.5 units."
+
+    def test_regular_sentence_still_works(self):
+        """Normal sentence boundaries still work after regex fix."""
+        content = "First sentence. Second sentence."
+        summary = extract_summary(content)
+        assert summary == "First sentence."
+
+
+class TestLLMSummarise:
+    """Test LLM-powered summarisation with mocked API responses."""
+
+    @pytest.mark.asyncio
+    async def test_llm_summarise_success(self):
+        """Test successful LLM summarisation with mocked Gemini API."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "This is an LLM-generated summary."}]}}]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            summary = await llm_summarise(
+                content="Long content to summarise",
+                api_key="fake-api-key",
+                model="gemini-2.0-flash-exp",
+                max_tokens=50,
+                timeout=5.0,
+            )
+
+            assert summary == "This is an LLM-generated summary."
+
+    @pytest.mark.asyncio
+    async def test_llm_summarise_empty_content(self):
+        """Empty content returns None without API call."""
+        summary = await llm_summarise(
+            content="",
+            api_key="fake-api-key",
+        )
+        assert summary is None
+
+    @pytest.mark.asyncio
+    async def test_llm_summarise_no_api_key(self):
+        """No API key returns None without API call."""
+        summary = await llm_summarise(
+            content="Content",
+            api_key="",
+        )
+        assert summary is None
+
+    @pytest.mark.asyncio
+    async def test_llm_summarise_timeout(self):
+        """Timeout returns None for fallback to extractive."""
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                side_effect=__import__("httpx").TimeoutException("Timeout")
+            )
+
+            summary = await llm_summarise(
+                content="Content",
+                api_key="fake-api-key",
+                timeout=1.0,
+            )
+
+            assert summary is None
+
+    @pytest.mark.asyncio
+    async def test_llm_summarise_http_error(self):
+        """HTTP errors return None for fallback to extractive."""
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                side_effect=__import__("httpx").HTTPStatusError("Server error", request=MagicMock(), response=mock_response)
+            )
+
+            summary = await llm_summarise(
+                content="Content",
+                api_key="fake-api-key",
+            )
+
+            assert summary is None
+
+    @pytest.mark.asyncio
+    async def test_llm_summarise_malformed_response(self):
+        """Malformed API response returns None for fallback."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"candidates": []}  # Empty candidates
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            summary = await llm_summarise(
+                content="Content",
+                api_key="fake-api-key",
+            )
+
+            assert summary is None
+
+
+class TestSummariseWrapper:
+    """Test the main summarise() wrapper function with config-based mode detection."""
+
+    def test_summarise_client_summary_precedence(self):
+        """Client-provided summary takes precedence over all modes."""
+        summary = summarise(
+            content="Long content",
+            client_summary="Custom summary",
+            config=None,
+        )
+        assert summary == "Custom summary"
+
+    def test_summarise_extractive_mode_explicit(self):
+        """Explicit extractive mode uses extract_summary."""
+        mock_config = MagicMock()
+        mock_config.summary.get_effective_mode.return_value = "extractive"
+
+        content = "First sentence. Second sentence."
+        summary = summarise(content, config=mock_config)
+        assert summary == "First sentence."
+
+    def test_summarise_no_config_defaults_to_extractive(self):
+        """No config defaults to extractive mode."""
+        content = "First sentence. Second sentence."
+        summary = summarise(content, config=None)
+        assert summary == "First sentence."
+
+    def test_summarise_empty_content(self):
+        """Empty content returns None regardless of mode."""
+        assert summarise("", config=None) is None
+        assert summarise("   ", config=None) is None
+
+    @patch("mcp_memory_service.utils.summariser.asyncio.run")
+    def test_summarise_llm_mode_success(self, mock_asyncio_run):
+        """LLM mode uses llm_summarise when API key is present."""
+        mock_config = MagicMock()
+        mock_config.summary.get_effective_mode.return_value = "llm"
+        mock_config.summary.api_key.get_secret_value.return_value = "fake-key"
+        mock_config.summary.model = "gemini-2.0-flash-exp"
+        mock_config.summary.max_tokens = 50
+        mock_config.summary.timeout_seconds = 5.0
+
+        # Mock successful LLM response
+        mock_asyncio_run.return_value = "LLM summary"
+
+        summary = summarise("Content to summarise", config=mock_config)
+        assert summary == "LLM summary"
+        mock_asyncio_run.assert_called_once()
+
+    @patch("mcp_memory_service.utils.summariser.asyncio.run")
+    def test_summarise_llm_fallback_to_extractive(self, mock_asyncio_run):
+        """LLM mode falls back to extractive on error."""
+        mock_config = MagicMock()
+        mock_config.summary.get_effective_mode.return_value = "llm"
+        mock_config.summary.api_key.get_secret_value.return_value = "fake-key"
+
+        # Mock LLM failure (returns None)
+        mock_asyncio_run.return_value = None
+
+        content = "First sentence. Second sentence."
+        summary = summarise(content, config=mock_config)
+        # Should fall back to extractive
+        assert summary == "First sentence."
+
+
+class TestConfigAutoDetection:
+    """Test SummarySettings auto-detection of mode based on API key presence."""
+
+    def test_auto_detect_llm_when_api_key_present(self):
+        """Auto-detect should choose LLM mode when API key is set."""
+        from pydantic import SecretStr
+
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode=None, api_key=SecretStr("fake-key"))
+        assert settings.get_effective_mode() == "llm"
+
+    def test_auto_detect_extractive_when_no_api_key(self):
+        """Auto-detect should choose extractive mode when no API key."""
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode=None, api_key=None)
+        assert settings.get_effective_mode() == "extractive"
+
+    def test_explicit_extractive_overrides_api_key(self):
+        """Explicit mode='extractive' is honored even with API key."""
+        from pydantic import SecretStr
+
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode="extractive", api_key=SecretStr("fake-key"))
+        assert settings.get_effective_mode() == "extractive"
+
+    def test_explicit_llm_requires_api_key(self):
+        """Explicit mode='llm' without API key falls back to extractive."""
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode="llm", api_key=None)
+        assert settings.get_effective_mode() == "extractive"
+
+    def test_invalid_mode_falls_back_to_extractive(self):
+        """Invalid mode falls back to extractive."""
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode="invalid", api_key=None)
+        assert settings.get_effective_mode() == "extractive"

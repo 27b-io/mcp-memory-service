@@ -40,7 +40,7 @@ from ..utils.hybrid_search import (
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
-from ..utils.summariser import extract_summary
+from ..utils.summariser import summarise
 
 logger = logging.getLogger(__name__)
 
@@ -526,8 +526,8 @@ class MemoryService:
                     agent=client_hostname or "",
                 ).to_dict()
 
-            # Generate extractive summary (client-provided takes precedence)
-            final_summary = extract_summary(content, client_summary=summary)
+            # Generate summary (LLM or extractive based on config, client-provided takes precedence)
+            final_summary = summarise(content, client_summary=summary, config=settings)
 
             # Process content if auto-splitting is enabled and content exceeds max length
             max_length = self.storage.max_content_length
@@ -565,7 +565,7 @@ class MemoryService:
                         emotional_valence=chunk_valence,
                         salience_score=chunk_salience,
                         encoding_context=enc_context,
-                        summary=extract_summary(chunk),
+                        summary=summarise(chunk, config=settings),
                     )
 
                     success, message = await self.storage.store(memory)
@@ -1387,7 +1387,7 @@ class MemoryService:
 
                 if output_format in ("summary", "both"):
                     # Use stored summary, or generate on-the-fly for old memories
-                    entry["summary"] = mem.summary or extract_summary(mem.content)
+                    entry["summary"] = mem.summary or summarise(mem.content, config=settings)
 
                 if output_format in ("full", "both"):
                     entry["content"] = mem.content
