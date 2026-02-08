@@ -33,7 +33,7 @@ from qdrant_client.models import PointIdsList
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from mcp_memory_service.config import Settings  # noqa: E402
-from mcp_memory_service.utils.summariser import extract_summary, llm_summarise  # noqa: E402
+from mcp_memory_service.utils.summariser import extract_summary  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -45,23 +45,10 @@ METADATA_POINT_ID = "00000000-0000-0000-0000-000000000000"
 
 async def _generate_summary_llm(content: str, config: Settings) -> str | None:
     """Generate LLM summary with fallback to extractive."""
-    if not config.summary.api_key:
-        logger.warning("LLM mode requested but no API key configured - using extractive")
-        return extract_summary(content)
+    # Use the main summarise() function which handles provider routing
+    from mcp_memory_service.utils.summariser import summarise
 
-    summary = await llm_summarise(
-        content,
-        api_key=config.summary.api_key.get_secret_value(),
-        model=config.summary.model,
-        max_tokens=config.summary.max_tokens,
-        timeout=config.summary.timeout_seconds,
-    )
-
-    # Fallback to extractive on error
-    if summary is None:
-        logger.debug("LLM summarise returned None, falling back to extractive")
-        return extract_summary(content)
-
+    summary = await summarise(content, client_summary=None, config=config)
     return summary
 
 
@@ -70,6 +57,7 @@ def backfill(
     mode: str = "extractive",
     dry_run: bool = False,
     batch_size: int = 100,
+    force: bool = False,
     rate_limit: float = 0.0,
     config: Settings | None = None,
 ) -> dict:
@@ -110,8 +98,8 @@ def backfill(
             stats["total"] += 1
             payload = point.payload or {}
 
-            # Skip if summary already exists
-            if payload.get("summary") is not None:
+            # Skip if summary already exists (unless --force)
+            if not force and payload.get("summary") is not None:
                 stats["skipped"] += 1
                 continue
 
@@ -179,6 +167,11 @@ def main() -> None:
         help="Show what would be updated without making changes",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate ALL summaries, even if they already exist",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=100,
@@ -215,10 +208,23 @@ def main() -> None:
     config = None
     if args.mode == "llm":
         config = Settings()
-        if not config.summary.api_key:
-            logger.error("LLM mode requires MCP_SUMMARY_API_KEY environment variable")
+        provider = config.summary.provider
+
+        # Validate appropriate API key for provider
+        if provider == "anthropic":
+            # Anthropic mode - API key optional if using proxy
+            logger.info(f"LLM mode: provider={provider}, base_url={config.summary.anthropic_base_url}")
+            logger.info(f"Small model: {config.summary.anthropic_model_small} (<{config.summary.anthropic_size_threshold} chars)")
+            logger.info(f"Large model: {config.summary.anthropic_model_large} (≥{config.summary.anthropic_size_threshold} chars)")
+        elif provider == "gemini":
+            if not config.summary.api_key:
+                logger.error("Gemini mode requires MCP_SUMMARY_API_KEY environment variable")
+                sys.exit(1)
+            logger.info(f"LLM mode: provider={provider}, model={config.summary.model}")
+        else:
+            logger.error(f"Unknown provider: {provider}")
             sys.exit(1)
-        logger.info(f"LLM mode: using model {config.summary.model}")
+
         logger.info(f"Rate limit: {args.rate_limit} requests/second")
 
     logger.info(f"Connecting to Qdrant at {url}")
@@ -237,6 +243,7 @@ def main() -> None:
             mode=args.mode,
             dry_run=args.dry_run,
             batch_size=args.batch_size,
+            force=args.force,
             rate_limit=args.rate_limit if args.mode == "llm" else 0.0,
             config=config,
         )

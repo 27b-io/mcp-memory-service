@@ -645,9 +645,43 @@ class SummarySettings(BaseSettings):
         description="Summary mode: 'extractive' or 'llm' (auto-detect: llm if API key present, else extractive)",
     )
 
-    model: str = Field(default="gemini-2.0-flash-exp", description="LLM model identifier for summary generation")
+    provider: str = Field(
+        default="anthropic",
+        description="LLM provider: 'anthropic' or 'gemini'",
+    )
 
-    api_key: SecretStr | None = Field(default=None, description="API key for LLM provider (Gemini, OpenAI, etc.)")
+    # Anthropic settings
+    anthropic_base_url: str = Field(
+        default="https://api.anthropic.com",
+        description="Anthropic API base URL (use proxy URL for load balancing)",
+    )
+
+    anthropic_api_key: SecretStr | None = Field(
+        default=None,
+        description="Anthropic API key (ignored if using proxy)",
+    )
+
+    anthropic_model_small: str = Field(
+        default="claude-3-5-haiku-20241022",
+        description="Anthropic model for short memories (<500 chars)",
+    )
+
+    anthropic_model_large: str = Field(
+        default="claude-3-5-sonnet-20241022",
+        description="Anthropic model for long memories (≥500 chars)",
+    )
+
+    anthropic_size_threshold: int = Field(
+        default=500,
+        ge=100,
+        le=2000,
+        description="Character count threshold for switching from small to large model",
+    )
+
+    # Gemini settings (legacy)
+    model: str = Field(default="gemini-2.5-flash", description="Gemini model identifier for summary generation")
+
+    api_key: SecretStr | None = Field(default=None, description="API key for Gemini provider")
 
     max_tokens: int = Field(default=50, ge=10, le=200, description="Maximum output tokens for LLM-generated summaries")
 
@@ -659,13 +693,24 @@ class SummarySettings(BaseSettings):
         Returns:
             'llm' if mode is explicitly 'llm' and API key is set, else 'extractive'.
         """
-        if self.mode == "llm" and self.api_key:
-            return "llm"
+        if self.mode == "llm":
+            # Check for appropriate API key based on provider
+            if self.provider == "anthropic" and self.anthropic_api_key:
+                return "llm"
+            elif self.provider == "gemini" and self.api_key:
+                return "llm"
+            else:
+                return "extractive"
         elif self.mode == "extractive":
             return "extractive"
         elif self.mode is None:
-            # Auto-detect: use LLM if API key is present
-            return "llm" if self.api_key else "extractive"
+            # Auto-detect: use LLM if appropriate API key is present
+            if self.provider == "anthropic" and self.anthropic_api_key:
+                return "llm"
+            elif self.provider == "gemini" and self.api_key:
+                return "llm"
+            else:
+                return "extractive"
         else:
             # Fallback to extractive for any other case
             return "extractive"
