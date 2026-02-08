@@ -48,11 +48,6 @@ jobs:
             cuda_enabled: "false"
             platforms: linux/amd64
             suffix: ""  # Default tag (no suffix) is CPU
-          # CUDA build - amd64 only (CUDA not available on ARM)
-          - variant: cuda
-            cuda_enabled: "true"
-            platforms: linux/amd64
-            suffix: "-cuda"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
