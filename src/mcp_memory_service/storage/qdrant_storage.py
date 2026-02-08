@@ -525,7 +525,9 @@ class QdrantStorage(MemoryStorage):
                     if not hasattr(self, "_embedding_model_instance"):
                         logger.info(f"Loading embedding model: {self.embedding_model}")
                         device = get_torch_device()
-                        self._embedding_model_instance = SentenceTransformer(self.embedding_model, device=device)
+                        self._embedding_model_instance = SentenceTransformer(
+                            self.embedding_model, device=device, trust_remote_code=True
+                        )
                         logger.info(f"Loaded model: {self.embedding_model} on device: {device}")
 
             # Generate embedding (outside lock - model is thread-safe for inference)
