@@ -27,10 +27,6 @@ jobs:
             cuda_enabled: "false"
             platforms: linux/amd64
             suffix: ""
-          - variant: cuda
-            cuda_enabled: "true"
-            platforms: linux/amd64
-            suffix: "-cuda"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
