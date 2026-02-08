@@ -633,6 +633,44 @@ class HybridSearchSettings(BaseSettings):
     adaptive_threshold_large: int = Field(default=5000, ge=1, description="Corpus size above which alpha=0.8 (strong semantic)")
 
 
+class SummarySettings(BaseSettings):
+    """Summary generation configuration for memory_scan and store operations."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_SUMMARY_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+    )
+
+    mode: str | None = Field(
+        default=None,
+        description="Summary mode: 'extractive' or 'llm' (auto-detect: llm if API key present, else extractive)",
+    )
+
+    model: str = Field(default="gemini-2.0-flash-exp", description="LLM model identifier for summary generation")
+
+    api_key: SecretStr | None = Field(default=None, description="API key for LLM provider (Gemini, OpenAI, etc.)")
+
+    max_tokens: int = Field(default=50, ge=10, le=200, description="Maximum output tokens for LLM-generated summaries")
+
+    timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0, description="HTTP request timeout for LLM API calls")
+
+    def get_effective_mode(self) -> str:
+        """Determine effective summary mode based on configuration.
+
+        Returns:
+            'llm' if mode is explicitly 'llm' and API key is set, else 'extractive'.
+        """
+        if self.mode == "llm" and self.api_key:
+            return "llm"
+        elif self.mode == "extractive":
+            return "extractive"
+        elif self.mode is None:
+            # Auto-detect: use LLM if API key is present
+            return "llm" if self.api_key else "extractive"
+        else:
+            # Fallback to extractive for any other case
+            return "extractive"
+
+
 # =============================================================================
 # Main Settings Class
 # =============================================================================
@@ -667,6 +705,7 @@ class Settings(BaseSettings):
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
+    summary: SummarySettings = Field(default_factory=SummarySettings)
 
     @model_validator(mode="after")
     def validate_backend_requirements(self) -> "Settings":
