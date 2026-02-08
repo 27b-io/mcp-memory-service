@@ -205,10 +205,10 @@ async def anthropic_summarise(
         logger.warning(f"Anthropic summarise timeout after {timeout}s - falling back to extractive")
         return None
     except httpx.HTTPStatusError as e:
-        logger.warning(f"Anthropic summarise HTTP error {e.response.status_code}: {e.response.text}")
+        logger.warning(f"Anthropic summarise HTTP error {e.response.status_code}")
         return None
     except Exception as e:
-        logger.warning(f"Anthropic summarise error: {e}")
+        logger.warning(f"Anthropic summarise error: {type(e).__name__}")
         return None
 
 
@@ -287,10 +287,10 @@ async def llm_summarise(
         logger.warning(f"LLM summarise timeout after {timeout}s - falling back to extractive")
         return None
     except httpx.HTTPStatusError as e:
-        logger.warning(f"LLM summarise HTTP error {e.response.status_code}: {e.response.text}")
+        logger.warning(f"LLM summarise HTTP error {e.response.status_code}")
         return None
     except Exception as e:
-        logger.warning(f"LLM summarise error: {e}")
+        logger.warning(f"LLM summarise error: {type(e).__name__}")
         return None
 
 
