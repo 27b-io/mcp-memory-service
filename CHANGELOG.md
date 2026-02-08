@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.1.0](https://github.com/27b-io/mcp-memory-service/compare/v11.0.1...v11.1.0) (2026-02-08)
+
+
+### Features
+
+* Add Claude-based summarizer with size-based routing ([#51](https://github.com/27b-io/mcp-memory-service/issues/51)) ([6e62d38](https://github.com/27b-io/mcp-memory-service/commit/6e62d389efddc97184979d74196091d4a7620f5f))
+
 ## [11.0.1](https://github.com/27b-io/mcp-memory-service/compare/v11.0.0...v11.0.1) (2026-02-08)
 
 
