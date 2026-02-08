@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcp_memory_service.utils.summariser import extract_summary, llm_summarise, summarise
+from mcp_memory_service.utils.summariser import anthropic_summarise, extract_summary, llm_summarise, summarise
 
 
 class TestExtractSummary:
@@ -293,6 +293,160 @@ class TestLLMSummarise:
             assert summary is None
 
 
+class TestAnthropicSummarise:
+    """Test anthropic_summarise() directly — size-based routing, proxy mode, error handling."""
+
+    async def test_small_content_uses_small_model(self):
+        """Content below threshold should use the small (Haiku) model."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "content": [{"type": "text", "text": "Short summary."}],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            summary = await anthropic_summarise(
+                "Short content",
+                api_key="fake-key",
+                model_small="claude-3-5-haiku-20241022",
+                model_large="claude-3-5-sonnet-20241022",
+                size_threshold=500,
+            )
+
+            assert summary == "Short summary."
+            # Verify the small model was used in the request payload
+            call_args = mock_client.return_value.__aenter__.return_value.post.call_args
+            payload = call_args.kwargs.get("json", call_args[1].get("json", {}))
+            assert payload["model"] == "claude-3-5-haiku-20241022"
+
+    async def test_large_content_uses_large_model(self):
+        """Content at or above threshold should use the large (Sonnet) model."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "content": [{"type": "text", "text": "Detailed summary of long content."}],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            long_content = "A" * 500  # Exactly at threshold
+            summary = await anthropic_summarise(
+                long_content,
+                api_key="fake-key",
+                model_small="claude-3-5-haiku-20241022",
+                model_large="claude-3-5-sonnet-20241022",
+                size_threshold=500,
+            )
+
+            assert summary == "Detailed summary of long content."
+            call_args = mock_client.return_value.__aenter__.return_value.post.call_args
+            payload = call_args.kwargs.get("json", call_args[1].get("json", {}))
+            assert payload["model"] == "claude-3-5-sonnet-20241022"
+
+    async def test_no_api_key_proxy_mode(self):
+        """Anthropic works without API key when using proxy."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "content": [{"type": "text", "text": "Proxy summary."}],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            summary = await anthropic_summarise(
+                "Some content",
+                api_key=None,
+                base_url="http://lab:8082",
+            )
+
+            assert summary == "Proxy summary."
+            # Verify x-api-key header is NOT sent
+            call_args = mock_client.return_value.__aenter__.return_value.post.call_args
+            headers = call_args.kwargs.get("headers", call_args[1].get("headers", {}))
+            assert "x-api-key" not in headers
+
+    async def test_api_key_included_when_provided(self):
+        """API key header is sent when key is provided."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "content": [{"type": "text", "text": "Summary."}],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            await anthropic_summarise("Content", api_key="sk-ant-test-key")
+
+            call_args = mock_client.return_value.__aenter__.return_value.post.call_args
+            headers = call_args.kwargs.get("headers", call_args[1].get("headers", {}))
+            assert headers["x-api-key"] == "sk-ant-test-key"
+
+    async def test_empty_content_returns_none(self):
+        """Empty content returns None without making API call."""
+        result = await anthropic_summarise("", api_key="key")
+        assert result is None
+
+        result = await anthropic_summarise("   ", api_key="key")
+        assert result is None
+
+    async def test_empty_response_content_returns_none(self):
+        """Empty content blocks in response returns None."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"content": []}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            result = await anthropic_summarise("Content", api_key="key")
+            assert result is None
+
+    async def test_http_error_returns_none(self):
+        """HTTP errors return None (for fallback to extractive)."""
+        import httpx
+
+        mock_request = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                side_effect=httpx.HTTPStatusError("rate limited", request=mock_request, response=mock_response)
+            )
+            result = await anthropic_summarise("Content", api_key="key")
+            assert result is None
+
+    async def test_timeout_returns_none(self):
+        """Timeout returns None (for fallback to extractive)."""
+        import httpx
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+            result = await anthropic_summarise("Content", api_key="key")
+            assert result is None
+
+    async def test_custom_base_url(self):
+        """Custom base URL is used for proxy routing."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "content": [{"type": "text", "text": "Summary."}],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            await anthropic_summarise("Content", api_key=None, base_url="http://lab:8082")
+
+            call_args = mock_client.return_value.__aenter__.return_value.post.call_args
+            url = call_args[0][0] if call_args[0] else call_args.kwargs.get("url", "")
+            assert "lab:8082" in str(url)
+
+
 class TestSummariseWrapper:
     """Test the main summarise() wrapper function with config-based mode detection."""
 
@@ -330,8 +484,9 @@ class TestSummariseWrapper:
         """LLM mode uses llm_summarise when API key is present."""
         mock_config = MagicMock()
         mock_config.summary.get_effective_mode.return_value = "llm"
+        mock_config.summary.provider = "gemini"
         mock_config.summary.api_key.get_secret_value.return_value = "fake-key"
-        mock_config.summary.model = "gemini-2.0-flash-exp"
+        mock_config.summary.model = "gemini-2.5-flash"
         mock_config.summary.max_tokens = 50
         mock_config.summary.timeout_seconds = 5.0
 
@@ -347,6 +502,7 @@ class TestSummariseWrapper:
         """LLM mode falls back to extractive on error."""
         mock_config = MagicMock()
         mock_config.summary.get_effective_mode.return_value = "llm"
+        mock_config.summary.provider = "gemini"
         mock_config.summary.api_key.get_secret_value.return_value = "fake-key"
 
         # Mock LLM failure (returns None)
@@ -359,22 +515,38 @@ class TestSummariseWrapper:
 
 
 class TestConfigAutoDetection:
-    """Test SummarySettings auto-detection of mode based on API key presence."""
+    """Test SummarySettings auto-detection of mode based on API key and provider."""
 
-    def test_auto_detect_llm_when_api_key_present(self):
-        """Auto-detect should choose LLM mode when API key is set."""
+    def test_auto_detect_llm_gemini_when_api_key_present(self):
+        """Auto-detect should choose LLM mode for Gemini when API key is set."""
         from pydantic import SecretStr
 
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode=None, api_key=SecretStr("fake-key"))
+        settings = SummarySettings(mode=None, provider="gemini", api_key=SecretStr("fake-key"))
+        assert settings.get_effective_mode() == "llm"
+
+    def test_auto_detect_llm_anthropic_when_api_key_present(self):
+        """Auto-detect should choose LLM mode for Anthropic when API key is set."""
+        from pydantic import SecretStr
+
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode=None, provider="anthropic", anthropic_api_key=SecretStr("fake-key"))
+        assert settings.get_effective_mode() == "llm"
+
+    def test_auto_detect_llm_anthropic_when_proxy_base_url(self):
+        """Auto-detect should choose LLM mode for Anthropic when proxy base URL is set."""
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode=None, provider="anthropic", anthropic_base_url="http://lab:8082")
         assert settings.get_effective_mode() == "llm"
 
     def test_auto_detect_extractive_when_no_api_key(self):
         """Auto-detect should choose extractive mode when no API key."""
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode=None, api_key=None)
+        settings = SummarySettings(mode=None, provider="gemini", api_key=None)
         assert settings.get_effective_mode() == "extractive"
 
     def test_explicit_extractive_overrides_api_key(self):
@@ -383,15 +555,22 @@ class TestConfigAutoDetection:
 
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode="extractive", api_key=SecretStr("fake-key"))
+        settings = SummarySettings(mode="extractive", provider="gemini", api_key=SecretStr("fake-key"))
         assert settings.get_effective_mode() == "extractive"
 
-    def test_explicit_llm_requires_api_key(self):
-        """Explicit mode='llm' without API key falls back to extractive."""
+    def test_explicit_llm_gemini_requires_api_key(self):
+        """Explicit mode='llm' for Gemini without API key falls back to extractive."""
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode="llm", api_key=None)
+        settings = SummarySettings(mode="llm", provider="gemini", api_key=None)
         assert settings.get_effective_mode() == "extractive"
+
+    def test_explicit_llm_anthropic_allows_no_key(self):
+        """Explicit mode='llm' for Anthropic works without API key (proxy mode)."""
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode="llm", provider="anthropic")
+        assert settings.get_effective_mode() == "llm"
 
     def test_invalid_mode_falls_back_to_extractive(self):
         """Invalid mode falls back to extractive."""

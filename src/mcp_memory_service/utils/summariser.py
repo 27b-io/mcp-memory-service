@@ -7,15 +7,18 @@ Provides two summarisation strategies:
    - First sentence of content
    - Truncated to MAX_SUMMARY_CHARS word boundary
 
-2. **LLM-powered** (Gemini Flash, ~$0.075/M tokens):
-   - Async HTTP call to Gemini API
-   - Prompt: "Summarise this memory in one sentence (max 50 tokens)"
+2. **LLM-powered**:
+   - **Anthropic** (Claude Haiku/Sonnet, size-based routing):
+     - Short memories (<500 chars): Haiku (fast, cheap)
+     - Long memories (≥500 chars): Sonnet (better quality)
+   - **Gemini** (Flash, legacy):
+     - Async HTTP call to Gemini API
    - Falls back to extractive on any error
 
-Configuration via MCP_SUMMARY_MODE env var:
-- 'extractive': Use extractive only (default if no API key)
-- 'llm': Use LLM with extractive fallback
-- None: Auto-detect (LLM if API key present, else extractive)
+Configuration via MCP_SUMMARY_* env vars:
+- MCP_SUMMARY_MODE: 'extractive' or 'llm' (auto-detect if None)
+- MCP_SUMMARY_PROVIDER: 'anthropic' or 'gemini' (default: anthropic)
+- MCP_SUMMARY_ANTHROPIC_BASE_URL: Anthropic API URL (default: https://api.anthropic.com)
 """
 
 import logging
@@ -112,15 +115,112 @@ def _truncate(text: str) -> str:
 # =============================================================================
 
 
+async def anthropic_summarise(
+    content: str,
+    api_key: str | None,
+    base_url: str = "https://api.anthropic.com",
+    model_small: str = "claude-3-5-haiku-20241022",
+    model_large: str = "claude-3-5-sonnet-20241022",
+    size_threshold: int = 500,
+    max_tokens: int = 50,
+    timeout: float = 5.0,
+) -> str | None:
+    """Generate summary using Anthropic API with size-based model routing.
+
+    Args:
+        content: The full memory content to summarise.
+        api_key: Anthropic API key (can be None if using proxy).
+        base_url: Anthropic API base URL (use proxy URL for load balancing).
+        model_small: Model for short memories (<size_threshold chars).
+        model_large: Model for long memories (≥size_threshold chars).
+        size_threshold: Character count threshold for model selection.
+        max_tokens: Maximum output tokens for summary.
+        timeout: HTTP request timeout in seconds.
+
+    Returns:
+        LLM-generated summary string, or None on error (caller should fall back to extractive).
+
+    Raises:
+        None - all errors are caught and logged, returning None for fallback.
+    """
+    if not content or not content.strip():
+        return None
+
+    # Size-based model selection
+    content_len = len(content)
+    model = model_small if content_len < size_threshold else model_large
+
+    # Anthropic API endpoint
+    url = f"{base_url.rstrip('/')}/v1/messages"
+
+    # Prompt for one-sentence summary
+    prompt = (
+        f"Summarise this memory in one sentence (max {max_tokens} tokens). "
+        f"Capture the key decision, fact, or conclusion:\n\n{content}"
+    )
+
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+    }
+
+    # Add API key header only if provided (proxy might not need it)
+    if api_key:
+        headers["x-api-key"] = api_key
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+            data = response.json()
+
+            # Extract text from Anthropic response structure
+            content_blocks = data.get("content", [])
+            if not content_blocks:
+                logger.warning("Anthropic summarise: no content blocks in response")
+                return None
+
+            text_block = next((block for block in content_blocks if block.get("type") == "text"), None)
+            if not text_block:
+                logger.warning("Anthropic summarise: no text block in content")
+                return None
+
+            summary = text_block.get("text", "").strip()
+            if not summary:
+                logger.warning("Anthropic summarise: empty text in response")
+                return None
+
+            logger.debug(f"Anthropic summary generated ({model}, {content_len} chars input, {len(summary)} chars output)")
+            return summary
+
+    except httpx.TimeoutException:
+        logger.warning(f"Anthropic summarise timeout after {timeout}s - falling back to extractive")
+        return None
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"Anthropic summarise HTTP error {e.response.status_code}")
+        return None
+    except Exception as e:
+        logger.warning(f"Anthropic summarise error: {type(e).__name__}")
+        return None
+
+
 async def llm_summarise(
-    content: str, api_key: str, model: str = "gemini-2.0-flash-exp", max_tokens: int = 50, timeout: float = 5.0
+    content: str, api_key: str, model: str = "gemini-2.5-flash", max_tokens: int = 50, timeout: float = 5.0
 ) -> str | None:
     """Generate summary using LLM (Gemini API).
 
     Args:
         content: The full memory content to summarise.
         api_key: Gemini API key.
-        model: Gemini model identifier (default: gemini-2.0-flash-exp).
+        model: Gemini model identifier (default: gemini-2.5-flash).
         max_tokens: Maximum output tokens for summary.
         timeout: HTTP request timeout in seconds.
 
@@ -187,10 +287,10 @@ async def llm_summarise(
         logger.warning(f"LLM summarise timeout after {timeout}s - falling back to extractive")
         return None
     except httpx.HTTPStatusError as e:
-        logger.warning(f"LLM summarise HTTP error {e.response.status_code}: {e.response.text}")
+        logger.warning(f"LLM summarise HTTP error {e.response.status_code}")
         return None
     except Exception as e:
-        logger.warning(f"LLM summarise error: {e}")
+        logger.warning(f"LLM summarise error: {type(e).__name__}")
         return None
 
 
@@ -221,18 +321,44 @@ async def summarise(content: str, client_summary: str | None = None, config=None
         mode = config.summary.get_effective_mode()
 
     # LLM mode: try LLM first, fall back to extractive on error
-    if mode == "llm" and config and config.summary.api_key:
+    if mode == "llm" and config:
         try:
-            # Await async llm_summarise
-            summary = await llm_summarise(
-                content,
-                api_key=config.summary.api_key.get_secret_value(),
-                model=config.summary.model,
-                max_tokens=config.summary.max_tokens,
-                timeout=config.summary.timeout_seconds,
-            )
-            if summary:
-                return summary
+            provider = config.summary.provider if hasattr(config.summary, "provider") else "gemini"
+
+            if provider == "anthropic":
+                # Use Anthropic with size-based routing
+                api_key = None
+                if config.summary.anthropic_api_key:
+                    api_key = config.summary.anthropic_api_key.get_secret_value()
+
+                summary = await anthropic_summarise(
+                    content,
+                    api_key=api_key,
+                    base_url=config.summary.anthropic_base_url,
+                    model_small=config.summary.anthropic_model_small,
+                    model_large=config.summary.anthropic_model_large,
+                    size_threshold=config.summary.anthropic_size_threshold,
+                    max_tokens=config.summary.max_tokens,
+                    timeout=config.summary.timeout_seconds,
+                )
+                if summary:
+                    return summary
+
+            elif provider == "gemini" and config.summary.api_key:
+                # Use Gemini (legacy)
+                summary = await llm_summarise(
+                    content,
+                    api_key=config.summary.api_key.get_secret_value(),
+                    model=config.summary.model,
+                    max_tokens=config.summary.max_tokens,
+                    timeout=config.summary.timeout_seconds,
+                )
+                if summary:
+                    return summary
+
+            else:
+                logger.warning(f"Unknown summary provider '{provider}', falling back to extractive")
+
             # Fall through to extractive on None
         except Exception as e:
             logger.warning(f"LLM summarise failed, falling back to extractive: {e}")
