@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.0.1](https://github.com/27b-io/mcp-memory-service/compare/v11.0.0...v11.0.1) (2026-02-08)
+
+
+### Bug Fixes
+
+* **ci:** invalid if condition syntax in QA workflow ([#49](https://github.com/27b-io/mcp-memory-service/issues/49)) ([957ab72](https://github.com/27b-io/mcp-memory-service/commit/957ab727e5d40f0fbfea27660dad0cb0ee045930))
+
 ## [11.0.0](https://github.com/27b-io/mcp-memory-service/compare/v10.2.0...v11.0.0) (2026-02-08)
 
 
