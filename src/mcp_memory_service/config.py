@@ -648,6 +648,7 @@ class SummarySettings(BaseSettings):
     provider: str = Field(
         default="anthropic",
         description="LLM provider: 'anthropic' or 'gemini'",
+        pattern="^(anthropic|gemini)$",
     )
 
     # Anthropic settings
@@ -690,12 +691,15 @@ class SummarySettings(BaseSettings):
     def get_effective_mode(self) -> str:
         """Determine effective summary mode based on configuration.
 
+        Anthropic provider allows API key to be None when using a proxy.
+        Gemini provider requires an API key.
+
         Returns:
-            'llm' if mode is explicitly 'llm' and API key is set, else 'extractive'.
+            'llm' if mode is explicitly 'llm' and provider is configured, else 'extractive'.
         """
         if self.mode == "llm":
-            # Check for appropriate API key based on provider
-            if self.provider == "anthropic" and self.anthropic_api_key:
+            # Anthropic allows no API key (proxy injects auth)
+            if self.provider == "anthropic":
                 return "llm"
             elif self.provider == "gemini" and self.api_key:
                 return "llm"
@@ -704,8 +708,10 @@ class SummarySettings(BaseSettings):
         elif self.mode == "extractive":
             return "extractive"
         elif self.mode is None:
-            # Auto-detect: use LLM if appropriate API key is present
-            if self.provider == "anthropic" and self.anthropic_api_key:
+            # Auto-detect: Anthropic needs base_url set, Gemini needs API key
+            if self.provider == "anthropic" and (
+                self.anthropic_api_key or self.anthropic_base_url != "https://api.anthropic.com"
+            ):
                 return "llm"
             elif self.provider == "gemini" and self.api_key:
                 return "llm"

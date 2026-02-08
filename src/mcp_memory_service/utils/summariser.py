@@ -198,7 +198,7 @@ async def anthropic_summarise(
                 logger.warning("Anthropic summarise: empty text in response")
                 return None
 
-            logger.debug(f"Anthropic summary generated ({model}, {content_len} chars): {summary[:80]}...")
+            logger.debug(f"Anthropic summary generated ({model}, {content_len} chars input, {len(summary)} chars output)")
             return summary
 
     except httpx.TimeoutException:
@@ -213,14 +213,14 @@ async def anthropic_summarise(
 
 
 async def llm_summarise(
-    content: str, api_key: str, model: str = "gemini-2.0-flash-exp", max_tokens: int = 50, timeout: float = 5.0
+    content: str, api_key: str, model: str = "gemini-2.5-flash", max_tokens: int = 50, timeout: float = 5.0
 ) -> str | None:
     """Generate summary using LLM (Gemini API).
 
     Args:
         content: The full memory content to summarise.
         api_key: Gemini API key.
-        model: Gemini model identifier (default: gemini-2.0-flash-exp).
+        model: Gemini model identifier (default: gemini-2.5-flash).
         max_tokens: Maximum output tokens for summary.
         timeout: HTTP request timeout in seconds.
 
@@ -356,7 +356,10 @@ async def summarise(content: str, client_summary: str | None = None, config=None
                 if summary:
                     return summary
 
-            # Fall through to extractive on None or unknown provider
+            else:
+                logger.warning(f"Unknown summary provider '{provider}', falling back to extractive")
+
+            # Fall through to extractive on None
         except Exception as e:
             logger.warning(f"LLM summarise failed, falling back to extractive: {e}")
 

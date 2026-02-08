@@ -330,8 +330,9 @@ class TestSummariseWrapper:
         """LLM mode uses llm_summarise when API key is present."""
         mock_config = MagicMock()
         mock_config.summary.get_effective_mode.return_value = "llm"
+        mock_config.summary.provider = "gemini"
         mock_config.summary.api_key.get_secret_value.return_value = "fake-key"
-        mock_config.summary.model = "gemini-2.0-flash-exp"
+        mock_config.summary.model = "gemini-2.5-flash"
         mock_config.summary.max_tokens = 50
         mock_config.summary.timeout_seconds = 5.0
 
@@ -347,6 +348,7 @@ class TestSummariseWrapper:
         """LLM mode falls back to extractive on error."""
         mock_config = MagicMock()
         mock_config.summary.get_effective_mode.return_value = "llm"
+        mock_config.summary.provider = "gemini"
         mock_config.summary.api_key.get_secret_value.return_value = "fake-key"
 
         # Mock LLM failure (returns None)
@@ -359,22 +361,38 @@ class TestSummariseWrapper:
 
 
 class TestConfigAutoDetection:
-    """Test SummarySettings auto-detection of mode based on API key presence."""
+    """Test SummarySettings auto-detection of mode based on API key and provider."""
 
-    def test_auto_detect_llm_when_api_key_present(self):
-        """Auto-detect should choose LLM mode when API key is set."""
+    def test_auto_detect_llm_gemini_when_api_key_present(self):
+        """Auto-detect should choose LLM mode for Gemini when API key is set."""
         from pydantic import SecretStr
 
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode=None, api_key=SecretStr("fake-key"))
+        settings = SummarySettings(mode=None, provider="gemini", api_key=SecretStr("fake-key"))
+        assert settings.get_effective_mode() == "llm"
+
+    def test_auto_detect_llm_anthropic_when_api_key_present(self):
+        """Auto-detect should choose LLM mode for Anthropic when API key is set."""
+        from pydantic import SecretStr
+
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode=None, provider="anthropic", anthropic_api_key=SecretStr("fake-key"))
+        assert settings.get_effective_mode() == "llm"
+
+    def test_auto_detect_llm_anthropic_when_proxy_base_url(self):
+        """Auto-detect should choose LLM mode for Anthropic when proxy base URL is set."""
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode=None, provider="anthropic", anthropic_base_url="http://lab:8082")
         assert settings.get_effective_mode() == "llm"
 
     def test_auto_detect_extractive_when_no_api_key(self):
         """Auto-detect should choose extractive mode when no API key."""
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode=None, api_key=None)
+        settings = SummarySettings(mode=None, provider="gemini", api_key=None)
         assert settings.get_effective_mode() == "extractive"
 
     def test_explicit_extractive_overrides_api_key(self):
@@ -383,15 +401,22 @@ class TestConfigAutoDetection:
 
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode="extractive", api_key=SecretStr("fake-key"))
+        settings = SummarySettings(mode="extractive", provider="gemini", api_key=SecretStr("fake-key"))
         assert settings.get_effective_mode() == "extractive"
 
-    def test_explicit_llm_requires_api_key(self):
-        """Explicit mode='llm' without API key falls back to extractive."""
+    def test_explicit_llm_gemini_requires_api_key(self):
+        """Explicit mode='llm' for Gemini without API key falls back to extractive."""
         from mcp_memory_service.config import SummarySettings
 
-        settings = SummarySettings(mode="llm", api_key=None)
+        settings = SummarySettings(mode="llm", provider="gemini", api_key=None)
         assert settings.get_effective_mode() == "extractive"
+
+    def test_explicit_llm_anthropic_allows_no_key(self):
+        """Explicit mode='llm' for Anthropic works without API key (proxy mode)."""
+        from mcp_memory_service.config import SummarySettings
+
+        settings = SummarySettings(mode="llm", provider="anthropic")
+        assert settings.get_effective_mode() == "llm"
 
     def test_invalid_mode_falls_back_to_extractive(self):
         """Invalid mode falls back to extractive."""

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backfill summaries for existing memories in Qdrant.
 
-Supports both extractive (zero-cost) and LLM-powered (Gemini) summarisation.
+Supports extractive (zero-cost) and LLM-powered (Anthropic/Gemini) summarisation.
 
 Iterates all memories in the collection using Qdrant's native scroll API,
 generates summaries for entries missing them, and updates the Qdrant payload
@@ -68,6 +68,7 @@ def backfill(
         mode: 'extractive' or 'llm' summarisation mode.
         dry_run: If True, log changes without updating Qdrant.
         batch_size: Number of memories to fetch per scroll batch.
+        force: If True, regenerate summaries even if they already exist.
         rate_limit: Requests per second for LLM mode (0 = no limit).
         config: Settings object for LLM configuration.
 
@@ -214,8 +215,12 @@ def main() -> None:
         if provider == "anthropic":
             # Anthropic mode - API key optional if using proxy
             logger.info(f"LLM mode: provider={provider}, base_url={config.summary.anthropic_base_url}")
-            logger.info(f"Small model: {config.summary.anthropic_model_small} (<{config.summary.anthropic_size_threshold} chars)")
-            logger.info(f"Large model: {config.summary.anthropic_model_large} (≥{config.summary.anthropic_size_threshold} chars)")
+            logger.info(
+                f"Small model: {config.summary.anthropic_model_small} (<{config.summary.anthropic_size_threshold} chars)"
+            )
+            logger.info(
+                f"Large model: {config.summary.anthropic_model_large} (≥{config.summary.anthropic_size_threshold} chars)"
+            )
         elif provider == "gemini":
             if not config.summary.api_key:
                 logger.error("Gemini mode requires MCP_SUMMARY_API_KEY environment variable")

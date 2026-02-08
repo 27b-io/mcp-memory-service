@@ -28,7 +28,6 @@ import json
 import logging
 import os
 import sys
-import time
 from pathlib import Path
 
 import httpx
@@ -203,13 +202,21 @@ def apply_results(results: list[dict], client: QdrantClient) -> dict:
         custom_id = result.get("custom_id")
         result_data = result.get("result")
 
-        if not result_data or result_data.get("type") == "error":
-            logger.warning(f"Error result for {custom_id}: {result_data}")
+        if not result_data:
+            logger.warning(f"No result data for {custom_id}")
             stats["errors"] += 1
             continue
 
-        # Extract summary from response
-        content_blocks = result_data.get("content", [])
+        # Check result type (succeeded, errored, canceled, expired)
+        result_type = result_data.get("type")
+        if result_type != "succeeded":
+            logger.warning(f"Non-success result for {custom_id}: type={result_type}")
+            stats["errors"] += 1
+            continue
+
+        # Extract summary from Batch API response (nested under message.content)
+        message = result_data.get("message", {})
+        content_blocks = message.get("content", [])
         text_block = next((block for block in content_blocks if block.get("type") == "text"), None)
 
         if not text_block:
@@ -265,44 +272,50 @@ def main():
             sys.exit(1)
 
         client = QdrantClient(url=url, timeout=30)
+        try:
+            # Generate batch requests
+            requests = create_batch_requests(client, config, force=args.force)
 
-        # Generate batch requests
-        requests = create_batch_requests(client, config, force=args.force)
+            if not requests:
+                logger.info("No requests to submit")
+                sys.exit(0)
 
-        if not requests:
-            logger.info("No requests to submit")
-            sys.exit(0)
-
-        # Submit batch
-        batch_data = asyncio.run(submit_batch(requests, config))
-        print(f"\nBatch ID: {batch_data.get('id')}")
-        print(f"Status: {batch_data.get('processing_status')}")
-        print(f"\nCheck status with: --status {batch_data.get('id')}")
+            # Submit batch
+            batch_data = asyncio.run(submit_batch(requests, config))
+            print(f"\nBatch ID: {batch_data.get('id')}")
+            print(f"Status: {batch_data.get('processing_status')}")
+            print(f"\nCheck status with: --status {batch_data.get('id')}")
+        finally:
+            client.close()
 
     elif args.status:
         batch_id = args.status
 
         if args.poll:
-            logger.info(f"Polling batch {batch_id} until completion...")
-            while True:
-                status_data = asyncio.run(get_batch_status(batch_id, config))
-                processing_status = status_data.get("processing_status")
-                request_counts = status_data.get("request_counts", {})
 
-                print(f"\nStatus: {processing_status}")
-                print(f"Requests: {request_counts}")
+            async def poll_until_complete(bid: str, cfg: Settings) -> None:
+                logger.info(f"Polling batch {bid} until completion...")
+                while True:
+                    status_data = await get_batch_status(bid, cfg)
+                    processing_status = status_data.get("processing_status")
+                    request_counts = status_data.get("request_counts", {})
 
-                if processing_status in ["ended", "failed", "expired"]:
-                    if processing_status == "ended":
-                        results_url = status_data.get("results_url")
-                        print(f"\n✅ Batch complete!")
-                        print(f"Results URL: {results_url}")
-                        print(f"\nApply results with: --apply {batch_id}")
-                    else:
-                        print(f"\n❌ Batch {processing_status}")
-                    break
+                    print(f"\nStatus: {processing_status}")
+                    print(f"Requests: {request_counts}")
 
-                time.sleep(60)  # Poll every minute
+                    if processing_status in ["ended", "failed", "expired"]:
+                        if processing_status == "ended":
+                            results_url = status_data.get("results_url")
+                            print("\n✅ Batch complete!")
+                            print(f"Results URL: {results_url}")
+                            print(f"\nApply results with: --apply {bid}")
+                        else:
+                            print(f"\n❌ Batch {processing_status}")
+                        break
+
+                    await asyncio.sleep(60)  # Poll every minute
+
+            asyncio.run(poll_until_complete(batch_id, config))
         else:
             status_data = asyncio.run(get_batch_status(batch_id, config))
             print(json.dumps(status_data, indent=2))
@@ -333,10 +346,12 @@ def main():
             sys.exit(1)
 
         client = QdrantClient(url=url, timeout=30)
-
-        # Apply results
-        stats = apply_results(results, client)
-        print(f"\n✅ Applied {stats['updated']} summaries ({stats['errors']} errors)")
+        try:
+            # Apply results
+            stats = apply_results(results, client)
+            print(f"\n✅ Applied {stats['updated']} summaries ({stats['errors']} errors)")
+        finally:
+            client.close()
 
     else:
         parser.print_help()
