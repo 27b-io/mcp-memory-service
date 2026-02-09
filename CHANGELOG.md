@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.1.2](https://github.com/27b-io/mcp-memory-service/compare/v11.1.1...v11.1.2) (2026-02-09)
+
+
+### Bug Fixes
+
+* add Snowflake Arctic Embed v2.0 models to dimension lookup ([#58](https://github.com/27b-io/mcp-memory-service/issues/58)) ([142441b](https://github.com/27b-io/mcp-memory-service/commit/142441ba9f6c25043227f7f15cd465c295ed37cb))
+
 ## [11.1.1](https://github.com/27b-io/mcp-memory-service/compare/v11.1.0...v11.1.1) (2026-02-09)
 
 
