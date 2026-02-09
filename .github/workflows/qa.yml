@@ -92,6 +92,7 @@ jobs:
           CUDA_VISIBLE_DEVICES: ""
 
   docker:
+    if: github.event_name == 'pull_request'
     runs-on: lab
     steps:
       - uses: actions/checkout@v4
