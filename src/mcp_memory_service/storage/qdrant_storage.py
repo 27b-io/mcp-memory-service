@@ -272,6 +272,9 @@ class QdrantStorage(MemoryStorage):
             "BAAI/bge-large-en-v1.5": 1024,
             "infgrad/stella-base-en-v2": 768,
             "nomic-ai/nomic-embed-text-v1": 768,  # Assuming 768 based on common practice
+            "Snowflake/snowflake-arctic-embed-l-v2.0": 1024,
+            "Snowflake/snowflake-arctic-embed-m-v2.0": 768,
+            "Snowflake/snowflake-arctic-embed-s-v2.0": 384,
         }
 
         # Try to get dimensions from known models first
