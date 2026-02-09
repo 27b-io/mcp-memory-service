@@ -960,7 +960,7 @@ class QdrantStorage(MemoryStorage):
                 payload = point.payload
                 memory = Memory(
                     content=payload.get("content", ""),
-                    content_hash=str(point.id),
+                    content_hash=payload.get("content_hash", str(point.id)),
                     tags=payload.get("tags", []),
                     memory_type=payload.get("memory_type"),
                     metadata=payload.get("metadata", {}),
