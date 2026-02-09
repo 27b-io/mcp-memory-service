@@ -611,6 +611,10 @@ class DebugSettings(BaseSettings):
 
     expose_debug_tools: bool = Field(default=False)
     include_hostname: bool = Field(default=False)
+    latency_metrics: bool = Field(
+        default=False,
+        description="Include latency_ms in tool responses. Enable via MCP_MEMORY_LATENCY_METRICS=true.",
+    )
 
 
 class HybridSearchSettings(BaseSettings):

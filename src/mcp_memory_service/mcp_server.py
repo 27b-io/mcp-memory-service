@@ -15,6 +15,7 @@ Features:
 """
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -44,6 +45,29 @@ from .storage.base import MemoryStorage  # noqa: E402
 # Configure logging
 logging.basicConfig(level=logging.INFO)  # Default to INFO level
 logger = logging.getLogger(__name__)
+
+
+def _latency_enabled() -> bool:
+    """Check if latency metrics are enabled (lazy, reads config once per call)."""
+    from .config import settings
+
+    return settings.debug.latency_metrics
+
+
+def _inject_latency(response: dict[str, Any] | str, start: float) -> dict[str, Any] | str:
+    """Inject latency_ms into a response if metrics are enabled.
+
+    For dict responses: adds 'latency_ms' key.
+    For TOON strings: prepends '# latency_ms=N.N' comment line.
+    """
+    if not _latency_enabled():
+        return response
+    elapsed = round((time.perf_counter() - start) * 1000, 1)
+    if isinstance(response, dict):
+        response["latency_ms"] = elapsed
+        return response
+    # TOON string — prepend latency as comment
+    return f"# latency_ms={elapsed}\n{response}"
 
 
 @dataclass
@@ -214,6 +238,7 @@ async def store_memory(
     Use this for: Capturing information for later retrieval, building knowledge base,
     recording decisions, storing context across conversations.
     """
+    _t0 = time.perf_counter()
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.store_memory(
@@ -238,7 +263,7 @@ async def store_memory(
             )
             if interference:
                 response["interference"] = interference
-            return response
+            return _inject_latency(response, _t0)
         elif "memories" in result:
             # Chunked memory case
             chunk_hashes = [m["content_hash"] for m in result["memories"]]
@@ -250,10 +275,10 @@ async def store_memory(
             )
             if interference:
                 response["interference"] = interference
-            return response
+            return _inject_latency(response, _t0)
 
     # Failure case
-    return StoreMemoryFailure(success=False, message=result.get("error", "Unknown error occurred"))
+    return _inject_latency(StoreMemoryFailure(success=False, message=result.get("error", "Unknown error occurred")), _t0)
 
 
 @mcp.tool()
@@ -305,6 +330,7 @@ async def retrieve_memory(
 
     Use this for: Finding relevant context, answering questions, discovering related information.
     """
+    _t0 = time.perf_counter()
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.retrieve_memories(
@@ -326,7 +352,7 @@ async def retrieve_memory(
 
     # Convert results to TOON format with pagination
     toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
-    return toon_output
+    return _inject_latency(toon_output, _t0)
 
 
 @mcp.tool()
@@ -371,13 +397,15 @@ async def memory_scan(
     Use this for: Quick memory triage, proactive context checks, deciding
     which memories to fetch in full with retrieve_memory.
     """
+    _t0 = time.perf_counter()
     memory_service = ctx.request_context.lifespan_context.memory_service
-    return await memory_service.scan_memories(
+    result = await memory_service.scan_memories(
         query=query,
         n_results=n_results,
         min_relevance=min_relevance,
         output_format=output_format,
     )
+    return _inject_latency(result, _t0)
 
 
 @mcp.tool()
@@ -417,6 +445,7 @@ async def search_by_tag(tags: str | list[str], ctx: Context, match_all: bool = F
 
     Use this for: Tag-based filtering, categorical search, known classification retrieval.
     """
+    _t0 = time.perf_counter()
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.search_by_tag(tags=tags, match_all=match_all, page=page, page_size=page_size)
@@ -432,7 +461,7 @@ async def search_by_tag(tags: str | list[str], ctx: Context, match_all: bool = F
 
     # Convert results to TOON format with pagination
     toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
-    return toon_output
+    return _inject_latency(toon_output, _t0)
 
 
 @mcp.tool()
@@ -457,9 +486,11 @@ async def delete_memory(content_hash: str, ctx: Context) -> dict[str, bool | str
 
     Warning: Deletion is permanent. Verify the content_hash before deleting.
     """
+    _t0 = time.perf_counter()
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
-    return await memory_service.delete_memory(content_hash)
+    result = await memory_service.delete_memory(content_hash)
+    return _inject_latency(result, _t0)
 
 
 @mcp.tool()
@@ -481,9 +512,11 @@ async def check_database_health(ctx: Context) -> dict[str, Any]:
     Use this for: Debugging connection issues, monitoring storage usage,
     verifying service status, troubleshooting performance problems.
     """
+    _t0 = time.perf_counter()
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
-    return await memory_service.check_database_health()
+    result = await memory_service.check_database_health()
+    return _inject_latency(result, _t0)
 
 
 @mcp.tool()
@@ -526,6 +559,7 @@ async def list_memories(
     Use this for: Browsing recent activity, reviewing what was stored,
     chronological exploration, getting latest entries.
     """
+    _t0 = time.perf_counter()
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.list_memories(page=page, page_size=page_size, tag=tag, memory_type=memory_type)
@@ -541,7 +575,7 @@ async def list_memories(
 
     # Convert results to TOON format with pagination
     toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
-    return toon_output
+    return _inject_latency(toon_output, _t0)
 
 
 # =============================================================================
@@ -583,12 +617,14 @@ async def create_relation(
     Use this for: Building knowledge graphs, linking related memories,
     tracking temporal sequences, flagging contradictions.
     """
+    _t0 = time.perf_counter()
     memory_service = ctx.request_context.lifespan_context.memory_service
-    return await memory_service.create_relation(
+    result = await memory_service.create_relation(
         source_hash=source_hash,
         target_hash=target_hash,
         relation_type=relation_type,
     )
+    return _inject_latency(result, _t0)
 
 
 @mcp.tool()
@@ -621,11 +657,13 @@ async def get_relations(
     Use this for: Exploring knowledge graph connections, finding related memories,
     understanding temporal sequences, identifying contradictions.
     """
+    _t0 = time.perf_counter()
     memory_service = ctx.request_context.lifespan_context.memory_service
-    return await memory_service.get_relations(
+    result = await memory_service.get_relations(
         content_hash=content_hash,
         relation_type=relation_type,
     )
+    return _inject_latency(result, _t0)
 
 
 @mcp.tool()
@@ -655,12 +693,14 @@ async def delete_relation(
 
     Use this for: Removing incorrect relationships, cleaning up knowledge graph.
     """
+    _t0 = time.perf_counter()
     memory_service = ctx.request_context.lifespan_context.memory_service
-    return await memory_service.delete_relation(
+    result = await memory_service.delete_relation(
         source_hash=source_hash,
         target_hash=target_hash,
         relation_type=relation_type,
     )
+    return _inject_latency(result, _t0)
 
 
 # =============================================================================
