@@ -8,6 +8,19 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.2.0](https://github.com/27b-io/mcp-memory-service/compare/v11.1.2...v11.2.0) (2026-02-09)
+
+
+### Features
+
+* add graph node backfill script ([#63](https://github.com/27b-io/mcp-memory-service/issues/63)) ([05b7691](https://github.com/27b-io/mcp-memory-service/commit/05b769181af704768e34588c6c441a14f7157d62))
+
+
+### Bug Fixes
+
+* **ci:** skip QA docker build on push to main ([#60](https://github.com/27b-io/mcp-memory-service/issues/60)) ([71fffd3](https://github.com/27b-io/mcp-memory-service/commit/71fffd37a60a21cfe0841de71f5a925aa37868de))
+* tag search returns UUID point IDs instead of content hashes ([#64](https://github.com/27b-io/mcp-memory-service/issues/64)) ([47fffe0](https://github.com/27b-io/mcp-memory-service/commit/47fffe004e4a5f263be9647d484ce6522db207fb))
+
 ## [11.1.2](https://github.com/27b-io/mcp-memory-service/compare/v11.1.1...v11.1.2) (2026-02-09)
 
 
