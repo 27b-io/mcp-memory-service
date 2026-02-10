@@ -35,6 +35,9 @@ build/
 # Linting
 .ruff_cache/
 
+# Eval frameworks
+.deepeval/
+
 # Gas Town (added by gt)
 .runtime/
 .claude/

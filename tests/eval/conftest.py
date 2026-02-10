@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
-# Force CPU mode
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# Force CPU mode (only if not explicitly set by user/CI)
+if "CUDA_VISIBLE_DEVICES" not in os.environ:
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.services.memory_service import MemoryService
@@ -40,6 +41,25 @@ def get_test_cases(category: str = None) -> list[dict]:
     if category:
         cases = [c for c in cases if c.get("category") == category]
     return cases
+
+
+def build_content_map() -> dict[str, str]:
+    """Build a mapping from content_hash to content string from ground truth.
+
+    Used by RAGAS tests to convert hash-based expected results into
+    the string-based reference_contexts format RAGAS expects.
+    """
+    gt = load_ground_truth()
+    return {m["content_hash"]: m["content"] for m in gt.get("memories", [])}
+
+
+def memories_to_contexts(memories: list[dict]) -> list[str]:
+    """Extract content strings from retrieve_memories result list.
+
+    Converts the dict-based retrieval output to the list[str] format
+    that RAGAS SingleTurnSample expects for retrieved_contexts.
+    """
+    return [m["content"] for m in memories if "content" in m]
 
 
 # =============================================================================
