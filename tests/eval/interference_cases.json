@@ -1,0 +1,174 @@
+{
+  "description": "Contradiction detection test cases for interference evaluation",
+  "version": "1.0",
+  "notes": [
+    "Each case has new_content, existing_content, similarity, and expected signal types",
+    "Categories: negation, antonym, temporal, combined, no_signal, false_positive",
+    "false_positive cases from issue #67 — known word-level antonym problems"
+  ],
+
+  "cases": [
+    {
+      "id": "int_001",
+      "category": "negation",
+      "new_content": "The API does not require authentication",
+      "existing_content": "The API requires authentication with JWT tokens",
+      "similarity": 0.9,
+      "expected_signals": ["negation"],
+      "notes": "Direct negation of authentication requirement"
+    },
+    {
+      "id": "int_002",
+      "category": "negation",
+      "new_content": "Python 3.12 is not supported by this library",
+      "existing_content": "Python 3.12 is supported by this library",
+      "similarity": 0.95,
+      "expected_signals": ["negation"],
+      "notes": "Simple negation with 'not'"
+    },
+    {
+      "id": "int_003",
+      "category": "negation",
+      "new_content": "The service never crashes under load",
+      "existing_content": "The service crashes under heavy load",
+      "similarity": 0.88,
+      "expected_signals": ["negation"],
+      "notes": "Negation via 'never'"
+    },
+    {
+      "id": "int_004",
+      "category": "antonym",
+      "new_content": "Dark mode is enabled by default in the settings",
+      "existing_content": "Dark mode is disabled by default in the settings",
+      "similarity": 0.92,
+      "expected_signals": ["antonym"],
+      "notes": "enabled vs disabled — direct antonym"
+    },
+    {
+      "id": "int_005",
+      "category": "antonym",
+      "new_content": "The deployment succeeded on the production cluster",
+      "existing_content": "The deployment failed on the production cluster",
+      "similarity": 0.91,
+      "expected_signals": ["antonym"],
+      "notes": "succeeded vs failed"
+    },
+    {
+      "id": "int_006",
+      "category": "antonym",
+      "new_content": "CORS is required for the API gateway",
+      "existing_content": "CORS is optional for the API gateway",
+      "similarity": 0.89,
+      "expected_signals": ["antonym"],
+      "notes": "required vs optional"
+    },
+    {
+      "id": "int_007",
+      "category": "temporal",
+      "new_content": "The project no longer uses Redis for caching",
+      "existing_content": "The project uses Redis for caching",
+      "similarity": 0.87,
+      "expected_signals": ["temporal", "negation"],
+      "notes": "Temporal supersession with 'no longer'"
+    },
+    {
+      "id": "int_008",
+      "category": "temporal",
+      "new_content": "We switched from PostgreSQL to SQLite for the storage backend",
+      "existing_content": "The storage backend uses PostgreSQL",
+      "similarity": 0.82,
+      "expected_signals": ["temporal"],
+      "notes": "Temporal supersession with 'switched from'"
+    },
+    {
+      "id": "int_009",
+      "category": "temporal",
+      "new_content": "The API was REST but now uses GraphQL",
+      "existing_content": "The API uses REST endpoints",
+      "similarity": 0.80,
+      "expected_signals": ["temporal"],
+      "notes": "Temporal supersession with 'was X now Y'"
+    },
+    {
+      "id": "int_010",
+      "category": "combined",
+      "new_content": "Authentication is no longer required and the endpoint is now open",
+      "existing_content": "Authentication is required and the endpoint is closed",
+      "similarity": 0.90,
+      "expected_signals": ["negation", "antonym", "temporal"],
+      "notes": "Multiple signals: negation + antonym (required/open vs closed) + temporal"
+    },
+    {
+      "id": "int_011",
+      "category": "combined",
+      "new_content": "The service was previously synchronous but has been updated to async",
+      "existing_content": "The service uses synchronous request handling",
+      "similarity": 0.85,
+      "expected_signals": ["antonym", "temporal"],
+      "notes": "Antonym (sync/async) + temporal (previously/updated to)"
+    },
+    {
+      "id": "int_012",
+      "category": "no_signal",
+      "new_content": "The API uses FastAPI with Pydantic models",
+      "existing_content": "The API uses FastAPI for request handling",
+      "similarity": 0.88,
+      "expected_signals": [],
+      "notes": "Complementary info, not contradictory"
+    },
+    {
+      "id": "int_013",
+      "category": "no_signal",
+      "new_content": "Redis is used for session storage",
+      "existing_content": "Redis is used for caching frequently accessed data",
+      "similarity": 0.85,
+      "expected_signals": [],
+      "notes": "Same technology, different use cases — not contradictions"
+    },
+    {
+      "id": "int_014",
+      "category": "no_signal",
+      "new_content": "The deployment uses Docker with Alpine base images",
+      "existing_content": "The deployment uses Docker Compose for orchestration",
+      "similarity": 0.83,
+      "expected_signals": [],
+      "notes": "Complementary Docker details"
+    },
+    {
+      "id": "int_015",
+      "category": "no_signal",
+      "new_content": "Python 3.12 adds improved error messages",
+      "existing_content": "Kubernetes uses YAML for configuration",
+      "similarity": 0.15,
+      "expected_signals": [],
+      "notes": "Unrelated topics with low similarity"
+    },
+    {
+      "id": "int_016",
+      "category": "false_positive",
+      "new_content": "anthropic-lb allowed_ips configuration accepts CIDR notation for IP ranges",
+      "existing_content": "The firewall blocked 3 unauthorized access attempts yesterday",
+      "similarity": 0.835,
+      "expected_signals": [],
+      "notes": "Issue #67 — 'allowed' vs 'blocked' are complementary security concepts, not contradictions"
+    },
+    {
+      "id": "int_017",
+      "category": "false_positive",
+      "new_content": "The accept header must be set to application/json for API requests",
+      "existing_content": "The server will reject requests with invalid content types",
+      "similarity": 0.78,
+      "expected_signals": [],
+      "notes": "Issue #67 pattern — accept/reject in different semantic contexts"
+    },
+    {
+      "id": "int_018",
+      "category": "false_positive",
+      "new_content": "The open_connections metric tracks active database connections",
+      "existing_content": "Close idle connections after 30 seconds to prevent pool exhaustion",
+      "similarity": 0.76,
+      "expected_signals": [],
+      "notes": "Issue #67 pattern — open/close as operational concepts, not contradictions"
+    }
+  ]
+}

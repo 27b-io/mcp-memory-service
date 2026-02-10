@@ -42,6 +42,25 @@ def get_test_cases(category: str = None) -> list[dict]:
     return cases
 
 
+def build_content_map() -> dict[str, str]:
+    """Build a mapping from content_hash to content string from ground truth.
+
+    Used by RAGAS tests to convert hash-based expected results into
+    the string-based reference_contexts format RAGAS expects.
+    """
+    gt = load_ground_truth()
+    return {m["content_hash"]: m["content"] for m in gt.get("memories", [])}
+
+
+def memories_to_contexts(memories: list[dict]) -> list[str]:
+    """Extract content strings from retrieve_memories result list.
+
+    Converts the dict-based retrieval output to the list[str] format
+    that RAGAS SingleTurnSample expects for retrieved_contexts.
+    """
+    return [m["content"] for m in memories if "content" in m]
+
+
 # =============================================================================
 # Storage Fixtures
 # =============================================================================
