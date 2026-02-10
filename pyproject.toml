@@ -137,6 +137,3 @@ testpaths = ["tests"]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
-markers = [
-    "llm_judge: requires an LLM judge endpoint (not run by default)",
-]

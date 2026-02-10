@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
-# Force CPU mode
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# Force CPU mode (only if not explicitly set by user/CI)
+if "CUDA_VISIBLE_DEVICES" not in os.environ:
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.services.memory_service import MemoryService

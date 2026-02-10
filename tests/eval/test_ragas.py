@@ -10,11 +10,7 @@ Known limitations:
     - These metrics complement (not replace) our hit_rate/mrr/ndcg metrics.
 """
 
-import os
-
 import pytest
-
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 ragas = pytest.importorskip("ragas", reason="ragas not installed (install with: uv sync --group eval)")
 rapidfuzz = pytest.importorskip("rapidfuzz", reason="rapidfuzz not installed (install with: uv sync --group eval)")
@@ -60,11 +56,10 @@ class TestRagasNonLLM:
                 score = await metric.single_turn_ascore(sample)
                 scores.append(score)
 
-            if scores:
-                avg = sum(scores) / len(scores)
-                print(f"\nNonLLMContextRecall ({category}): {avg:.3f} ({len(scores)} cases)")
-                # Sanity: at least some recall for non-edge categories
-                assert avg > 0.0, f"Context recall for {category} should be non-zero"
+            assert scores, f"No cases evaluated for {category} — check ground truth data"
+            avg = sum(scores) / len(scores)
+            print(f"\nNonLLMContextRecall ({category}): {avg:.3f} ({len(scores)} cases)")
+            assert avg > 0.0, f"Context recall for {category} should be non-zero"
 
     @pytest.mark.asyncio
     async def test_context_precision_by_category(self, eval_service):
@@ -97,10 +92,10 @@ class TestRagasNonLLM:
                 score = await metric.single_turn_ascore(sample)
                 scores.append(score)
 
-            if scores:
-                avg = sum(scores) / len(scores)
-                print(f"\nNonLLMContextPrecision ({category}): {avg:.3f} ({len(scores)} cases)")
-                assert avg >= 0.0, f"Context precision for {category} should be non-negative"
+            assert scores, f"No cases evaluated for {category} — check ground truth data"
+            avg = sum(scores) / len(scores)
+            print(f"\nNonLLMContextPrecision ({category}): {avg:.3f} ({len(scores)} cases)")
+            assert avg >= 0.0, f"Context precision for {category} should be non-negative"
 
     @pytest.mark.asyncio
     async def test_overall_ragas_scores(self, eval_service):
