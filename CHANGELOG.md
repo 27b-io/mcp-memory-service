@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.4.0](https://github.com/27b-io/mcp-memory-service/compare/v11.3.0...v11.4.0) (2026-02-10)
+
+
+### Features
+
+* **eval:** RAGAS + DeepEval eval spike ([#70](https://github.com/27b-io/mcp-memory-service/issues/70)) ([a9115d8](https://github.com/27b-io/mcp-memory-service/commit/a9115d8df7dbf4e16e92cd5dd5e6298fe59d8eae))
+
 ## [11.3.0](https://github.com/27b-io/mcp-memory-service/compare/v11.2.0...v11.3.0) (2026-02-09)
 
 
