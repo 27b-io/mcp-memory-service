@@ -8,6 +8,20 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.5.0](https://github.com/27b-io/mcp-memory-service/compare/v11.4.0...v11.5.0) (2026-02-12)
+
+
+### Features
+
+* Three-tier memory model (sensory buffer + working memory) ([412e337](https://github.com/27b-io/mcp-memory-service/commit/412e3376ed0be23bc862968295b9a2f4afea869c))
+
+
+### Bug Fixes
+
+* Address Copilot review feedback on three-tier memory (PR [#76](https://github.com/27b-io/mcp-memory-service/issues/76)) ([bdbb651](https://github.com/27b-io/mcp-memory-service/commit/bdbb651cc04875e91ec8e3f92085fcec85e42d16))
+* remove duplicate nomic-embed-text-v1 dict key (ruff F601) ([#80](https://github.com/27b-io/mcp-memory-service/issues/80)) ([4c75634](https://github.com/27b-io/mcp-memory-service/commit/4c756343cca07b01bcac6313b866a1878dcecc2a))
+* Use in-memory Qdrant for eval tests to prevent segfaults ([#79](https://github.com/27b-io/mcp-memory-service/issues/79)) ([5d603e1](https://github.com/27b-io/mcp-memory-service/commit/5d603e19e4249c882c8c663cb02d58b9b5d5e403))
+
 ## [11.4.0](https://github.com/27b-io/mcp-memory-service/compare/v11.3.0...v11.4.0) (2026-02-10)
 
 
