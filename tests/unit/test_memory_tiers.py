@@ -33,10 +33,12 @@ class TestSensoryBuffer:
         assert "a" not in contents
         assert "d" in contents
 
-    def test_decay_expiry(self):
+    def test_decay_expiry(self, monkeypatch):
+        fake_time = [1000.0]
+        monkeypatch.setattr(time, "time", lambda: fake_time[0])
         buf = SensoryBuffer(capacity=7, decay_ms=50)  # 50ms decay
         buf.push("expires-fast")
-        time.sleep(0.06)  # Wait for expiry
+        fake_time[0] += 0.06  # Advance past expiry
         valid = buf.get_valid()
         assert len(valid) == 0
 
@@ -55,10 +57,12 @@ class TestSensoryBuffer:
         assert len(flushed) == 2
         assert buf.size == 0
 
-    def test_flush_only_returns_valid(self):
+    def test_flush_only_returns_valid(self, monkeypatch):
+        fake_time = [1000.0]
+        monkeypatch.setattr(time, "time", lambda: fake_time[0])
         buf = SensoryBuffer(capacity=7, decay_ms=50)
         buf.push("old-item")
-        time.sleep(0.06)
+        fake_time[0] += 0.06  # Expire old-item
         buf.push("new-item")
         flushed = buf.flush()
         assert len(flushed) == 1
@@ -142,10 +146,12 @@ class TestWorkingMemory:
         assert chunk is not None
         assert chunk.access_count == 1  # Not incremented by peek
 
-    def test_stale_eviction(self):
+    def test_stale_eviction(self, monkeypatch):
+        fake_time = [1000.0]
+        monkeypatch.setattr(time, "time", lambda: fake_time[0])
         wm = WorkingMemory(capacity=4, decay_minutes=0.001)  # ~60ms decay
         wm.activate("k1", "c1")
-        time.sleep(0.08)
+        fake_time[0] += 0.08  # Advance past decay window
         # Activate a new item to trigger stale eviction
         wm.activate("k2", "c2")
         assert not wm.contains("k1")

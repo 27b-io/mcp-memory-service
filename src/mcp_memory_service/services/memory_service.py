@@ -97,7 +97,8 @@ class MemoryService:
             config = settings.three_tier
             if not config.enabled:
                 return
-        except Exception:
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.warning("Three-tier memory init skipped: %s", exc)
             return
 
         async def _consolidation_callback(

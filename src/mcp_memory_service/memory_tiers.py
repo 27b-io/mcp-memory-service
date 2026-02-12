@@ -38,7 +38,7 @@ class SensoryItem:
 
     content: str
     metadata: dict[str, Any]
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=lambda: time.time())
     tags: list[str] = field(default_factory=list)
     memory_type: str | None = None
 
@@ -51,8 +51,8 @@ class WorkingChunk:
     metadata: dict[str, Any]
     tags: list[str] = field(default_factory=list)
     memory_type: str | None = None
-    created_at: float = field(default_factory=time.time)
-    last_access: float = field(default_factory=time.time)
+    created_at: float = field(default_factory=lambda: time.time())
+    last_access: float = field(default_factory=lambda: time.time())
     access_count: int = 1
 
 
@@ -262,9 +262,12 @@ class WorkingMemory:
                     chunk.memory_type,
                     chunk.metadata,
                 )
-                self._consolidated_keys.add(key)
-                results.append(result)
-                logger.info(f"Consolidated working memory chunk to LTM: {key[:12]} (accesses={chunk.access_count})")
+                if result.get("success", False):
+                    self._consolidated_keys.add(key)
+                    results.append(result)
+                    logger.info(f"Consolidated working memory chunk to LTM: {key[:12]} (accesses={chunk.access_count})")
+                else:
+                    logger.warning(f"Consolidation callback reported failure for chunk {key[:12]}: {result}")
             except Exception as e:
                 logger.warning(f"Failed to consolidate chunk {key[:12]}: {e}")
 
