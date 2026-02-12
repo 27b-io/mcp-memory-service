@@ -158,7 +158,7 @@ class StorageSettings(BaseSettings):
     )
 
     embedding_model: str = Field(
-        default="intfloat/e5-base-v2",  # E5-base: ~63 MTEB avg, 768-dim, fast, no prefixes, CPU-optimized
+        default="nomic-ai/nomic-embed-text-v1.5",  # Nomic v1.5: ~62 MTEB avg, 768-dim, 8K context, trust_remote_code
         description="Embedding model name (env: MCP_MEMORY_EMBEDDING_MODEL)",
     )
 
