@@ -69,12 +69,13 @@ def memories_to_contexts(memories: list[dict]) -> list[str]:
 
 @pytest.fixture
 async def eval_storage() -> AsyncGenerator[QdrantStorage, None]:
-    """Create Qdrant storage seeded with evaluation test data."""
-    temp_dir = tempfile.mkdtemp()
-    storage_path = os.path.join(temp_dir, "eval_qdrant")
+    """Create Qdrant storage seeded with evaluation test data.
 
+    Uses in-memory mode to avoid persistence-related segfaults during cleanup
+    (Python 3.13 + qdrant-client threading issue in local mode).
+    """
     storage = QdrantStorage(
-        storage_path=storage_path,
+        storage_path=":memory:",  # In-memory mode - no persistence, no segfault
         embedding_model="all-MiniLM-L6-v2",
         collection_name=f"eval_{uuid.uuid4().hex[:8]}",
     )
@@ -94,7 +95,6 @@ async def eval_storage() -> AsyncGenerator[QdrantStorage, None]:
     yield storage
 
     await storage.close()
-    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.fixture
