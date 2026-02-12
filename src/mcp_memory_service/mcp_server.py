@@ -704,6 +704,178 @@ async def delete_relation(
 
 
 # =============================================================================
+# THREE-TIER MEMORY OPERATIONS
+# =============================================================================
+
+
+@mcp.tool()
+async def push_to_sensory_buffer(
+    content: str,
+    ctx: Context,
+    tags: str | list[str] | None = None,
+    memory_type: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Push raw input to the sensory buffer for short-term capture.
+
+    The sensory buffer is a ring buffer (~7 items, 1s TTL) that captures raw
+    input before the system decides what's important. Items expire quickly and
+    are not persisted. Use `attend_from_sensory` to promote items to working
+    memory, or `flush_sensory_to_working` to promote all valid items.
+
+    Part of Cowan's three-tier memory model:
+    Sensory Buffer → Working Memory → Long-Term Memory
+
+    Args:
+        content: The raw content to buffer
+        tags: Optional tags (accepts ["tag1", "tag2"] or "tag1,tag2")
+        memory_type: Optional type classification
+        metadata: Optional additional data
+
+    Returns:
+        Dictionary with buffer status and item info.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    three_tier = memory_service.three_tier
+    if three_tier is None:
+        return {"success": False, "error": "Three-tier memory is disabled"}
+
+    tag_list = _normalize_tags(tags)
+    three_tier.push_sensory(content, metadata=metadata, tags=tag_list, memory_type=memory_type)
+    return {
+        "success": True,
+        "message": "Item pushed to sensory buffer",
+        "buffer": three_tier.sensory.stats(),
+    }
+
+
+@mcp.tool()
+async def activate_working_memory(
+    key: str,
+    content: str,
+    ctx: Context,
+    tags: str | list[str] | None = None,
+    memory_type: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Bring a memory into active working memory (attention gate).
+
+    Working memory holds ~4 chunks for the current task context (Cowan's limit).
+    Items accessed multiple times are automatically consolidated to long-term memory.
+    Least-recently-used items are evicted when capacity is reached.
+
+    This is the attention transition: items you reference are promoted to active context.
+
+    Args:
+        key: Unique identifier for this chunk (e.g., content hash or topic name)
+        content: The content to hold in working memory
+        tags: Optional tags
+        memory_type: Optional type classification
+        metadata: Optional additional data
+
+    Returns:
+        Dictionary with chunk status (access count, whether consolidated).
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    three_tier = memory_service.three_tier
+    if three_tier is None:
+        return {"success": False, "error": "Three-tier memory is disabled"}
+
+    tag_list = _normalize_tags(tags)
+    chunk = three_tier.attend(key=key, content=content, metadata=metadata, tags=tag_list, memory_type=memory_type)
+    return {
+        "success": True,
+        "key": key,
+        "access_count": chunk.access_count,
+        "working_memory": three_tier.working.stats(),
+    }
+
+
+@mcp.tool()
+async def flush_sensory_to_working(ctx: Context) -> dict[str, Any]:
+    """
+    Promote all valid sensory buffer items to working memory.
+
+    Flushes non-expired items from the sensory buffer and activates them
+    in working memory. Items that were already in working memory get their
+    access count incremented (strengthening their consolidation candidacy).
+
+    Returns:
+        Dictionary with number of items promoted and tier stats.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    three_tier = memory_service.three_tier
+    if three_tier is None:
+        return {"success": False, "error": "Three-tier memory is disabled"}
+
+    activated = three_tier.flush_sensory_to_working()
+    return {
+        "success": True,
+        "items_promoted": len(activated),
+        "promoted_keys": [key[:12] + "..." for key, _ in activated],
+        "tiers": three_tier.stats(),
+    }
+
+
+@mcp.tool()
+async def consolidate_working_memory(ctx: Context) -> dict[str, Any]:
+    """
+    Consolidate eligible working memory items to long-term storage.
+
+    Items accessed 2+ times in working memory are promoted to permanent
+    Qdrant storage via the standard store_memory pipeline. This mimics
+    the cognitive process of rehearsal leading to long-term encoding.
+
+    Already-consolidated items are skipped (idempotent within a session).
+
+    Returns:
+        Dictionary with consolidation results (items stored, any errors).
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    three_tier = memory_service.three_tier
+    if three_tier is None:
+        return {"success": False, "error": "Three-tier memory is disabled"}
+
+    results = await three_tier.consolidate()
+    return {
+        "success": True,
+        "items_consolidated": len(results),
+        "results": results,
+        "working_memory": three_tier.working.stats(),
+    }
+
+
+@mcp.tool()
+async def get_working_memory_status(ctx: Context) -> dict[str, Any]:
+    """
+    Get current status of sensory buffer and working memory.
+
+    Returns capacity, occupancy, chunk access counts, and consolidation status
+    for both ephemeral memory tiers. Useful for debugging and monitoring.
+
+    Returns:
+        Dictionary with tier statistics (sensory buffer + working memory).
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    three_tier = memory_service.three_tier
+    if three_tier is None:
+        return {"enabled": False, "message": "Three-tier memory is disabled"}
+
+    return {"enabled": True, "tiers": three_tier.stats()}
+
+
+def _normalize_tags(tags: str | list[str] | None) -> list[str]:
+    """Normalize tags from string or list format to list."""
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        return [t.strip() for t in tags.split(",") if t.strip()]
+    return tags
+
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 
