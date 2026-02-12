@@ -721,7 +721,7 @@ async def push_to_sensory_buffer(
 
     The sensory buffer is a ring buffer (~7 items, 1s TTL) that captures raw
     input before the system decides what's important. Items expire quickly and
-    are not persisted. Use `attend_from_sensory` to promote items to working
+    are not persisted. Use `activate_working_memory` to promote items to working
     memory, or `flush_sensory_to_working` to promote all valid items.
 
     Part of Cowan's three-tier memory model:
