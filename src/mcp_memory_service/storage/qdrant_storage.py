@@ -242,6 +242,14 @@ class QdrantStorage(MemoryStorage):
             # Create new collection with model metadata
             await self._create_collection_with_metadata()
 
+        # Check if versions collection exists
+        versions_collection_name = f"{self.collection_name}_versions"
+        if not await self._collection_exists_by_name(versions_collection_name):
+            logger.info(f"Creating versions collection '{versions_collection_name}'")
+            await self._create_versions_collection()
+        else:
+            logger.info(f"Versions collection '{versions_collection_name}' already exists")
+
         self._initialized = True
         logger.info("QdrantStorage initialization complete")
 
@@ -412,6 +420,63 @@ class QdrantStorage(MemoryStorage):
         )
         logger.info("Created payload index on 'created_at' for server-side sorting")
 
+    async def _create_versions_collection(self) -> None:
+        """
+        Create versions collection to store memory version history.
+
+        Uses same vector dimensions as main collection but stores dummy zero vectors
+        since versions don't need semantic search capability.
+        """
+        loop = asyncio.get_event_loop()
+        versions_collection_name = f"{self.collection_name}_versions"
+
+        # Prepare HNSW config (same as main collection)
+        hnsw_config = HnswConfigDiff(
+            m=self.config.HNSW_M,
+            ef_construct=self.config.HNSW_EF_CONSTRUCT,
+            full_scan_threshold=self.config.HNSW_FULL_SCAN_THRESHOLD,
+        )
+
+        # No quantization for versions (they're not searched)
+        quantization_config = None
+
+        # Create versions collection
+        await loop.run_in_executor(
+            None,
+            lambda: self.client.create_collection(
+                collection_name=versions_collection_name,
+                vectors_config=VectorParams(size=self._vector_size, distance=Distance.COSINE),
+                hnsw_config=hnsw_config,
+                quantization_config=quantization_config,
+                on_disk_payload=self.config.ON_DISK_PAYLOAD,
+            ),
+        )
+
+        logger.info(f"Created versions collection '{versions_collection_name}' with vector size {self._vector_size}")
+
+        # Create payload indexes for efficient filtering and sorting
+        # Index on content_hash for "get all versions of this memory" queries
+        await loop.run_in_executor(
+            None,
+            lambda: self.client.create_payload_index(
+                collection_name=versions_collection_name,
+                field_name="content_hash",
+                field_schema=PayloadSchemaType.KEYWORD,
+            ),
+        )
+        logger.info(f"Created payload index on 'content_hash' in {versions_collection_name}")
+
+        # Index on timestamp for chronological ordering
+        await loop.run_in_executor(
+            None,
+            lambda: self.client.create_payload_index(
+                collection_name=versions_collection_name,
+                field_name="timestamp",
+                field_schema=PayloadSchemaType.FLOAT,
+            ),
+        )
+        logger.info(f"Created payload index on 'timestamp' in {versions_collection_name}")
+
     async def _collection_exists(self) -> bool:
         """
         Check if the collection exists in Qdrant.
@@ -428,6 +493,31 @@ class QdrantStorage(MemoryStorage):
             exists = self.collection_name in collection_names
 
             logger.debug(f"Collection '{self.collection_name}' exists: {exists}")
+            return exists
+
+        except Exception as e:
+            logger.error(f"Error checking if collection exists: {e}")
+            return False
+
+    async def _collection_exists_by_name(self, collection_name: str) -> bool:
+        """
+        Check if a collection with given name exists in Qdrant.
+
+        Args:
+            collection_name: Name of collection to check
+
+        Returns:
+            True if collection exists, False otherwise
+        """
+        loop = asyncio.get_event_loop()
+
+        try:
+            collections = await loop.run_in_executor(None, self.client.get_collections)
+
+            collection_names = [col.name for col in collections.collections]
+            exists = collection_name in collection_names
+
+            logger.debug(f"Collection '{collection_name}' exists: {exists}")
             return exists
 
         except Exception as e:
