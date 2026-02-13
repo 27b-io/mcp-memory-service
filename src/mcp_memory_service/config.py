@@ -512,6 +512,46 @@ class InterferenceSettings(BaseSettings):
     )
 
 
+class ConflictResolutionSettings(BaseSettings):
+    """Memory merge conflict detection and resolution configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_CONFLICT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable conflict detection and resolution features")
+
+    auto_resolve: bool = Field(
+        default=False,
+        description="Automatically resolve conflicts using CRDT (last-write-wins). When disabled, conflicts are queued for manual resolution.",
+    )
+
+    auto_resolve_duplicates: bool = Field(
+        default=True, description="Automatically merge duplicates during consolidation (existing behavior)"
+    )
+
+    duplicate_similarity_threshold: float = Field(
+        default=0.95,
+        ge=0.8,
+        le=0.99,
+        description="Cosine similarity threshold above which memories are considered duplicates",
+    )
+
+    queue_duplicates_for_review: bool = Field(
+        default=False,
+        description="Queue duplicates for manual review instead of auto-merging. Overrides auto_resolve_duplicates when True.",
+    )
+
+    optimistic_locking: bool = Field(
+        default=False,
+        description="Enable version checking for concurrent update detection. When enabled, concurrent updates to the same memory will be detected and queued for resolution.",
+    )
+
+
 class SalienceSettings(BaseSettings):
     """Salience scoring configuration for emotional tagging and retrieval boosting."""
 
@@ -799,6 +839,7 @@ class Settings(BaseSettings):
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
     interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
+    conflict: ConflictResolutionSettings = Field(default_factory=ConflictResolutionSettings)
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
     spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)
     encoding_context: EncodingContextSettings = Field(default_factory=EncodingContextSettings)

@@ -315,6 +315,11 @@ class MemoryService:
                     source_hash=new_hash,
                     target_hash=existing_hash,
                     relation_type="CONTRADICTS",
+                    metadata={
+                        "confidence": signal.confidence,
+                        "signal_type": signal.signal_type,
+                        "similarity": signal.similarity,
+                    },
                 )
                 logger.info(
                     f"Contradiction edge: {new_hash[:8]} -> {existing_hash[:8]} "

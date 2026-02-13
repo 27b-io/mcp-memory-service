@@ -63,6 +63,11 @@ class Memory:
     # Extractive summary: one-line summary for token-efficient scanning (~50 tokens)
     summary: str | None = None
 
+    # Conflict resolution: track conflict state and resolution history
+    conflict_status: str | None = None  # "detected", "auto_resolved", "manual_resolved", None
+    conflict_version: int = 0  # Increment on content changes (optimistic locking)
+    conflict_history: list[dict[str, Any]] | None = None  # Resolution history
+
     # Legacy timestamp field (maintain for backward compatibility)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -244,6 +249,10 @@ class Memory:
             "encoding_context": self.encoding_context,
             # Extractive summary
             "summary": self.summary,
+            # Conflict resolution
+            "conflict_status": self.conflict_status,
+            "conflict_version": self.conflict_version,
+            "conflict_history": self.conflict_history,
             **self.metadata,
         }
 
@@ -283,6 +292,11 @@ class Memory:
         # Extract summary
         summary = data.get("summary")
 
+        # Extract conflict resolution fields
+        conflict_status = data.get("conflict_status")
+        conflict_version = int(data.get("conflict_version", 0))
+        conflict_history = data.get("conflict_history")
+
         # Create metadata dictionary without special fields
         metadata = {
             k: v
@@ -306,6 +320,9 @@ class Memory:
                 "access_timestamps",
                 "encoding_context",
                 "summary",
+                "conflict_status",
+                "conflict_version",
+                "conflict_history",
             ]
         }
 
@@ -327,6 +344,9 @@ class Memory:
             access_timestamps=access_timestamps,
             encoding_context=encoding_context,
             summary=summary,
+            conflict_status=conflict_status,
+            conflict_version=conflict_version,
+            conflict_history=conflict_history,
         )
 
 

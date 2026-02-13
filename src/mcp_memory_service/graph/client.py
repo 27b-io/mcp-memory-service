@@ -289,6 +289,7 @@ class GraphClient:
         target_hash: str,
         relation_type: str,
         created_at: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """
         Create a typed relationship edge between two memories.
@@ -302,6 +303,7 @@ class GraphClient:
             target_hash: Target memory content_hash
             relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS
             created_at: Optional timestamp (defaults to current time)
+            metadata: Optional metadata dict (e.g., confidence, signal_type for CONTRADICTS)
 
         Returns:
             True if both source and target nodes exist and edge was created.
@@ -315,14 +317,25 @@ class GraphClient:
         rel = self._validate_relation_type(relation_type)
         ts = created_at if created_at is not None else time.time()
 
+        # Build SET clause for metadata
+        set_clauses = ["e.created_at = $ts"]
+        params = {"src": source_hash, "dst": target_hash, "ts": ts}
+
+        if metadata:
+            for key, value in metadata.items():
+                set_clauses.append(f"e.{key} = ${key}")
+                params[key] = value
+
+        set_clause = ", ".join(set_clauses)
+
         # MATCH both nodes first — if either is missing, nothing happens.
         # This prevents dangling edges to non-existent memories.
         result = await self._graph.query(
             "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
             f"MERGE (a)-[e:{rel}]->(b) "
-            "ON CREATE SET e.created_at = $ts "
+            f"ON CREATE SET {set_clause} "
             "RETURN count(e)",
-            params={"src": source_hash, "dst": target_hash, "ts": ts},
+            params=params,
         )
         count = int(result.result_set[0][0]) if result.result_set else 0
         return count > 0
@@ -410,6 +423,84 @@ class GraphClient:
         )
         count = int(result.result_set[0][0]) if result.result_set else 0
         return count > 0
+
+    async def update_typed_edge_metadata(
+        self, source_hash: str, target_hash: str, relation_type: str, metadata: dict[str, Any]
+    ) -> bool:
+        """
+        Update metadata on a typed relationship edge (e.g., mark as resolved).
+
+        Useful for conflict resolution tracking:
+        - resolved_at: timestamp when conflict was resolved
+        - resolved_by: "auto" or "manual"
+        - resolution_action: "keep_source", "keep_target", "merge", etc.
+
+        Args:
+            source_hash: Source memory content hash
+            target_hash: Target memory content hash
+            relation_type: Edge type (CONTRADICTS, RELATES_TO, PRECEDES)
+            metadata: Dict of properties to set on the edge
+
+        Returns:
+            True if edge was found and updated, False if edge doesn't exist
+        """
+        rel = self._validate_relation_type(relation_type)
+
+        # Build SET clause from metadata
+        set_clauses = [f"e.{key} = ${key}" for key in metadata.keys()]
+        if not set_clauses:
+            return False  # No metadata to update
+
+        set_clause = ", ".join(set_clauses)
+
+        result = await self._graph.query(
+            f"MATCH (a:Memory {{content_hash: $src}})-[e:{rel}]->(b:Memory {{content_hash: $dst}}) "
+            f"SET {set_clause} "
+            "RETURN count(e)",
+            params={"src": source_hash, "dst": target_hash, **metadata},
+        )
+        count = int(result.result_set[0][0]) if result.result_set else 0
+        return count > 0
+
+    async def list_unresolved_conflicts(self, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        List memories with unresolved CONTRADICTS edges.
+
+        A conflict is considered unresolved if the CONTRADICTS edge
+        does not have a resolved_at property.
+
+        Returns:
+            List of conflicts, each with:
+            - source: source memory hash
+            - target: target memory hash
+            - confidence: contradiction confidence
+            - signal_type: type of contradiction
+            - created_at: when contradiction was detected
+        """
+        result = await self._graph.query(
+            """
+            MATCH (a:Memory)-[e:CONTRADICTS]->(b:Memory)
+            WHERE e.resolved_at IS NULL
+            RETURN a.content_hash, b.content_hash, e.confidence, e.signal_type, e.created_at
+            LIMIT $limit
+            """,
+            params={"limit": limit},
+        )
+
+        conflicts = []
+        if result.result_set:
+            for row in result.result_set:
+                conflicts.append(
+                    {
+                        "source": row[0],
+                        "target": row[1],
+                        "confidence": float(row[2]) if row[2] is not None else None,
+                        "signal_type": row[3],
+                        "created_at": float(row[4]) if row[4] is not None else None,
+                    }
+                )
+
+        return conflicts
 
     # ── Consolidation operations (bulk, idempotent) ────────────────────
 
