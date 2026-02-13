@@ -409,6 +409,49 @@ async def memory_scan(
 
 
 @mcp.tool()
+async def find_similar_memories(
+    query: str,
+    ctx: Context,
+    k: int = 5,
+    distance_metric: str = "cosine",
+) -> dict[str, Any]:
+    """
+    Find k most similar memories using pure vector similarity (k-nearest neighbors).
+
+    Unlike retrieve_memory which uses hybrid search with tag extraction and boosting,
+    this method performs pure k-NN vector similarity search. It returns exactly k
+    results ordered by similarity score without any tag matching or filtering.
+
+    Args:
+        query: Search query text to find similar memories
+        k: Number of most similar memories to return (default: 5)
+        distance_metric: Distance metric to use (default: "cosine")
+            Supported values: "cosine", "euclidean", "dot"
+            Note: The actual metric used depends on the Qdrant collection configuration.
+            This parameter is provided for API compatibility.
+
+    Returns:
+        Dictionary with:
+        - count: Number of memories returned
+        - memories: List of memory objects with relevance_score field
+        - distance_metric: The distance metric requested
+        - k: The k value used
+        - error: (optional) Error message if search failed
+
+    Use this for: Finding semantically similar memories, clustering analysis,
+    duplicate detection, content recommendations based on pure vector similarity.
+    """
+    _t0 = time.perf_counter()
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    result = await memory_service.find_similar_memories(
+        query=query,
+        k=k,
+        distance_metric=distance_metric,
+    )
+    return _inject_latency(result, _t0)
+
+
+@mcp.tool()
 async def search_by_tag(tags: str | list[str], ctx: Context, match_all: bool = False, page: int = 1, page_size: int = 10) -> str:
     """
     Search memories by exact tag matches with flexible filtering.

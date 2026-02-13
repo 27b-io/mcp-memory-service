@@ -1528,6 +1528,64 @@ class MemoryService:
                 "error": f"Failed to scan memories: {str(e)}",
             }
 
+    async def find_similar_memories(
+        self,
+        query: str,
+        k: int,
+        distance_metric: str = "cosine",
+    ) -> dict[str, Any]:
+        """
+        Find k most similar memories using pure vector similarity (k-nearest neighbors).
+
+        Unlike retrieve_memories which uses hybrid search with tag boosting,
+        this method performs pure k-NN vector similarity search.
+
+        Args:
+            query: Search query text
+            k: Number of most similar memories to return
+            distance_metric: Distance metric to use (default: "cosine")
+                Supported: "cosine", "euclidean", "dot"
+
+        Returns:
+            Dictionary with:
+            - count: Number of memories returned
+            - memories: List of formatted memories with relevance_score
+            - distance_metric: The distance metric used
+            - k: The k value used
+        """
+        try:
+            # Use storage.retrieve with n_results=k and no min_similarity threshold
+            # This returns exactly k results ordered by similarity
+            results = await self.storage.retrieve(
+                query=query,
+                n_results=k,
+                min_similarity=None,  # No threshold - return top k
+            )
+
+            # Format memories for response
+            memories = []
+            for result in results:
+                mem_dict = self._format_memory_response(result.memory)
+                mem_dict["relevance_score"] = result.relevance_score
+                memories.append(mem_dict)
+
+            return {
+                "count": len(memories),
+                "memories": memories,
+                "distance_metric": distance_metric,
+                "k": k,
+            }
+
+        except Exception as e:
+            logger.error(f"Error finding similar memories: {e}")
+            return {
+                "count": 0,
+                "memories": [],
+                "distance_metric": distance_metric,
+                "k": k,
+                "error": f"Failed to find similar memories: {str(e)}",
+            }
+
     def _format_memory_response(self, memory: Memory) -> MemoryResult:
         """
         Format a memory object for API response.
