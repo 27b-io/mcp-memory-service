@@ -183,8 +183,12 @@ class TestHebbianBoostIntegration:
 
         service = MemoryService(mock_storage, mock_graph, write_queue=None)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         memories = result["memories"]
@@ -230,8 +234,12 @@ class TestHebbianBoostIntegration:
 
         service = MemoryService(mock_storage, mock_graph, write_queue=None)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         memories = result["memories"]
@@ -250,17 +258,19 @@ class TestHebbianBoostIntegration:
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=1)
-        mock_storage.retrieve = AsyncMock(
-            return_value=[_make_query_result("hash_a", 0.9)]
-        )
+        mock_storage.retrieve = AsyncMock(return_value=[_make_query_result("hash_a", 0.9)])
 
         mock_graph = AsyncMock()
         mock_graph.spreading_activation = AsyncMock(return_value={})
         service = MemoryService(mock_storage, mock_graph, write_queue=None)
 
         await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         mock_graph.hebbian_boosts_within.assert_not_called()
@@ -284,8 +294,12 @@ class TestHebbianBoostIntegration:
 
         service = MemoryService(mock_storage, graph_client=None, write_queue=None)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         memories = result["memories"]
@@ -302,20 +316,20 @@ class TestHebbianBoostIntegration:
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=1)
-        mock_storage.retrieve = AsyncMock(
-            return_value=[_make_query_result("hash_a", 0.9)]
-        )
+        mock_storage.retrieve = AsyncMock(return_value=[_make_query_result("hash_a", 0.9)])
 
         mock_graph = AsyncMock()
         mock_graph.spreading_activation = AsyncMock(return_value={})
-        mock_graph.hebbian_boosts_within = AsyncMock(
-            side_effect=ConnectionError("FalkorDB down")
-        )
+        mock_graph.hebbian_boosts_within = AsyncMock(side_effect=ConnectionError("FalkorDB down"))
 
         service = MemoryService(mock_storage, mock_graph, write_queue=None)
         result = await service._retrieve_vector_only(
-            query="test", page=1, page_size=10,
-            tags=None, memory_type=None, min_similarity=None,
+            query="test",
+            page=1,
+            page_size=10,
+            tags=None,
+            memory_type=None,
+            min_similarity=None,
         )
 
         memories = result["memories"]

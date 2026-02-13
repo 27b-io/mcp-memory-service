@@ -6,8 +6,6 @@ Provides ground truth loading and storage setup for retrieval quality evaluation
 
 import json
 import os
-import shutil
-import tempfile
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
