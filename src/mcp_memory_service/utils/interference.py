@@ -147,8 +147,10 @@ _TEMPORAL_SUPERSESSION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Pre-compile tokenizer (matches emotional_analysis.py)
-_TOKEN_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+# Pre-compile tokenizer - matches words, preserving compound identifiers
+# Matches: word_chains (snake_case), hyphen-chains (kebab-case), and simple words
+# This prevents false antonym matches in config fields like "allowed_ips", "blocked_until"
+_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)*")
 
 
 def _tokenize(text: str) -> set[str]:

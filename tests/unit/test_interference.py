@@ -205,6 +205,21 @@ class TestAntonymDetection:
         antonym_signals = [s for s in signals if s.signal_type == "antonym"]
         assert len(antonym_signals) >= 1
 
+    def test_no_false_positive_compound_terms(self):
+        """GitHub #67: Compound terms like 'allowed_ips' should not trigger antonym detection."""
+        new = "anthropic-lb's allowed_ips config feature controls IP filtering"
+        existing = "The system blocked invalid requests at the gateway level"
+        signals = detect_contradiction_signals(
+            new,
+            existing,
+            "hash1",
+            similarity=0.835,
+            min_confidence=0.3,
+        )
+        # These are not contradictory - "allowed_ips" is a config field, not a semantic assertion
+        antonym_signals = [s for s in signals if s.signal_type == "antonym"]
+        assert len(antonym_signals) == 0
+
 
 # ── Temporal supersession tests ───────────────────────────────────────
 
