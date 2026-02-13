@@ -1318,6 +1318,89 @@ class MemoryService:
 
         return {"found": found, "merged": merged}
 
+    async def garbage_collect(self) -> dict[str, Any]:
+        """
+        Run garbage collection to delete orphaned memories.
+
+        Orphaned memories are those with no typed relations (RELATES_TO, PRECEDES,
+        CONTRADICTS) and no Hebbian edges (co-access patterns). These are isolated
+        nodes in the knowledge graph.
+
+        Only deletes orphans older than the configured retention period (default 90 days).
+        This prevents premature deletion of recently stored memories that haven't yet
+        formed connections.
+
+        Returns:
+            Dict with GC statistics including orphans found, deleted, and any errors.
+        """
+        config = settings.gc
+        stats: dict[str, Any] = {
+            "enabled": config.enabled,
+            "orphans_found": 0,
+            "orphans_eligible": 0,
+            "orphans_deleted": 0,
+            "errors": [],
+        }
+
+        if not config.enabled:
+            logger.info("Garbage collection is disabled")
+            return stats
+
+        if self._graph is None:
+            stats["errors"].append("Graph layer not enabled")
+            return stats
+
+        try:
+            # Phase 1: Find all orphan nodes (no edges of any type)
+            orphan_hashes = await self._graph.get_orphan_nodes(limit=config.max_deletions_per_run)
+            stats["orphans_found"] = len(orphan_hashes)
+            logger.info(f"Found {len(orphan_hashes)} orphan nodes")
+
+            if not orphan_hashes:
+                logger.info("No orphan memories found")
+                return stats
+
+            # Phase 2: Filter by age - only delete orphans older than retention period
+            retention_cutoff = time.time() - (config.retention_days * 86400)
+            eligible_hashes = []
+
+            for content_hash in orphan_hashes:
+                try:
+                    memory = await self.get_memory_by_hash(content_hash)
+                    if memory and memory.get("created_at", 0) < retention_cutoff:
+                        eligible_hashes.append(content_hash)
+                except Exception as e:
+                    logger.warning(f"Error checking orphan {content_hash[:8]}: {e}")
+                    stats["errors"].append(f"check_{content_hash[:8]}: {e}")
+
+            stats["orphans_eligible"] = len(eligible_hashes)
+            logger.info(f"{len(eligible_hashes)} orphans eligible for deletion (>{config.retention_days} days old)")
+
+            if not eligible_hashes:
+                logger.info("No orphans older than retention period")
+                return stats
+
+            # Phase 3: Delete eligible orphans
+            deleted_count = 0
+            for content_hash in eligible_hashes:
+                try:
+                    result = await self.delete_memory(content_hash)
+                    if result.get("success"):
+                        deleted_count += 1
+                except Exception as e:
+                    logger.error(f"Error deleting orphan {content_hash[:8]}: {e}")
+                    stats["errors"].append(f"delete_{content_hash[:8]}: {e}")
+
+            stats["orphans_deleted"] = deleted_count
+            logger.info(f"Garbage collection complete: deleted {deleted_count}/{len(eligible_hashes)} orphans")
+
+        except Exception as e:
+            logger.error(f"Garbage collection failed: {e}")
+            stats["errors"].append(f"gc_failed: {e}")
+
+        stats["success"] = len(stats["errors"]) == 0
+        return stats
+
     async def create_relation(
         self,
         source_hash: str,

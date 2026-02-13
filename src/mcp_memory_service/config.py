@@ -479,6 +479,34 @@ class ConsolidationSettings(BaseSettings):
     )
 
 
+class GarbageCollectionSettings(BaseSettings):
+    """Garbage collection configuration for orphaned memories."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_GC_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable automatic garbage collection")
+
+    retention_days: int = Field(
+        default=90,
+        ge=1,
+        le=3650,
+        description="Number of days to retain orphaned memories before deletion",
+    )
+
+    max_deletions_per_run: int = Field(
+        default=1000,
+        ge=1,
+        le=10000,
+        description="Maximum number of orphaned memories to delete per GC run (safety limit)",
+    )
+
+
 class InterferenceSettings(BaseSettings):
     """Proactive interference and contradiction detection configuration."""
 
@@ -798,6 +826,7 @@ class Settings(BaseSettings):
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
+    gc: GarbageCollectionSettings = Field(default_factory=GarbageCollectionSettings)
     interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
     spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)

@@ -866,6 +866,29 @@ async def get_working_memory_status(ctx: Context) -> dict[str, Any]:
     return {"enabled": True, "tiers": three_tier.stats()}
 
 
+@mcp.tool()
+async def garbage_collect(ctx: Context) -> dict[str, Any]:
+    """
+    Run garbage collection to delete orphaned memories.
+
+    Orphaned memories are those with no typed relations (RELATES_TO, PRECEDES,
+    CONTRADICTS) and no Hebbian edges (co-access patterns). These are isolated
+    nodes in the knowledge graph.
+
+    Only deletes orphans older than the configured retention period (default 90 days).
+    This prevents premature deletion of recently stored memories that haven't yet
+    formed connections.
+
+    The retention period can be configured via MCP_GC_RETENTION_DAYS environment variable.
+    GC can be disabled entirely by setting MCP_GC_ENABLED=false.
+
+    Returns:
+        Dictionary with GC statistics including orphans found, deleted, and any errors.
+    """
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    return await memory_service.garbage_collect()
+
+
 def _normalize_tags(tags: str | list[str] | None) -> list[str]:
     """Normalize tags from string or list format to list."""
     if tags is None:
