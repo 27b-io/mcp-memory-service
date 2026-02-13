@@ -1020,6 +1020,10 @@ class QdrantStorage(MemoryStorage):
             - page_size: int
             - has_more: bool
             - total_pages: int
+
+        Note:
+            Due to Qdrant order_by limitations, pagination performance degrades
+            linearly (O(n)). For large offsets, consider alternative retrieval patterns.
         """
         # Check circuit breaker
         self._check_circuit_breaker()
@@ -1093,7 +1097,7 @@ class QdrantStorage(MemoryStorage):
             fetched_ids = set()  # Track seen IDs to avoid duplicates
 
             while len(memories) < page_size:
-                batch_size = min(100, page_size * 2)  # Fetch extra to account for skipping
+                batch_size = min(100, offset_count + page_size)  # Must fetch offset + page_size
 
                 scroll_result = await loop.run_in_executor(
                     None,
