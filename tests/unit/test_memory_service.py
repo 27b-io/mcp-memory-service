@@ -781,3 +781,47 @@ class TestInterferenceDetection:
         assert result["success"] is True
         if "interference" in result:
             assert result["interference"]["has_contradictions"] is True
+
+
+# =============================================================================
+# Similarity Search Tests (K-Nearest Neighbors)
+# =============================================================================
+
+
+class TestSimilaritySearch:
+    """Test pure k-nearest neighbors similarity search."""
+
+    @pytest.mark.asyncio
+    async def test_find_similar_returns_exactly_k_results(self, memory_service, mock_storage, sample_memories):
+        """Test similarity search returns exactly k most similar memories."""
+        # Mock storage to return query results
+        query_results = [MemoryQueryResult(memory=sample_memories[i], relevance_score=0.9 - i * 0.1) for i in range(3)]
+        mock_storage.retrieve.return_value = query_results
+
+        result = await memory_service.find_similar_memories(query="test query", k=3)
+
+        assert result["count"] == 3
+        assert len(result["memories"]) == 3
+        # Should be ordered by similarity descending
+        assert result["memories"][0]["relevance_score"] == 0.9
+        assert result["memories"][1]["relevance_score"] == 0.8
+        assert result["memories"][2]["relevance_score"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_find_similar_with_distance_metric(self, memory_service, mock_storage):
+        """Test similarity search accepts distance_metric parameter."""
+        mock_storage.retrieve.return_value = []
+
+        result = await memory_service.find_similar_memories(query="test query", k=5, distance_metric="cosine")
+
+        assert result["distance_metric"] == "cosine"
+        assert result["k"] == 5
+
+    @pytest.mark.asyncio
+    async def test_find_similar_defaults_to_cosine(self, memory_service, mock_storage):
+        """Test similarity search defaults to cosine distance."""
+        mock_storage.retrieve.return_value = []
+
+        result = await memory_service.find_similar_memories(query="test query", k=5)
+
+        assert result["distance_metric"] == "cosine"
