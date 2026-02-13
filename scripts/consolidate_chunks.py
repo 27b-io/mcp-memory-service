@@ -11,8 +11,11 @@ Usage:
     # Preview what would happen
     MCP_QDRANT_URL=http://... uv run --python 3.12 python scripts/consolidate_chunks.py --dry-run
 
-    # Run consolidation
+    # Run consolidation (all parents)
     MCP_QDRANT_URL=http://... uv run --python 3.12 python scripts/consolidate_chunks.py
+
+    # Run in batches of 50 parents (idempotent - can resume)
+    MCP_QDRANT_URL=http://... uv run --python 3.12 python scripts/consolidate_chunks.py --batch-size 50
 
     # With LLM summaries for consolidated memories
     MCP_SUMMARY_ANTHROPIC_BASE_URL=http://lab:8082 MCP_QDRANT_URL=http://... \\
@@ -35,7 +38,6 @@ from qdrant_client.models import PointIdsList
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mcp_memory_service.config import Settings
-from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.utils.summariser import summarise
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -123,6 +125,7 @@ async def consolidate(
     dry_run: bool = True,
     resummarise: bool = False,
     config: Settings | None = None,
+    batch_size: int | None = None,
 ) -> dict:
     """Run the consolidation process."""
     import hashlib
@@ -140,6 +143,12 @@ async def consolidate(
     total_chunks = sum(len(chunks) for chunks in parents.values())
     logger.info(f"Found {len(parents)} parents with {total_chunks} total chunks")
 
+    # Apply batch limit if specified
+    parents_to_process = dict(parents)
+    if batch_size is not None and batch_size > 0:
+        parents_to_process = dict(list(parents.items())[:batch_size])
+        logger.info(f"Processing batch of {len(parents_to_process)} parents (batch_size={batch_size})")
+
     # Load embedding model once
     model = None
     if not dry_run:
@@ -148,14 +157,14 @@ async def consolidate(
         model = SentenceTransformer(model_name)
         logger.info("Embedding model loaded")
 
-    for i, (original_hash, chunks) in enumerate(parents.items(), 1):
+    for i, (original_hash, chunks) in enumerate(parents_to_process.items(), 1):
         try:
             reassembled = reassemble(chunks)
             content = reassembled["content"]
 
             if dry_run:
                 logger.info(
-                    f"[DRY RUN] [{i}/{len(parents)}] {original_hash[:12]}: {len(chunks)} chunks → "
+                    f"[DRY RUN] [{i}/{len(parents_to_process)}] {original_hash[:12]}: {len(chunks)} chunks → "
                     f"{len(content)} chars, tags={reassembled['tags'][:3]}"
                 )
                 stats["consolidated"] += 1
@@ -174,7 +183,7 @@ async def consolidate(
                 with_vectors=False,
             )
             if existing[0]:
-                logger.info(f"[{i}/{len(parents)}] Skipping {original_hash[:12]}: already consolidated")
+                logger.info(f"[{i}/{len(parents_to_process)}] Skipping {original_hash[:12]}: already consolidated")
                 stats["skipped"] += 1
                 continue
 
@@ -221,13 +230,10 @@ async def consolidate(
 
             stats["consolidated"] += 1
             stats["chunks_removed"] += len(chunks)
-            logger.info(
-                f"[{i}/{len(parents)}] {original_hash[:12]}: {len(chunks)} chunks → "
-                f"{len(content)} chars ✓"
-            )
+            logger.info(f"[{i}/{len(parents_to_process)}] {original_hash[:12]}: {len(chunks)} chunks → {len(content)} chars ✓")
 
         except Exception as e:
-            logger.error(f"[{i}/{len(parents)}] Error consolidating {original_hash[:12]}: {e}")
+            logger.error(f"[{i}/{len(parents_to_process)}] Error consolidating {original_hash[:12]}: {e}")
             stats["errors"] += 1
 
     return stats
@@ -237,6 +243,7 @@ def main():
     parser = argparse.ArgumentParser(description="Consolidate legacy chunk fragments")
     parser.add_argument("--dry-run", action="store_true", help="Preview without making changes")
     parser.add_argument("--resummarise", action="store_true", help="Generate LLM summaries for consolidated memories")
+    parser.add_argument("--batch-size", type=int, help="Process at most N parent groups per run (default: all)")
     parser.add_argument("--url", help="Qdrant URL (overrides MCP_QDRANT_URL)")
     args = parser.parse_args()
 
@@ -249,7 +256,15 @@ def main():
     client = QdrantClient(url=url, timeout=60)
 
     try:
-        stats = asyncio.run(consolidate(client, dry_run=args.dry_run, resummarise=args.resummarise, config=config))
+        stats = asyncio.run(
+            consolidate(
+                client,
+                dry_run=args.dry_run,
+                resummarise=args.resummarise,
+                config=config,
+                batch_size=args.batch_size,
+            )
+        )
 
         print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Consolidation complete:")
         print(f"  Parents found: {stats['parents']}")
