@@ -127,6 +127,70 @@ class TagListResponse(BaseModel):
     tags: list[TagResponse]
 
 
+# Batch operation models
+class BatchMemoryCreateRequest(BaseModel):
+    """Request model for batch memory creation."""
+
+    memories: list[MemoryCreateRequest] = Field(..., max_length=100, description="List of memories to create (max 100)")
+
+
+class BatchMemoryItemResult(BaseModel):
+    """Result for a single batch operation item."""
+
+    success: bool
+    content_hash: str | None = None
+    message: str | None = None
+    memory: MemoryResponse | None = None
+
+
+class BatchMemoryCreateResponse(BaseModel):
+    """Response model for batch memory creation."""
+
+    total: int
+    successful: int
+    failed: int
+    results: list[BatchMemoryItemResult]
+
+
+class BatchMemoryUpdateItem(BaseModel):
+    """Single update item in batch request."""
+
+    content_hash: str = Field(..., description="Content hash of memory to update")
+    tags: list[str] | None = Field(None, description="Updated tags")
+    memory_type: str | None = Field(None, description="Updated memory type")
+    metadata: dict[str, Any] | None = Field(None, description="Updated metadata")
+
+
+class BatchMemoryUpdateRequest(BaseModel):
+    """Request model for batch memory updates."""
+
+    updates: list[BatchMemoryUpdateItem] = Field(..., max_length=100, description="List of memory updates (max 100)")
+
+
+class BatchMemoryUpdateResponse(BaseModel):
+    """Response model for batch memory updates."""
+
+    total: int
+    successful: int
+    failed: int
+    results: list[BatchMemoryItemResult]
+
+
+class BatchMemoryDeleteRequest(BaseModel):
+    """Request model for batch memory deletion."""
+
+    content_hashes: list[str] = Field(..., max_length=100, description="List of content hashes to delete (max 100)")
+
+
+class BatchMemoryDeleteResponse(BaseModel):
+    """Response model for batch memory deletion."""
+
+    total: int
+    successful: int
+    failed: int
+    results: list[BatchMemoryItemResult]
+
+
 def memory_to_response(memory: Memory) -> MemoryResponse:
     """Convert Memory model to response format."""
     return MemoryResponse(
@@ -413,3 +477,243 @@ async def get_tags(
         raise HTTPException(status_code=501, detail=f"Tags endpoint not supported by current storage backend: {str(e)}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get tags: {str(e)}") from e
+
+
+@router.post("/memories/batch", response_model=BatchMemoryCreateResponse, tags=["memories", "batch"])
+async def batch_store_memories(
+    request: BatchMemoryCreateRequest,
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+    memory_service: MemoryService = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_write_access) if OAUTH_ENABLED else None,
+):
+    """
+    Store multiple memories in a single request.
+
+    Supports batching up to 100 memories for efficiency. Each memory is processed
+    independently, and partial failures are allowed (some memories may succeed while
+    others fail).
+
+    Returns detailed results for each memory including success status, content hash,
+    and any error messages.
+    """
+    if not request.memories:
+        raise HTTPException(status_code=400, detail="Batch request must contain at least one memory")
+
+    if len(request.memories) > 100:
+        raise HTTPException(status_code=400, detail="Batch size exceeds maximum of 100 memories")
+
+    # Resolve hostname once for all memories (same logic as single store)
+    client_hostname = None
+    if INCLUDE_HOSTNAME:
+        if http_request.headers.get("X-Client-Hostname"):
+            client_hostname = http_request.headers.get("X-Client-Hostname")
+        else:
+            client_hostname = socket.gethostname()
+
+    results: list[BatchMemoryItemResult] = []
+    successful = 0
+    failed = 0
+
+    # Process each memory independently
+    for mem_req in request.memories:
+        try:
+            # Use client_hostname from header if not specified in individual request
+            hostname = mem_req.client_hostname or client_hostname
+
+            # Enqueue write operation
+            result_future = await write_queue.enqueue(
+                memory_service.store_memory,
+                content=mem_req.content,
+                tags=mem_req.tags,
+                memory_type=mem_req.memory_type,
+                metadata=mem_req.metadata,
+                client_hostname=hostname,
+            )
+
+            # Trigger queue processor
+            asyncio.create_task(write_queue.process_queue())
+
+            # Wait for result
+            result = await result_future
+
+            if result["success"]:
+                successful += 1
+                # Handle both single and chunked responses
+                if "memory" in result:
+                    memory_data = result["memory"]
+                else:
+                    memory_data = result["memories"][0]
+
+                results.append(
+                    BatchMemoryItemResult(
+                        success=True,
+                        content_hash=memory_data["content_hash"],
+                        message="Memory stored successfully",
+                        memory=MemoryResponse(**memory_data),
+                    )
+                )
+
+                # Broadcast SSE event
+                try:
+                    event_data = {
+                        "content_hash": memory_data["content_hash"],
+                        "content": memory_data["content"],
+                        "tags": memory_data["tags"],
+                        "memory_type": memory_data["memory_type"],
+                    }
+                    event = create_memory_stored_event(event_data)
+                    await sse_manager.broadcast_event(event)
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast memory_stored event: {e}")
+
+            else:
+                failed += 1
+                results.append(BatchMemoryItemResult(success=False, message=result.get("error", "Failed to store memory")))
+
+        except Exception as e:
+            failed += 1
+            logger.error(f"Error storing memory in batch: {str(e)}")
+            results.append(BatchMemoryItemResult(success=False, message=f"Error: {str(e)}"))
+
+    return BatchMemoryCreateResponse(total=len(request.memories), successful=successful, failed=failed, results=results)
+
+
+@router.put("/memories/batch", response_model=BatchMemoryUpdateResponse, tags=["memories", "batch"])
+async def batch_update_memories(
+    request: BatchMemoryUpdateRequest,
+    storage: MemoryStorage = Depends(get_storage),
+    user: AuthenticationResult = Depends(require_write_access) if OAUTH_ENABLED else None,
+):
+    """
+    Update metadata for multiple memories in a single request.
+
+    Supports batching up to 100 memory updates. Each update is processed independently,
+    allowing partial success (some updates may succeed while others fail).
+
+    Only metadata fields (tags, type, metadata) can be updated. Content and timestamps
+    are preserved.
+    """
+    if not request.updates:
+        raise HTTPException(status_code=400, detail="Batch request must contain at least one update")
+
+    if len(request.updates) > 100:
+        raise HTTPException(status_code=400, detail="Batch size exceeds maximum of 100 updates")
+
+    results: list[BatchMemoryItemResult] = []
+    successful = 0
+    failed = 0
+
+    for update_item in request.updates:
+        try:
+            # Check if memory exists
+            existing_memory = await storage.get_by_hash(update_item.content_hash)
+            if not existing_memory:
+                failed += 1
+                results.append(
+                    BatchMemoryItemResult(
+                        success=False,
+                        content_hash=update_item.content_hash,
+                        message=f"Memory with hash {update_item.content_hash} not found",
+                    )
+                )
+                continue
+
+            # Build updates dictionary
+            updates = {}
+            if update_item.tags is not None:
+                updates["tags"] = update_item.tags
+            if update_item.memory_type is not None:
+                updates["memory_type"] = update_item.memory_type
+            if update_item.metadata is not None:
+                updates["metadata"] = update_item.metadata
+
+            # If no updates provided, skip
+            if not updates:
+                successful += 1
+                results.append(
+                    BatchMemoryItemResult(
+                        success=True,
+                        content_hash=update_item.content_hash,
+                        message="No updates provided - memory unchanged",
+                        memory=memory_to_response(existing_memory),
+                    )
+                )
+                continue
+
+            # Perform update
+            success, message = await storage.update_memory_metadata(
+                content_hash=update_item.content_hash, updates=updates, preserve_timestamps=True
+            )
+
+            if success:
+                successful += 1
+                updated_memory = await storage.get_by_hash(update_item.content_hash)
+                results.append(
+                    BatchMemoryItemResult(
+                        success=True,
+                        content_hash=update_item.content_hash,
+                        message=message,
+                        memory=memory_to_response(updated_memory) if updated_memory else None,
+                    )
+                )
+            else:
+                failed += 1
+                results.append(BatchMemoryItemResult(success=False, content_hash=update_item.content_hash, message=message))
+
+        except Exception as e:
+            failed += 1
+            logger.error(f"Error updating memory {update_item.content_hash} in batch: {str(e)}")
+            results.append(
+                BatchMemoryItemResult(success=False, content_hash=update_item.content_hash, message=f"Error: {str(e)}")
+            )
+
+    return BatchMemoryUpdateResponse(total=len(request.updates), successful=successful, failed=failed, results=results)
+
+
+@router.delete("/memories/batch", response_model=BatchMemoryDeleteResponse, tags=["memories", "batch"])
+async def batch_delete_memories(
+    request: BatchMemoryDeleteRequest,
+    storage: MemoryStorage = Depends(get_storage),
+    user: AuthenticationResult = Depends(require_write_access) if OAUTH_ENABLED else None,
+):
+    """
+    Delete multiple memories in a single request.
+
+    Supports batching up to 100 memory deletions. Each deletion is processed independently,
+    allowing partial success (some deletions may succeed while others fail).
+    """
+    if not request.content_hashes:
+        raise HTTPException(status_code=400, detail="Batch request must contain at least one content hash")
+
+    if len(request.content_hashes) > 100:
+        raise HTTPException(status_code=400, detail="Batch size exceeds maximum of 100 deletions")
+
+    results: list[BatchMemoryItemResult] = []
+    successful = 0
+    failed = 0
+
+    for content_hash in request.content_hashes:
+        try:
+            success, message = await storage.delete(content_hash)
+
+            if success:
+                successful += 1
+                results.append(BatchMemoryItemResult(success=True, content_hash=content_hash, message=message))
+
+                # Broadcast SSE event
+                try:
+                    event = create_memory_deleted_event(content_hash, success)
+                    await sse_manager.broadcast_event(event)
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast memory_deleted event: {e}")
+            else:
+                failed += 1
+                results.append(BatchMemoryItemResult(success=False, content_hash=content_hash, message=message))
+
+        except Exception as e:
+            failed += 1
+            logger.error(f"Error deleting memory {content_hash} in batch: {str(e)}")
+            results.append(BatchMemoryItemResult(success=False, content_hash=content_hash, message=f"Error: {str(e)}"))
+
+    return BatchMemoryDeleteResponse(total=len(request.content_hashes), successful=successful, failed=failed, results=results)
