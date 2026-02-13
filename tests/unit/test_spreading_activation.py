@@ -195,6 +195,7 @@ class TestMemoryServiceGraphBoost:
         mock_falkordb.spreading_activation_max_hops = 2
         mock_falkordb.spreading_activation_decay = 0.5
         mock_falkordb.spreading_activation_min_activation = 0.01
+        mock_falkordb.hebbian_boost = 0.0  # Disable Hebbian to isolate spreading activation
         mock_settings.falkordb = mock_falkordb
         mock_settings.hybrid_search = MagicMock(recency_decay=0)
 
@@ -287,6 +288,7 @@ class TestMemoryServiceGraphBoost:
         mock_falkordb.spreading_activation_max_hops = 2
         mock_falkordb.spreading_activation_decay = 0.5
         mock_falkordb.spreading_activation_min_activation = 0.01
+        mock_falkordb.hebbian_boost = 0.0  # Disable Hebbian to isolate spreading activation
         mock_settings.falkordb = mock_falkordb
         mock_settings.hybrid_search = MagicMock(recency_decay=0)
 

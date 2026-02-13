@@ -207,6 +207,32 @@ class GraphClient:
         sorted_items = sorted(activations.items(), key=lambda x: x[1], reverse=True)[:limit]
         return dict(sorted_items)
 
+    async def hebbian_boosts_within(self, hashes: list[str]) -> dict[str, float]:
+        """
+        Get max Hebbian edge weight for each node connected to another node in the set.
+
+        For a set of search result hashes, finds all HEBBIAN edges where both
+        endpoints are in the set. Returns {hash: max_weight} for nodes that have
+        at least one such edge.
+
+        Args:
+            hashes: Content hashes of search results to check for mutual edges.
+
+        Returns:
+            Dict of {content_hash: max_hebbian_weight} for connected nodes.
+        """
+        if len(hashes) < 2:
+            return {}
+
+        result = await self._graph.query(
+            "MATCH (a:Memory)-[e:HEBBIAN]->(b:Memory) "
+            "WHERE a.content_hash IN $hashes AND b.content_hash IN $hashes "
+            "RETURN a.content_hash AS hash, max(e.weight) AS max_weight",
+            params={"hashes": hashes},
+        )
+
+        return {row[0]: float(row[1]) for row in result.result_set if float(row[1]) > 0}
+
     async def get_edge(self, source_hash: str, target_hash: str) -> dict[str, Any] | None:
         """Get a specific Hebbian edge between two memories."""
         result = await self._graph.query(

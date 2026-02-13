@@ -412,6 +412,14 @@ class FalkorDBSettings(BaseSettings):
         default=0.01, ge=0.0, le=1.0, description="Minimum activation threshold to consider a neighbor"
     )
 
+    # Hebbian-weighted search boost (within-result co-access signal)
+    hebbian_boost: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        description="Max boost from Hebbian co-access edges between search results (0=disabled)",
+    )
+
     # Feature flag
     enabled: bool = Field(default=False, description="Enable FalkorDB graph layer")
 
