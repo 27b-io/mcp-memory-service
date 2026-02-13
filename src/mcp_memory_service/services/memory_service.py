@@ -161,6 +161,28 @@ class MemoryService:
             logger.warning(f"Spreading activation failed (non-fatal): {e}")
             return {}
 
+    async def _compute_hebbian_boosts(self, result_hashes: list[str]) -> dict[str, float]:
+        """
+        Get Hebbian co-access boost weights for search results.
+
+        Queries Hebbian edges where both endpoints are in the result set.
+        Non-blocking, non-fatal — graph failures don't affect the read path.
+
+        Returns:
+            Dict of {content_hash: max_hebbian_weight} for connected results.
+        """
+        if self._graph is None or len(result_hashes) < 2:
+            return {}
+
+        if settings.falkordb.hebbian_boost <= 0:
+            return {}
+
+        try:
+            return await self._graph.hebbian_boosts_within(result_hashes)
+        except Exception as e:
+            logger.warning(f"Hebbian boost query failed (non-fatal): {e}")
+            return {}
+
     async def _fire_hebbian_co_access(self, content_hashes: list[str], spacing_qualities: list[float] | None = None) -> None:
         """
         Enqueue Hebbian strengthening for all pairs of co-retrieved memories.
@@ -391,6 +413,17 @@ class MemoryService:
                 if activation > 0:
                     result["similarity_score"] = result.get("similarity_score", 0.0) + boost_weight * activation
                     result["graph_boost"] = activation
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
+        # Apply Hebbian co-access boost (within-result mutual edges)
+        hebbian_boosts = await self._compute_hebbian_boosts(result_hashes)
+        if hebbian_boosts:
+            hb_weight = settings.falkordb.hebbian_boost
+            for result in results:
+                hw = hebbian_boosts.get(result["content_hash"], 0.0)
+                if hw > 0:
+                    result["similarity_score"] = result.get("similarity_score", 0.0) * (1 + hw * hb_weight)
+                    result["hebbian_boost"] = hw
             results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
 
         # Apply salience boost to final scores
@@ -817,6 +850,19 @@ class MemoryService:
                         debug_info = {**debug_info, "graph_boost": activation}
                     boosted.append((memory, score, debug_info))
                 combined = sorted(boosted, key=lambda x: x[1], reverse=True)
+
+            # Apply Hebbian co-access boost (within-result mutual edges)
+            hebbian_boosts = await self._compute_hebbian_boosts(all_hashes)
+            if hebbian_boosts:
+                hb_weight = settings.falkordb.hebbian_boost
+                hb_boosted = []
+                for memory, score, debug_info in combined:
+                    hw = hebbian_boosts.get(memory.content_hash, 0.0)
+                    if hw > 0:
+                        score = score * (1 + hw * hb_weight)
+                        debug_info = {**debug_info, "hebbian_boost": hw}
+                    hb_boosted.append((memory, score, debug_info))
+                combined = sorted(hb_boosted, key=lambda x: x[1], reverse=True)
 
             # Apply salience boost
             if settings.salience.enabled:
