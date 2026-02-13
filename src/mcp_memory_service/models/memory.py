@@ -63,6 +63,10 @@ class Memory:
     # Extractive summary: one-line summary for token-efficient scanning (~50 tokens)
     summary: str | None = None
 
+    # Version tracking: track content version history
+    current_version: int = 1  # Current version number (starts at 1)
+    version_count: int = 1  # Total number of versions created
+
     # Legacy timestamp field (maintain for backward compatibility)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -244,6 +248,9 @@ class Memory:
             "encoding_context": self.encoding_context,
             # Extractive summary
             "summary": self.summary,
+            # Version tracking
+            "current_version": self.current_version,
+            "version_count": self.version_count,
             **self.metadata,
         }
 
@@ -283,6 +290,10 @@ class Memory:
         # Extract summary
         summary = data.get("summary")
 
+        # Extract version fields (default to 1 for backward compatibility)
+        current_version = int(data.get("current_version", 1))
+        version_count = int(data.get("version_count", 1))
+
         # Create metadata dictionary without special fields
         metadata = {
             k: v
@@ -306,6 +317,8 @@ class Memory:
                 "access_timestamps",
                 "encoding_context",
                 "summary",
+                "current_version",
+                "version_count",
             ]
         }
 
@@ -327,6 +340,8 @@ class Memory:
             access_timestamps=access_timestamps,
             encoding_context=encoding_context,
             summary=summary,
+            current_version=current_version,
+            version_count=version_count,
         )
 
 
