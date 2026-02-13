@@ -3,10 +3,9 @@
 import hashlib
 import random
 import shutil
-
-import pytest
 from datetime import datetime
 
+import pytest
 from src.mcp_memory_service.models.memory import Memory
 from src.mcp_memory_service.storage.qdrant_storage import QdrantStorage
 from src.mcp_memory_service.utils.hashing import generate_content_hash
@@ -20,14 +19,16 @@ def create_deterministic_embedding(text: str, vector_size: int = 384) -> list[fl
     return [rng.random() * 2 - 1 for _ in range(vector_size)]
 
 
-def create_memory(content: str, tags: list[str] | None = None, memory_type: str | None = None, created_at: float | None = None) -> Memory:
+def create_memory(
+    content: str, tags: list[str] | None = None, memory_type: str | None = None, created_at: float | None = None
+) -> Memory:
     """Helper to create a Memory object with proper content_hash."""
     return Memory(
         content=content,
         content_hash=generate_content_hash(content),
         tags=tags or [],
         memory_type=memory_type,
-        created_at=created_at
+        created_at=created_at,
     )
 
 

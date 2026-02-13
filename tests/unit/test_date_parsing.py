@@ -41,6 +41,7 @@ def test_parse_iso8601_format():
 
     # Should parse to specific timestamp
     from datetime import datetime, timezone
+
     expected = datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc).timestamp()
     assert result == expected
 

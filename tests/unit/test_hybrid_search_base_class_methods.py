@@ -149,6 +149,11 @@ class TestCountMethodOnBaseClass:
             async def count_time_range(self, start_timestamp=None, end_timestamp=None, tags=None, memory_type=None):
                 return 0
 
+            async def faceted_search(
+                self, tags=None, tag_match_all=False, memory_type=None, date_from=None, date_to=None, page=1, page_size=10
+            ):
+                return {"memories": [], "total": 0, "page": page, "page_size": page_size, "has_more": False, "total_pages": 0}
+
         storage = FakeStorage()
         storage.count_all_memories = AM(return_value=42)
 
@@ -242,6 +247,11 @@ class TestSearchByTagsMethodOnBaseClass:
 
             async def count_time_range(self, start_timestamp=None, end_timestamp=None, tags=None, memory_type=None):
                 return 0
+
+            async def faceted_search(
+                self, tags=None, tag_match_all=False, memory_type=None, date_from=None, date_to=None, page=1, page_size=10
+            ):
+                return {"memories": [], "total": 0, "page": page, "page_size": page_size, "has_more": False, "total_pages": 0}
 
         storage = FakeStorage()
         storage.search_by_tag = AM(return_value=[sample_memory])
