@@ -147,7 +147,7 @@ class TestHebbianBoostIntegration:
         mock_falkordb.spreading_activation_boost = 0.0  # Disable spreading to isolate
         mock_falkordb.hebbian_boost = hebbian_boost
         mock_settings.falkordb = mock_falkordb
-        mock_settings.hybrid_search = MagicMock(recency_decay=0)
+        mock_settings.hybrid_search = MagicMock(recency_decay=0, temporal_decay_lambda=0.0)
         mock_settings.salience = MagicMock(enabled=False)
         mock_settings.spaced_repetition = MagicMock(enabled=False)
         mock_settings.encoding_context = MagicMock(enabled=False)

@@ -9,7 +9,7 @@ all memory operations, eliminating the DRY violation and ensuring consistent beh
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, TypedDict
 
 from ..config import (
@@ -37,6 +37,7 @@ from ..utils.hybrid_search import (
     combine_results_rrf,
     extract_query_keywords,
     get_adaptive_alpha,
+    temporal_decay_factor,
 )
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
@@ -470,6 +471,24 @@ class MemoryService:
                         result["context_similarity"] = ctx_sim
             results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
 
+        # Apply temporal decay to vector-only results
+        td_lambda = settings.hybrid_search.temporal_decay_lambda
+        if td_lambda > 0:
+            td_base = settings.hybrid_search.temporal_decay_base
+            now = datetime.now(timezone.utc)
+            for result, mem in zip(results, result_memories):
+                try:
+                    updated_at = datetime.fromisoformat(mem.updated_at_iso)
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    days_old = (now - updated_at).total_seconds() / 86400
+                except (ValueError, TypeError):
+                    days_old = 365
+                factor = temporal_decay_factor(days_old, td_lambda, td_base)
+                result["similarity_score"] = result.get("similarity_score", 0.0) * factor
+                result["temporal_decay_factor"] = factor
+            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+
         # Fire Hebbian co-access events for co-retrieved memories
         await self._fire_hebbian_co_access(result_hashes, spacing_qualities or None)
 
@@ -833,8 +852,10 @@ class MemoryService:
             # Combine using RRF
             combined = combine_results_rrf(vector_results, tag_matches, alpha)
 
-            # Apply recency decay
-            if config.recency_decay > 0:
+            # Apply temporal decay (new floored formula) or legacy recency decay
+            if config.temporal_decay_lambda > 0:
+                combined = apply_recency_decay(combined, config.temporal_decay_lambda, config.temporal_decay_base)
+            elif config.recency_decay > 0:
                 combined = apply_recency_decay(combined, config.recency_decay)
 
             # Apply spreading activation boost from graph layer

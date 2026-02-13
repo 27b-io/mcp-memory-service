@@ -197,7 +197,7 @@ class TestMemoryServiceGraphBoost:
         mock_falkordb.spreading_activation_min_activation = 0.01
         mock_falkordb.hebbian_boost = 0.0  # Disable Hebbian to isolate spreading activation
         mock_settings.falkordb = mock_falkordb
-        mock_settings.hybrid_search = MagicMock(recency_decay=0)
+        mock_settings.hybrid_search = MagicMock(recency_decay=0, temporal_decay_lambda=0.0)
 
         # Mock storage
         mock_storage = AsyncMock()
@@ -248,7 +248,7 @@ class TestMemoryServiceGraphBoost:
         mock_falkordb = MagicMock()
         mock_falkordb.spreading_activation_boost = 0.2
         mock_settings.falkordb = mock_falkordb
-        mock_settings.hybrid_search = MagicMock(recency_decay=0)
+        mock_settings.hybrid_search = MagicMock(recency_decay=0, temporal_decay_lambda=0.0)
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=2)
@@ -290,7 +290,7 @@ class TestMemoryServiceGraphBoost:
         mock_falkordb.spreading_activation_min_activation = 0.01
         mock_falkordb.hebbian_boost = 0.0  # Disable Hebbian to isolate spreading activation
         mock_settings.falkordb = mock_falkordb
-        mock_settings.hybrid_search = MagicMock(recency_decay=0)
+        mock_settings.hybrid_search = MagicMock(recency_decay=0, temporal_decay_lambda=0.0)
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=2)
@@ -336,7 +336,7 @@ class TestMemoryServiceGraphBoost:
         mock_falkordb.spreading_activation_decay = 0.5
         mock_falkordb.spreading_activation_min_activation = 0.01
         mock_settings.falkordb = mock_falkordb
-        mock_settings.hybrid_search = MagicMock(recency_decay=0)
+        mock_settings.hybrid_search = MagicMock(recency_decay=0, temporal_decay_lambda=0.0)
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=1)
@@ -374,7 +374,7 @@ class TestMemoryServiceGraphBoost:
         mock_falkordb = MagicMock()
         mock_falkordb.spreading_activation_boost = 0.0  # Disabled
         mock_settings.falkordb = mock_falkordb
-        mock_settings.hybrid_search = MagicMock(recency_decay=0)
+        mock_settings.hybrid_search = MagicMock(recency_decay=0, temporal_decay_lambda=0.0)
 
         mock_storage = AsyncMock()
         mock_storage.count_semantic_search = AsyncMock(return_value=1)

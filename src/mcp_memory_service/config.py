@@ -669,6 +669,14 @@ class HybridSearchSettings(BaseSettings):
         default=0.01, ge=0.0, description="Exponential decay rate for recency boost (0=disabled, 0.01=~70 day half-life)"
     )
 
+    temporal_decay_lambda: float = Field(
+        default=0.0, ge=0.0, description="Temporal decay rate (0=disabled, 0.01=~69-day half-life)"
+    )
+
+    temporal_decay_base: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="Minimum relevance floor for temporal decay (0.7=70% retention)"
+    )
+
     adaptive_threshold_small: int = Field(default=500, ge=1, description="Corpus size below which alpha=0.5 (balanced)")
 
     adaptive_threshold_large: int = Field(default=5000, ge=1, description="Corpus size above which alpha=0.8 (strong semantic)")
