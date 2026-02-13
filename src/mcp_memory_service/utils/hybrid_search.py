@@ -323,20 +323,46 @@ def get_adaptive_alpha(
     return alpha
 
 
+def temporal_decay_factor(days_old: float, lambda_: float, base: float = 0.0) -> float:
+    """
+    Compute temporal decay factor for a memory's age.
+
+    Formula: base + exp(-lambda * days) * (1 - base)
+    - When base=0: pure exponential decay (backward compat)
+    - When base=0.7: 70% minimum relevance floor
+
+    Args:
+        days_old: Days since memory was last updated (clamped to >= 0)
+        lambda_: Decay rate (0 = disabled, returns 1.0)
+        base: Minimum relevance floor (0.0-1.0)
+
+    Returns:
+        Decay factor between base and 1.0
+    """
+    if lambda_ <= 0:
+        return 1.0
+    days_old = max(0.0, days_old)
+    decay = math.exp(-lambda_ * days_old)
+    return base + decay * (1 - base)
+
+
 def apply_recency_decay(
     results: list[tuple[Memory, float, dict]],
     decay_rate: float,
+    base: float = 0.0,
 ) -> list[tuple[Memory, float, dict]]:
     """
     Apply recency decay to search results.
 
-    Formula: final_score = score * exp(-decay * days_since_update)
+    Formula: final_score = score * (base + exp(-decay * days) * (1 - base))
 
-    With decay=0.01, half-life is ~70 days (exp(-0.01*70) ≈ 0.5)
+    With decay=0.01 and base=0, half-life is ~70 days.
+    With base=0.7, old memories retain at least 70% relevance.
 
     Args:
         results: List of (memory, score, debug_info) tuples
         decay_rate: Decay rate (0 = disabled)
+        base: Minimum relevance floor (0.0 = pure exp decay, 0.7 = 70% floor)
 
     Returns:
         Results with recency-adjusted scores, re-sorted
@@ -363,14 +389,16 @@ def apply_recency_decay(
             # If we can't parse the date, assume it's old
             days_old = 365
 
-        # Apply exponential decay
-        recency_factor = math.exp(-decay_rate * days_old)
+        # Apply temporal decay with optional base floor
+        recency_factor = temporal_decay_factor(days_old, decay_rate, base)
         adjusted_score = score * recency_factor
 
         # Update debug info
         info["recency_factor"] = recency_factor
         info["days_old"] = days_old
         info["final_score"] = adjusted_score
+        if base > 0:
+            info["temporal_decay_base"] = base
 
         adjusted.append((memory, adjusted_score, info))
 
