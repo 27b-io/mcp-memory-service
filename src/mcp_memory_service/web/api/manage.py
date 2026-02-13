@@ -19,15 +19,16 @@ Provides memory maintenance, bulk operations, and system management tools.
 """
 
 import logging
+import time
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ...config import OAUTH_ENABLED
+from ...config import OAUTH_ENABLED, settings
 from ...storage.base import MemoryStorage
-from ..dependencies import get_storage
+from ..dependencies import get_memory_service, get_storage
 
 # OAuth authentication imports (conditional)
 if OAUTH_ENABLED or TYPE_CHECKING:
@@ -320,3 +321,288 @@ async def perform_system_operation(
     except Exception as e:
         logger.error(f"System operation {operation} failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"System operation failed: {str(e)}") from e
+
+
+# =============================================================================
+# Conflict Resolution Endpoints
+# =============================================================================
+
+
+class ConflictResponse(BaseModel):
+    """Response model for a single conflict."""
+
+    source_hash: str
+    target_hash: str
+    confidence: float | None
+    signal_type: str | None
+    created_at: float | None
+    source_memory: dict[str, Any] | None = None
+    target_memory: dict[str, Any] | None = None
+
+
+class ConflictListResponse(BaseModel):
+    """Response model for conflict list."""
+
+    conflicts: list[ConflictResponse]
+    total: int
+
+
+class ConflictResolveRequest(BaseModel):
+    """Request model for conflict resolution."""
+
+    action: str = Field(
+        ...,
+        description="Resolution action: 'keep_source', 'keep_target', 'merge', 'dismiss'",
+    )
+    merge_tags: bool = Field(
+        default=True,
+        description="When action='merge', whether to merge tags from both memories",
+    )
+    custom_content: str | None = Field(
+        None,
+        description="Custom content for merged memory (overrides both sources)",
+    )
+
+
+class ConflictResolveResponse(BaseModel):
+    """Response model for conflict resolution."""
+
+    success: bool
+    action: str
+    message: str
+    kept_hash: str | None = None
+    deleted_hash: str | None = None
+
+
+@router.get("/conflicts", response_model=ConflictListResponse, tags=["conflicts"])
+async def list_conflicts(
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of conflicts to return"),
+    include_memories: bool = Query(False, description="Include full memory content for each conflict"),
+    memory_service = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_write_access) if OAUTH_ENABLED else None,
+):
+    """
+    List unresolved memory conflicts.
+
+    Returns memories with CONTRADICTS edges that haven't been resolved yet.
+    """
+    try:
+        if memory_service._graph is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Graph layer not enabled. Set MCP_FALKORDB_ENABLED=true to use conflict resolution.",
+            )
+
+        # Get unresolved conflicts from graph
+        conflicts = await memory_service._graph.list_unresolved_conflicts(limit=limit)
+
+        # Optionally fetch full memory content
+        results = []
+        for conflict in conflicts:
+            conflict_data = ConflictResponse(
+                source_hash=conflict["source"],
+                target_hash=conflict["target"],
+                confidence=conflict.get("confidence"),
+                signal_type=conflict.get("signal_type"),
+                created_at=conflict.get("created_at"),
+            )
+
+            if include_memories:
+                # Fetch both memories
+                source_mem = await memory_service.storage.get_memory_by_hash(conflict["source"])
+                target_mem = await memory_service.storage.get_memory_by_hash(conflict["target"])
+
+                if source_mem:
+                    conflict_data.source_memory = memory_service._format_memory_response(source_mem)
+                if target_mem:
+                    conflict_data.target_memory = memory_service._format_memory_response(target_mem)
+
+            results.append(conflict_data)
+
+        return ConflictListResponse(conflicts=results, total=len(results))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list conflicts: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list conflicts: {str(e)}") from e
+
+
+@router.get("/conflicts/{source_hash}/{target_hash}", response_model=ConflictResponse, tags=["conflicts"])
+async def get_conflict_details(
+    source_hash: str,
+    target_hash: str,
+    memory_service = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_write_access) if OAUTH_ENABLED else None,
+):
+    """
+    Get detailed information about a specific conflict.
+
+    Returns both memories involved in the conflict and the contradiction details.
+    """
+    try:
+        if memory_service._graph is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Graph layer not enabled.",
+            )
+
+        # Check if CONTRADICTS edge exists
+        edges = await memory_service._graph.get_typed_edges(
+            content_hash=source_hash,
+            relation_type="CONTRADICTS",
+            direction="outgoing",
+        )
+
+        # Find the edge to target
+        edge = next((e for e in edges if e["target"] == target_hash), None)
+        if not edge:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No CONTRADICTS edge found from {source_hash} to {target_hash}",
+            )
+
+        # Fetch both memories
+        source_mem = await memory_service.storage.get_memory_by_hash(source_hash)
+        target_mem = await memory_service.storage.get_memory_by_hash(target_hash)
+
+        if not source_mem or not target_mem:
+            raise HTTPException(
+                status_code=404,
+                detail="One or both memories not found in storage",
+            )
+
+        return ConflictResponse(
+            source_hash=source_hash,
+            target_hash=target_hash,
+            confidence=edge.get("confidence"),
+            signal_type=edge.get("signal_type"),
+            created_at=edge.get("created_at"),
+            source_memory=memory_service._format_memory_response(source_mem),
+            target_memory=memory_service._format_memory_response(target_mem),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get conflict details: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get conflict details: {str(e)}") from e
+
+
+@router.post("/conflicts/{source_hash}/{target_hash}/resolve", response_model=ConflictResolveResponse, tags=["conflicts"])
+async def resolve_conflict(
+    source_hash: str,
+    target_hash: str,
+    request: ConflictResolveRequest,
+    memory_service = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_write_access) if OAUTH_ENABLED else None,
+):
+    """
+    Manually resolve a memory conflict.
+
+    Actions:
+    - keep_source: Keep source memory, delete target, mark edge as resolved
+    - keep_target: Keep target memory, delete source, mark edge as resolved
+    - merge: Merge both memories (keep source, merge tags, delete target)
+    - dismiss: Mark conflict as resolved without any changes to memories
+    """
+    try:
+        if memory_service._graph is None:
+            raise HTTPException(status_code=503, detail="Graph layer not enabled.")
+
+        # Validate action
+        valid_actions = {"keep_source", "keep_target", "merge", "dismiss"}
+        if request.action not in valid_actions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid action '{request.action}'. Must be one of: {', '.join(valid_actions)}",
+            )
+
+        # Fetch both memories
+        source_mem = await memory_service.storage.get_memory_by_hash(source_hash)
+        target_mem = await memory_service.storage.get_memory_by_hash(target_hash)
+
+        if not source_mem or not target_mem:
+            raise HTTPException(status_code=404, detail="One or both memories not found")
+
+        # Execute resolution action
+        kept_hash = None
+        deleted_hash = None
+        message = ""
+
+        if request.action == "keep_source":
+            # Delete target, keep source
+            await memory_service.delete_memory(target_hash)
+            kept_hash = source_hash
+            deleted_hash = target_hash
+            message = f"Kept source memory {source_hash[:8]}, deleted target {target_hash[:8]}"
+
+        elif request.action == "keep_target":
+            # Delete source, keep target
+            await memory_service.delete_memory(source_hash)
+            kept_hash = target_hash
+            deleted_hash = source_hash
+            message = f"Kept target memory {target_hash[:8]}, deleted source {source_hash[:8]}"
+
+        elif request.action == "merge":
+            # Merge tags and metadata, keep source
+            if request.merge_tags:
+                merged_tags = list(set(source_mem.tags) | set(target_mem.tags))
+                # Update source with merged tags
+                await memory_service.storage.update_memory_metadata(
+                    source_hash,
+                    {"tags_str": ",".join(merged_tags)},
+                    preserve_timestamps=True,
+                )
+
+            # Record merge in conflict history
+            source_mem.conflict_history = source_mem.conflict_history or []
+            source_mem.conflict_history.append(
+                {
+                    "resolved_at": time.time(),
+                    "strategy": "manual_merge",
+                    "merged_from": target_hash,
+                    "merged_tags": request.merge_tags,
+                }
+            )
+            await memory_service.storage.update_memory_metadata(
+                source_hash,
+                {"conflict_history": source_mem.conflict_history},
+                preserve_timestamps=True,
+            )
+
+            # Delete target
+            await memory_service.delete_memory(target_hash)
+            kept_hash = source_hash
+            deleted_hash = target_hash
+            message = f"Merged memories, kept {source_hash[:8]}, deleted {target_hash[:8]}"
+
+        elif request.action == "dismiss":
+            # Just mark as resolved, don't modify memories
+            message = f"Conflict dismissed without changes"
+
+        # Mark CONTRADICTS edge as resolved
+        await memory_service._graph.update_typed_edge_metadata(
+            source_hash=source_hash,
+            target_hash=target_hash,
+            relation_type="CONTRADICTS",
+            metadata={
+                "resolved_at": time.time(),
+                "resolved_by": "manual",
+                "resolution_action": request.action,
+            },
+        )
+
+        return ConflictResolveResponse(
+            success=True,
+            action=request.action,
+            message=message,
+            kept_hash=kept_hash,
+            deleted_hash=deleted_hash,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resolve conflict: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to resolve conflict: {str(e)}") from e
