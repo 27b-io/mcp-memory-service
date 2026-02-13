@@ -414,16 +414,46 @@ async def get_memory_type_distribution(
 
 
 @router.get("/search-analytics", response_model=SearchAnalytics, tags=["analytics"])
-async def get_search_analytics(user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None):
+async def get_search_analytics(
+    days: int = Query(30, description="Number of days to include in analytics"),
+    user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None,
+):
     """
     Get search usage analytics.
 
-    Returns statistics about search patterns and performance.
-    This is a placeholder - real implementation would need search logging.
+    Returns statistics about search patterns and performance based on actual search history.
+    Includes total searches, average response times, popular queries, and search type distribution.
     """
-    # Placeholder implementation
-    # In a real system, this would analyze search logs
-    return SearchAnalytics(total_searches=0, avg_response_time=None, popular_tags=[], search_types={})
+    try:
+        from ...shared_storage import get_search_history_db
+
+        search_db = get_search_history_db()
+
+        if search_db is None:
+            # Search history tracking not initialized, return empty data
+            logger.warning("Search history database not initialized")
+            return SearchAnalytics(total_searches=0, avg_response_time=None, popular_tags=[], search_types={})
+
+        # Get search statistics from database
+        stats = await search_db.get_search_stats(days=days)
+
+        # Transform popular queries into popular tags format
+        # (Convert queries to tag-like format for backward compatibility)
+        popular_tags = [
+            {"tag": query_data["query"], "count": query_data["count"]} for query_data in stats.get("popular_queries", [])
+        ]
+
+        return SearchAnalytics(
+            total_searches=stats.get("total_searches", 0),
+            avg_response_time=stats.get("avg_response_time"),
+            popular_tags=popular_tags,
+            search_types=stats.get("search_types", {}),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get search analytics: {str(e)}")
+        # Return empty data on error rather than failing
+        return SearchAnalytics(total_searches=0, avg_response_time=None, popular_tags=[], search_types={})
 
 
 @router.get("/performance", response_model=PerformanceMetrics, tags=["analytics"])

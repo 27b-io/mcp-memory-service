@@ -19,6 +19,7 @@ from .graph.factory import create_graph_layer
 from .graph.queue import HebbianWriteQueue
 from .storage.base import MemoryStorage
 from .storage.factory import create_storage_instance
+from .storage.search_history_db import SearchHistoryDB
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class StorageManager:
         self._storage: MemoryStorage | None = None
         self._graph_client: GraphClient | None = None
         self._write_queue: HebbianWriteQueue | None = None
+        self._search_history_db: SearchHistoryDB | None = None
         self._initialization_lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
 
@@ -89,6 +91,19 @@ class StorageManager:
                 self._graph_client = None
                 self._write_queue = None
 
+            # Initialize search history database
+            try:
+                from .config import settings
+
+                # Place search history DB in base_dir/analytics
+                db_path = settings.paths.base_dir / "analytics" / "search_history.db"
+                self._search_history_db = SearchHistoryDB(str(db_path))
+                await self._search_history_db.initialize()
+                logger.info(f"Search history database initialized at {db_path}")
+            except Exception as e:
+                logger.warning(f"Search history DB initialization failed (non-fatal): {e}")
+                self._search_history_db = None
+
             self._initialized = True
 
             logger.info(f"Shared storage initialized successfully: {type(self._storage).__name__}")
@@ -104,6 +119,11 @@ class StorageManager:
     def write_queue(self) -> HebbianWriteQueue | None:
         """Get the Hebbian write queue if graph layer is enabled."""
         return self._write_queue
+
+    @property
+    def search_history_db(self) -> SearchHistoryDB | None:
+        """Get the search history database if initialized."""
+        return self._search_history_db
 
     async def close(self) -> None:
         """Close all managed instances.
@@ -125,6 +145,14 @@ class StorageManager:
             except Exception as e:
                 logger.warning(f"Error closing graph client: {e}")
             self._graph_client = None
+
+        # Close search history DB
+        if self._search_history_db is not None:
+            try:
+                await self._search_history_db.close()
+            except Exception as e:
+                logger.warning(f"Error closing search history DB: {e}")
+            self._search_history_db = None
 
         # Close storage
         if self._storage is not None:
@@ -188,3 +216,8 @@ def get_graph_client() -> GraphClient | None:
 def get_write_queue() -> HebbianWriteQueue | None:
     """Get the shared Hebbian write queue if graph layer is enabled."""
     return _manager.write_queue
+
+
+def get_search_history_db() -> SearchHistoryDB | None:
+    """Get the shared search history database if initialized."""
+    return _manager.search_history_db

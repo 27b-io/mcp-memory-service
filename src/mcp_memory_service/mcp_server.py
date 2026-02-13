@@ -70,6 +70,55 @@ def _inject_latency(response: dict[str, Any] | str, start: float) -> dict[str, A
     return f"# latency_ms={elapsed}\n{response}"
 
 
+def _log_search_history(
+    query: str,
+    search_type: str,
+    result_count: int,
+    response_time_ms: float,
+    parameters: dict[str, Any] | None = None,
+) -> None:
+    """Log search query to history database (fire-and-forget).
+
+    Args:
+        query: Search query text
+        search_type: Type of search operation
+        result_count: Number of results returned
+        response_time_ms: Response time in milliseconds
+        parameters: Search parameters (optional)
+    """
+    from .models.search_history import SearchHistoryEntry
+    from .shared_storage import get_search_history_db
+
+    search_db = get_search_history_db()
+    if search_db is None:
+        return  # Search history tracking not initialized
+
+    # Create entry
+    entry = SearchHistoryEntry(
+        query=query,
+        search_type=search_type,
+        result_count=result_count,
+        response_time_ms=response_time_ms,
+        parameters=parameters or {},
+    )
+
+    # Log asynchronously (non-blocking, don't await)
+    import asyncio
+
+    async def _async_log():
+        try:
+            await search_db.log_search(entry)
+        except Exception as e:
+            logger.warning(f"Failed to log search history: {e}")
+
+    # Fire and forget
+    try:
+        asyncio.create_task(_async_log())
+    except Exception:
+        # Silently fail if event loop issues
+        pass
+
+
 @dataclass
 class MCPServerContext:
     """Application context for the MCP server with all required components."""
@@ -350,6 +399,16 @@ async def retrieve_memory(
         "total_pages": result.get("total_pages", 0),
     }
 
+    # Log search to history (non-blocking)
+    response_time_ms = round((time.perf_counter() - _t0) * 1000, 1)
+    _log_search_history(
+        query=query,
+        search_type="retrieve_memory",
+        result_count=len(result.get("memories", [])),
+        response_time_ms=response_time_ms,
+        parameters={"page": page, "page_size": page_size, "min_similarity": min_similarity},
+    )
+
     # Convert results to TOON format with pagination
     toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
     return _inject_latency(toon_output, _t0)
@@ -405,6 +464,17 @@ async def memory_scan(
         min_relevance=min_relevance,
         output_format=output_format,
     )
+
+    # Log search history (non-blocking)
+    response_time_ms = round((time.perf_counter() - _t0) * 1000, 1)
+    _log_search_history(
+        query=query,
+        search_type="memory_scan",
+        result_count=result.get("count", 0),
+        response_time_ms=response_time_ms,
+        parameters={"n_results": n_results, "min_relevance": min_relevance, "output_format": output_format},
+    )
+
     return _inject_latency(result, _t0)
 
 
@@ -448,6 +518,17 @@ async def find_similar_memories(
         k=k,
         distance_metric=distance_metric,
     )
+
+    # Log search history (non-blocking)
+    response_time_ms = round((time.perf_counter() - _t0) * 1000, 1)
+    _log_search_history(
+        query=query,
+        search_type="find_similar",
+        result_count=result.get("count", 0),
+        response_time_ms=response_time_ms,
+        parameters={"k": k, "distance_metric": distance_metric},
+    )
+
     return _inject_latency(result, _t0)
 
 
@@ -501,6 +582,17 @@ async def search_by_tag(tags: str | list[str], ctx: Context, match_all: bool = F
         "has_more": result.get("has_more", False),
         "total_pages": result.get("total_pages", 0),
     }
+
+    # Log search history (non-blocking)
+    response_time_ms = round((time.perf_counter() - _t0) * 1000, 1)
+    tag_query = tags if isinstance(tags, str) else ",".join(tags)
+    _log_search_history(
+        query=tag_query,
+        search_type="search_by_tag",
+        result_count=len(result.get("memories", [])),
+        response_time_ms=response_time_ms,
+        parameters={"match_all": match_all, "page": page, "page_size": page_size},
+    )
 
     # Convert results to TOON format with pagination
     toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)

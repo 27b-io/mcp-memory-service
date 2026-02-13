@@ -13,5 +13,6 @@
 # limitations under the License.
 
 from .memory import Memory, MemoryQueryResult
+from .search_history import SearchHistoryEntry
 
-__all__ = ["Memory", "MemoryQueryResult"]
+__all__ = ["Memory", "MemoryQueryResult", "SearchHistoryEntry"]
