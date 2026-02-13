@@ -366,3 +366,32 @@ class MemoryQueryResult:
             "similarity_score": self.relevance_score,
             "debug_info": self.debug_info,
         }
+
+
+@dataclass
+class MemoryVersion:
+    """Represents a historical version of a memory's content."""
+
+    content_hash: str  # Foreign key to parent memory
+    version: int  # Version number (1, 2, 3, ...)
+    content: str  # Historical content snapshot
+    timestamp: float = field(default_factory=time.time)  # When this version was created
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert version to dictionary format for storage."""
+        return {
+            "content_hash": self.content_hash,
+            "version": self.version,
+            "content": self.content,
+            "timestamp": self.timestamp,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MemoryVersion":
+        """Create a MemoryVersion instance from dictionary data."""
+        return cls(
+            content_hash=data["content_hash"],
+            version=int(data["version"]),
+            content=data["content"],
+            timestamp=float(data["timestamp"]),
+        )

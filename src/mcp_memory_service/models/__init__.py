@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .memory import Memory, MemoryQueryResult
+from .memory import Memory, MemoryQueryResult, MemoryVersion
 
-__all__ = ["Memory", "MemoryQueryResult"]
+__all__ = ["Memory", "MemoryQueryResult", "MemoryVersion"]
