@@ -572,6 +572,69 @@ class MemoryService:
                 "page_size": page_size,
             }
 
+    async def faceted_search(
+        self,
+        tags: list[str] | None = None,
+        tag_match_all: bool = False,
+        memory_type: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Filter memories by multiple metadata facets.
+
+        Args:
+            tags: Filter by tags (optional)
+            tag_match_all: If True, require all tags; if False, require any tag
+            memory_type: Filter by memory type (optional)
+            date_from: Filter by created_at >= this (ISO8601 or relative like "7d")
+            date_to: Filter by created_at <= this (ISO8601 or relative)
+            page: Page number (1-indexed)
+            page_size: Results per page (max 100)
+
+        Returns:
+            Dict with memories, pagination metadata
+
+        Raises:
+            ValueError: If parameters are invalid
+        """
+        from ..utils.date_parsing import parse_date_filter
+
+        # Validate memory_type
+        valid_types = ["note", "decision", "task", "reference"]
+        if memory_type and memory_type not in valid_types:
+            raise ValueError(f"memory_type must be one of: {', '.join(valid_types)}")
+
+        # Validate pagination
+        if page < 1:
+            raise ValueError("page must be >= 1")
+        if page_size > 100:
+            raise ValueError("page_size must be <= 100")
+
+        # Parse date filters
+        date_from_ts = None
+        date_to_ts = None
+
+        if date_from:
+            date_from_ts = parse_date_filter(date_from)
+        if date_to:
+            date_to_ts = parse_date_filter(date_to)
+
+        # Call storage layer
+        result = await self.storage.faceted_search(
+            tags=tags,
+            tag_match_all=tag_match_all,
+            memory_type=memory_type,
+            date_from=date_from_ts,
+            date_to=date_to_ts,
+            page=page,
+            page_size=page_size,
+        )
+
+        return result
+
     async def store_memory(
         self,
         content: str,
