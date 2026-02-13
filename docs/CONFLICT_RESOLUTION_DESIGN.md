@@ -1,5 +1,13 @@
 # Memory Merge Conflicts - Design Document
 
+**Status**: ✅ IMPLEMENTED (mm-3iaw)
+
+**Commits:**
+- 04f4f8b: Foundation (Memory model, Config, GraphClient extensions)
+- 8b8a3e0: Manual resolution API endpoints
+- 1f0541e: CRDT automatic resolution
+- cdf541b: Comprehensive tests (20/20 passing)
+
 ## Overview
 
 Extend MCP Memory Service with conflict detection and resolution capabilities. Support both automatic resolution (CRDT-style) and manual resolution via API.
@@ -206,28 +214,34 @@ class Settings:
 
 ## Implementation Plan
 
-### Phase 1: Foundation (Current PR)
+### Phase 1: Foundation ✅ COMPLETE (04f4f8b)
 1. ✅ Add conflict_status, conflict_version, conflict_history to Memory model
 2. ✅ Extend graph CONTRADICTS edges with resolution metadata
 3. ✅ Add ConflictResolutionSettings to config
 4. ✅ Create conflict query utilities (list conflicts from graph)
 
-### Phase 2: CRDT Auto-Resolution
-1. Implement auto_resolve_conflict() using last-write-wins
-2. Add conflict resolution to consolidation cycle
-3. Config flag to enable/disable auto-resolution
-4. Tests for CRDT resolution
+### Phase 2: CRDT Auto-Resolution ✅ COMPLETE (1f0541e)
+1. ✅ Implement auto_resolve_conflict() using last-write-wins
+2. ✅ Add conflict resolution to consolidation cycle
+3. ✅ Config flag to enable/disable auto-resolution
+4. ✅ Tests for CRDT resolution
 
-### Phase 3: Manual Resolution API
-1. Add GET /conflicts endpoints
-2. Add POST /conflicts/.../resolve endpoint
-3. Resolution actions: keep_source, keep_target, merge
-4. Tests for manual resolution
+### Phase 3: Manual Resolution API ✅ COMPLETE (8b8a3e0)
+1. ✅ Add GET /conflicts endpoints
+2. ✅ Add POST /conflicts/.../resolve endpoint
+3. ✅ Resolution actions: keep_source, keep_target, merge, dismiss
+4. ✅ Tests for manual resolution
 
-### Phase 4: Optimistic Locking (Optional Future)
-1. Add version checking to update operations
-2. Detect concurrent updates
-3. Queue for resolution or auto-resolve
+### Phase 4: Testing & Documentation ✅ COMPLETE (cdf541b, docs)
+1. ✅ 20 comprehensive tests (all passing)
+2. ✅ User guide (CONFLICT_RESOLUTION_GUIDE.md)
+3. ✅ Design documentation updated
+4. ✅ Configuration reference
+
+### Phase 5: Optimistic Locking (Optional Future)
+1. ⏸️ Add version checking to update operations
+2. ⏸️ Detect concurrent updates
+3. ⏸️ Queue for resolution or auto-resolve
 
 ## Testing Strategy
 
