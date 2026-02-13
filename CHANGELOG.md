@@ -8,6 +8,21 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.6.0](https://github.com/27b-io/mcp-memory-service/compare/v11.5.0...v11.6.0) (2026-02-13)
+
+
+### Features
+
+* Add --batch-size flag to chunk consolidation script ([165ca67](https://github.com/27b-io/mcp-memory-service/commit/165ca679bf74edfccc89a6d9e586b586525e3675))
+* Add configurable temporal decay for memory relevance scoring ([5e76c40](https://github.com/27b-io/mcp-memory-service/commit/5e76c40c532e62ae4511a5dd9bea35473fcf4741)), closes [#73](https://github.com/27b-io/mcp-memory-service/issues/73)
+* Add memory similarity search with k-nearest neighbors ([1262fe9](https://github.com/27b-io/mcp-memory-service/commit/1262fe955fb9911cc4d231e60abcecbc94525e23))
+* Hebbian-weighted search boosting ([3eb67b6](https://github.com/27b-io/mcp-memory-service/commit/3eb67b6d485d3c2d40b40b24207572868cf1d04c))
+
+
+### Bug Fixes
+
+* improve antonym detection to prevent false positives on compound identifiers ([b1dca4e](https://github.com/27b-io/mcp-memory-service/commit/b1dca4e5520739f25c8a593972eee7a26195c53b))
+
 ## [11.5.0](https://github.com/27b-io/mcp-memory-service/compare/v11.4.0...v11.5.0) (2026-02-12)
 
 
