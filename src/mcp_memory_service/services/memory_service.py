@@ -328,6 +328,120 @@ class MemoryService:
             except Exception as e:
                 logger.warning(f"Failed to create contradiction edge (non-fatal): {e}")
 
+    async def _auto_resolve_conflict(
+        self,
+        source_hash: str,
+        target_hash: str,
+    ) -> bool:
+        """
+        Automatically resolve a conflict using CRDT (last-write-wins).
+
+        Strategy:
+        1. Compare updated_at timestamps — most recent wins
+        2. Keep winner's content
+        3. Merge tags from both memories (union)
+        4. Record resolution in conflict_history
+        5. Delete loser from storage
+        6. Mark CONTRADICTS edge as resolved
+
+        Args:
+            source_hash: First memory in conflict
+            target_hash: Second memory in conflict
+
+        Returns:
+            True if conflict was resolved, False if memories not found or resolution failed
+        """
+        try:
+            # Fetch both memories
+            source = await self.storage.get_memory_by_hash(source_hash)
+            target = await self.storage.get_memory_by_hash(target_hash)
+
+            if not source or not target:
+                logger.warning(f"Cannot auto-resolve: memory not found (source={bool(source)}, target={bool(target)})")
+                return False
+
+            # Determine winner based on updated_at (most recent wins)
+            if source.updated_at and target.updated_at:
+                if source.updated_at >= target.updated_at:
+                    winner, loser = source, target
+                    winner_hash, loser_hash = source_hash, target_hash
+                else:
+                    winner, loser = target, source
+                    winner_hash, loser_hash = target_hash, source_hash
+            else:
+                # Fallback to created_at if updated_at missing
+                if (source.created_at or 0) >= (target.created_at or 0):
+                    winner, loser = source, target
+                    winner_hash, loser_hash = source_hash, target_hash
+                else:
+                    winner, loser = target, source
+                    winner_hash, loser_hash = target_hash, source_hash
+
+            # Merge tags (union of both sets)
+            merged_tags = list(set(winner.tags) | set(loser.tags))
+
+            # Update winner with merged tags
+            if merged_tags != winner.tags:
+                await self.storage.update_memory_metadata(
+                    winner_hash,
+                    {"tags_str": ",".join(merged_tags)},
+                    preserve_timestamps=True,
+                )
+
+            # Record resolution in winner's conflict history
+            conflict_history = winner.conflict_history or []
+            conflict_history.append(
+                {
+                    "resolved_at": time.time(),
+                    "strategy": "auto_last_write_wins",
+                    "merged_from": loser_hash,
+                    "merged_tags": True,
+                    "winner_updated_at": winner.updated_at,
+                    "loser_updated_at": loser.updated_at,
+                }
+            )
+            await self.storage.update_memory_metadata(
+                winner_hash,
+                {
+                    "conflict_history": conflict_history,
+                    "conflict_status": "auto_resolved",
+                },
+                preserve_timestamps=True,
+            )
+
+            # Delete loser from storage
+            await self.storage.delete(loser_hash)
+
+            # Clean up loser's graph node
+            if self._graph is not None:
+                await self._graph.delete_memory_node(loser_hash)
+
+            # Mark CONTRADICTS edges as resolved
+            # Need to mark edges in both directions if they exist
+            if self._graph is not None:
+                await self._graph.update_typed_edge_metadata(
+                    source_hash=source_hash,
+                    target_hash=target_hash,
+                    relation_type="CONTRADICTS",
+                    metadata={
+                        "resolved_at": time.time(),
+                        "resolved_by": "auto",
+                        "resolution_action": "last_write_wins",
+                        "kept_hash": winner_hash,
+                    },
+                )
+
+            logger.info(
+                f"Auto-resolved conflict: kept {winner_hash[:8]} "
+                f"(updated {winner.updated_at}), deleted {loser_hash[:8]} "
+                f"(updated {loser.updated_at})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to auto-resolve conflict {source_hash[:8]} vs {target_hash[:8]}: {e}")
+            return False
+
     def _fire_access_count_updates(self, content_hashes: list[str]) -> None:
         """
         Schedule access count increments as background tasks (fire-and-forget).
@@ -732,6 +846,24 @@ class MemoryService:
                             content_hash,
                             interference.contradictions,
                         )
+
+                        # Auto-resolve conflicts if enabled
+                        if settings.conflict.enabled and settings.conflict.auto_resolve:
+                            resolved_count = 0
+                            for contradiction in interference.contradictions:
+                                resolved = await self._auto_resolve_conflict(
+                                    content_hash,
+                                    contradiction.existing_hash,
+                                )
+                                if resolved:
+                                    resolved_count += 1
+
+                            if resolved_count > 0:
+                                result["auto_resolved"] = {
+                                    "count": resolved_count,
+                                    "strategy": "last_write_wins",
+                                }
+                                logger.info(f"Auto-resolved {resolved_count} conflicts for {content_hash[:8]}")
 
                     return result
                 else:
@@ -1224,6 +1356,15 @@ class MemoryService:
             logger.error(f"Consolidation duplicate detection failed: {e}")
             stats["errors"].append(f"duplicate_detection: {e}")
 
+        # Phase 6: Auto-resolve unresolved conflicts (if enabled)
+        if settings.conflict.enabled and settings.conflict.auto_resolve:
+            try:
+                conflict_stats = await self._auto_resolve_conflicts(max_conflicts=config.max_duplicates_per_run)
+                stats["conflicts_resolved"] = conflict_stats["resolved"]
+            except Exception as e:
+                logger.error(f"Consolidation conflict auto-resolution failed: {e}")
+                stats["errors"].append(f"conflict_resolution: {e}")
+
         stats["success"] = len(stats["errors"]) == 0
         logger.info(f"Consolidation complete: {stats}")
         return stats
@@ -1322,6 +1463,43 @@ class MemoryService:
             memories = await self.storage.get_all_memories(limit=batch_size, offset=offset)
 
         return {"found": found, "merged": merged}
+
+    async def _auto_resolve_conflicts(self, max_conflicts: int = 50) -> dict[str, int]:
+        """
+        Auto-resolve unresolved CONTRADICTS edges using CRDT (last-write-wins).
+
+        Called during consolidation to clean up accumulated conflicts.
+
+        Args:
+            max_conflicts: Maximum conflicts to resolve per run
+
+        Returns:
+            Dict with 'resolved' count
+        """
+        if self._graph is None:
+            return {"resolved": 0}
+
+        resolved = 0
+
+        try:
+            # Get unresolved conflicts
+            conflicts = await self._graph.list_unresolved_conflicts(limit=max_conflicts)
+
+            for conflict in conflicts:
+                success = await self._auto_resolve_conflict(
+                    conflict["source"],
+                    conflict["target"],
+                )
+                if success:
+                    resolved += 1
+
+                if resolved >= max_conflicts:
+                    break
+
+        except Exception as e:
+            logger.error(f"Batch conflict resolution failed: {e}")
+
+        return {"resolved": resolved}
 
     async def create_relation(
         self,
