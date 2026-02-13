@@ -524,6 +524,46 @@ class QdrantStorage(MemoryStorage):
             logger.error(f"Error checking if collection exists: {e}")
             return False
 
+    async def _store_version(self, memory: Memory, embedding: list[float]) -> None:
+        """
+        Store a version snapshot in the versions collection.
+
+        Args:
+            memory: Memory object containing the version data
+            embedding: Embedding vector for the version (usually same as memory's embedding)
+        """
+        import time
+        import uuid
+
+        from mcp_memory_service.models.memory import MemoryVersion
+
+        loop = asyncio.get_event_loop()
+        versions_collection_name = f"{self.collection_name}_versions"
+
+        # Create MemoryVersion object
+        version = MemoryVersion(
+            content_hash=memory.content_hash,
+            version=memory.current_version,
+            content=memory.content,
+            timestamp=time.time(),
+        )
+
+        # Generate unique ID for this version: hash(content_hash + version)
+        version_id_str = f"{memory.content_hash}:v{memory.current_version}"
+        version_id = uuid.uuid5(uuid.NAMESPACE_DNS, version_id_str)
+
+        # Create point for versions collection
+        point = PointStruct(
+            id=str(version_id),
+            vector=embedding,
+            payload=version.to_dict(),
+        )
+
+        # Store in versions collection
+        await loop.run_in_executor(None, lambda: self.client.upsert(collection_name=versions_collection_name, points=[point]))
+
+        logger.debug(f"Stored version {memory.current_version} for memory {memory.content_hash[:8]}...")
+
     def _check_circuit_breaker(self) -> None:
         """
         Check if circuit breaker is open and fail fast if so.
@@ -763,6 +803,10 @@ class QdrantStorage(MemoryStorage):
             # Upsert to Qdrant (idempotent operation)
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, lambda: self.client.upsert(collection_name=self.collection_name, points=[point]))
+
+            # Store initial version if this is a new memory (version 1)
+            if memory.current_version == 1:
+                await self._store_version(memory, memory.embedding)
 
             # Record success for circuit breaker
             self._record_success()
