@@ -987,6 +987,197 @@ class QdrantStorage(MemoryStorage):
             self._record_failure()
             raise StorageError(f"Tag search failed: {e}") from e
 
+    async def faceted_search(
+        self,
+        tags: list[str] | None = None,
+        tag_match_all: bool = False,
+        memory_type: str | None = None,
+        date_from: float | None = None,
+        date_to: float | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Filter memories by multiple metadata facets.
+
+        Supports filtering by tags (AND/OR logic), memory type, and date range.
+        Results are ordered chronologically (newest first) with full pagination.
+
+        Args:
+            tags: Filter by tags (optional)
+            tag_match_all: If True, require all tags; if False, require any tag
+            memory_type: Filter by memory type (optional)
+            date_from: Filter by created_at >= this timestamp (optional)
+            date_to: Filter by created_at <= this timestamp (optional)
+            page: Page number (1-indexed)
+            page_size: Results per page
+
+        Returns:
+            Dict with:
+            - memories: List[Memory]
+            - total: int (total matching count)
+            - page: int
+            - page_size: int
+            - has_more: bool
+            - total_pages: int
+        """
+        # Check circuit breaker
+        self._check_circuit_breaker()
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Build filter conditions
+            must_conditions = []
+            should_conditions = []
+
+            # Tag filter (OR logic for ANY, AND logic for ALL)
+            if tags:
+                if tag_match_all:
+                    # AND logic - memory must have ALL tags
+                    must_conditions.extend([FieldCondition(key="tags", match=MatchValue(value=tag)) for tag in tags])
+                else:
+                    # OR logic - memory must have ANY tag
+                    should_conditions.extend([FieldCondition(key="tags", match=MatchValue(value=tag)) for tag in tags])
+
+            # Memory type filter
+            if memory_type:
+                must_conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=memory_type)))
+
+            # Date range filter
+            if date_from is not None or date_to is not None:
+                range_conditions = []
+
+                if date_from is not None:
+                    range_conditions.append(FieldCondition(key="created_at", range=Range(gte=date_from)))
+
+                if date_to is not None:
+                    range_conditions.append(FieldCondition(key="created_at", range=Range(lte=date_to)))
+
+                must_conditions.extend(range_conditions)
+
+            # Build combined filter
+            combined_filter = None
+            if must_conditions and should_conditions:
+                combined_filter = Filter(must=must_conditions, should=should_conditions)
+            elif must_conditions:
+                combined_filter = Filter(must=must_conditions)
+            elif should_conditions:
+                combined_filter = Filter(should=should_conditions)
+
+            # Get total count
+            count_result = await loop.run_in_executor(
+                None,
+                lambda: self.client.count(
+                    collection_name=self.collection_name,
+                    count_filter=combined_filter,
+                    exact=True,
+                ),
+            )
+
+            total = count_result.count
+            # Only subtract 1 for metadata point if no filter applied
+            if total > 0 and not combined_filter:
+                total = max(0, total - 1)
+
+            # Calculate pagination
+            total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+            offset_count = (page - 1) * page_size
+            has_more = page < total_pages
+
+            # Fetch paginated results with chronological ordering
+            # Note: Qdrant doesn't support offset with order_by, so we manually skip
+            memories = []
+            skipped = 0
+            start_from = None
+            fetched_ids = set()  # Track seen IDs to avoid duplicates
+
+            while len(memories) < page_size:
+                batch_size = min(100, page_size * 2)  # Fetch extra to account for skipping
+
+                scroll_result = await loop.run_in_executor(
+                    None,
+                    lambda sf=start_from, bs=batch_size: self.client.scroll(
+                        collection_name=self.collection_name,
+                        scroll_filter=combined_filter,
+                        limit=bs,
+                        with_payload=True,
+                        with_vectors=False,
+                        order_by=OrderBy(key="created_at", direction="desc", start_from=sf),
+                    ),
+                )
+
+                points, next_offset = scroll_result
+
+                if not points:
+                    break
+
+                for point in points:
+                    # Skip metadata point
+                    if point.id == self.METADATA_POINT_ID:
+                        continue
+
+                    # Skip duplicates (can happen when scrolling)
+                    if point.id in fetched_ids:
+                        continue
+                    fetched_ids.add(point.id)
+
+                    # Handle offset by skipping
+                    if skipped < offset_count:
+                        skipped += 1
+                        continue
+
+                    payload = point.payload
+                    memory = Memory(
+                        content=payload.get("content", ""),
+                        content_hash=payload.get("content_hash", str(point.id)),
+                        tags=payload.get("tags", []),
+                        memory_type=payload.get("memory_type"),
+                        metadata=payload.get("metadata", {}),
+                        created_at=payload.get("created_at", 0.0),
+                        updated_at=payload.get("updated_at", 0.0),
+                        emotional_valence=payload.get("emotional_valence"),
+                        salience_score=float(payload.get("salience_score", 0.0)),
+                        access_count=int(payload.get("access_count", 0)),
+                        access_timestamps=payload.get("access_timestamps", []),
+                        summary=payload.get("summary"),
+                    )
+                    memories.append(memory)
+
+                    if len(memories) >= page_size:
+                        break
+
+                # Stop if we have enough memories or no more results
+                if len(memories) >= page_size or next_offset is None:
+                    break
+
+                # Update start_from for next batch (use last point's created_at)
+                if points:
+                    start_from = points[-1].payload.get("created_at")
+
+            # Record success
+            self._record_success()
+
+            logger.debug(
+                f"faceted_search returned {len(memories)} results "
+                f"(tags={tags}, type={memory_type}, date_range=({date_from}, {date_to}), "
+                f"page={page}/{total_pages}, total={total})"
+            )
+
+            return {
+                "memories": memories,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "has_more": has_more,
+                "total_pages": total_pages,
+            }
+
+        except Exception as e:
+            logger.error(f"faceted_search failed: {e}")
+            self._record_failure()
+            raise StorageError(f"Faceted search failed: {e}") from e
+
     async def get_memory_by_hash(self, content_hash: str) -> Memory | None:
         """
         Retrieve a specific memory by its content hash.

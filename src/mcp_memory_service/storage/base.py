@@ -143,6 +143,40 @@ class MemoryStorage(ABC):
         """
         pass
 
+    @abstractmethod
+    async def faceted_search(
+        self,
+        tags: list[str] | None = None,
+        tag_match_all: bool = False,
+        memory_type: str | None = None,
+        date_from: float | None = None,
+        date_to: float | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Filter memories by multiple metadata facets.
+
+        Args:
+            tags: Filter by tags (optional)
+            tag_match_all: If True, require all tags; if False, require any tag
+            memory_type: Filter by memory type (optional)
+            date_from: Filter by created_at >= this timestamp (optional)
+            date_to: Filter by created_at <= this timestamp (optional)
+            page: Page number (1-indexed)
+            page_size: Results per page
+
+        Returns:
+            Dict with:
+            - memories: List[Memory]
+            - total: int (total matching count)
+            - page: int
+            - page_size: int
+            - has_more: bool
+            - total_pages: int
+        """
+        pass
+
     async def search_by_tag_chronological(self, tags: list[str], limit: int = None, offset: int = 0) -> list[Memory]:
         """
         Search memories by tags with chronological ordering (newest first).
