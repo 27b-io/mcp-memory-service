@@ -34,6 +34,7 @@ from ..config import (
     CORS_ORIGINS,
 )
 from .api.analytics import router as analytics_router
+from .api.conflicts import router as conflicts_router
 from .api.events import router as events_router
 from .api.health import router as health_router
 from .api.manage import router as manage_router
@@ -136,6 +137,8 @@ def create_app() -> FastAPI:
     logger.info(f"✓ Included search router with {len(search_router.routes)} routes")
     app.include_router(manage_router, prefix="/api/manage", tags=["management"])
     logger.info(f"✓ Included manage router with {len(manage_router.routes)} routes")
+    app.include_router(conflicts_router, prefix="/api", tags=["conflicts"])
+    logger.info(f"✓ Included conflicts router with {len(conflicts_router.routes)} routes")
     app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
     logger.info(f"✓ Included analytics router with {len(analytics_router.routes)} routes")
     app.include_router(events_router, prefix="/api", tags=["events"])
