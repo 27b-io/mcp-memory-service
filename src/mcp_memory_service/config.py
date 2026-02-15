@@ -773,6 +773,34 @@ class SummarySettings(BaseSettings):
             return "extractive"
 
 
+class QuotaSettings(BaseSettings):
+    """Quota configuration with environment variable support."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_QUOTA_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False, description="Enable quota enforcement")
+
+    # Memory count limits
+    max_memories: int = Field(default=10_000, ge=1, description="Maximum memories per client")
+
+    # Storage size limits (bytes)
+    max_storage_bytes: int = Field(default=1_073_741_824, ge=1, description="Maximum storage per client (1GB default)")
+
+    # Rate limits
+    max_memories_per_hour: int = Field(default=100, ge=1, description="Maximum memories created per hour")
+    rate_limit_window_seconds: int = Field(default=3600, ge=60, description="Rate limit window in seconds")
+
+    # Warning thresholds (percentage)
+    warning_threshold_low: float = Field(default=0.8, ge=0.0, le=1.0, description="Low warning at 80%")
+    warning_threshold_high: float = Field(default=0.9, ge=0.0, le=1.0, description="High warning at 90%")
+
+
 # =============================================================================
 # Main Settings Class
 # =============================================================================
@@ -809,6 +837,7 @@ class Settings(BaseSettings):
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
     summary: SummarySettings = Field(default_factory=SummarySettings)
+    quota: QuotaSettings = Field(default_factory=QuotaSettings)
 
     @model_validator(mode="after")
     def validate_backend_requirements(self) -> "Settings":
