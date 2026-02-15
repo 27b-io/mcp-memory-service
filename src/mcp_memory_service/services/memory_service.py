@@ -86,7 +86,46 @@ class MemoryService:
         self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
         self._three_tier: ThreeTierMemory | None = None
+        self._cache: Any = None  # RedisCache instance, initialized lazily
         self._init_three_tier()
+        self._init_cache()
+
+    def _init_cache(self) -> None:
+        """Initialize Redis cache if enabled in config.
+
+        Gracefully degrades: if config unavailable or Redis unreachable,
+        the feature stays disabled.
+        """
+        try:
+            cache_config = settings.redis_cache
+            if not cache_config.enabled:
+                return
+
+            # Import here to avoid circular dependency
+            from ..cache.redis_cache import RedisCache
+
+            self._cache = RedisCache(
+                url=cache_config.url,
+                ttl_seconds=cache_config.ttl_seconds,
+                key_prefix=cache_config.key_prefix,
+                max_connections=cache_config.max_connections,
+            )
+
+            # Initialize in background (non-blocking)
+            asyncio.create_task(self._async_init_cache())
+        except (AttributeError, TypeError, ValueError, ImportError) as exc:
+            logger.warning("Redis cache init skipped: %s", exc)
+
+    async def _async_init_cache(self) -> None:
+        """Async initialization of cache connection."""
+        if self._cache is None:
+            return
+        try:
+            await self._cache.initialize()
+            logger.info("Redis cache enabled")
+        except Exception as e:
+            logger.warning(f"Redis cache initialization failed (non-fatal): {e}")
+            self._cache = None
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -692,6 +731,11 @@ class MemoryService:
                             interference.contradictions,
                         )
 
+                # Invalidate search caches (new memory changes search results)
+                if self._cache:
+                    await self._cache.invalidate_all()
+                    logger.debug("Invalidated all search caches after memory store (split)")
+
                 return result
             else:
                 # Store as single memory
@@ -727,6 +771,11 @@ class MemoryService:
                             content_hash,
                             interference.contradictions,
                         )
+
+                    # Invalidate search caches (new memory changes search results)
+                    if self._cache:
+                        await self._cache.invalidate_all()
+                        logger.debug("Invalidated all search caches after memory store")
 
                     return result
                 else:
@@ -777,6 +826,41 @@ class MemoryService:
         Returns:
             Dictionary with search results and pagination metadata
         """
+        # Check cache first (if enabled)
+        cache_key = None
+        if self._cache:
+            from ..cache.redis_cache import generate_cache_key
+
+            cache_params = {
+                "query": query,
+                "page": page,
+                "page_size": page_size,
+                "tags": tags,
+                "memory_type": memory_type,
+                "min_similarity": min_similarity,
+            }
+            cache_key = generate_cache_key("retrieve", cache_params)
+
+            cached_result = await self._cache.get(cache_key)
+            if cached_result is not None:
+                logger.debug(f"Cache hit for retrieve_memories: {cache_key}")
+                # Still fire side effects for cached results
+                if "memories" in cached_result:
+                    result_hashes = [m.get("content_hash") for m in cached_result["memories"] if m.get("content_hash")]
+                    if result_hashes:
+                        # Compute spacing qualities for LTP
+                        result_spacing = []
+                        if settings.spaced_repetition.enabled:
+                            for m in cached_result["memories"]:
+                                timestamps = m.get("access_timestamps", [])
+                                spacing = compute_spacing_quality(timestamps) if timestamps else 0.0
+                                result_spacing.append(spacing)
+
+                        await self._fire_hebbian_co_access(result_hashes, result_spacing or None)
+                        self._fire_access_count_updates(result_hashes)
+
+                return cached_result
+
         try:
             config = settings.hybrid_search
 
@@ -950,7 +1034,7 @@ class MemoryService:
             # Track access counts (fire-and-forget)
             self._fire_access_count_updates(result_hashes)
 
-            return {
+            result = {
                 "memories": results,
                 "query": query,
                 "hybrid_enabled": True,
@@ -958,6 +1042,13 @@ class MemoryService:
                 "keywords_extracted": keywords,
                 **self._build_pagination_metadata(total, page, page_size),
             }
+
+            # Cache the result (if caching enabled)
+            if self._cache and cache_key:
+                await self._cache.set(cache_key, result)
+                logger.debug(f"Cached retrieve_memories result: {cache_key}")
+
+            return result
 
         except Exception as e:
             logger.error(f"Error retrieving memories: {e}")

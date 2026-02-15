@@ -639,6 +639,29 @@ class TOONSettings(BaseSettings):
     log_token_savings: bool = Field(default=False, description="Log token savings metrics during TOON encoding")
 
 
+class RedisCacheSettings(BaseSettings):
+    """Redis cache configuration for memory search results."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_CACHE_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+    )
+
+    enabled: bool = Field(default=False, description="Enable Redis cache for search results")
+
+    url: str = Field(default="redis://localhost:6379", description="Redis connection URL")
+
+    ttl_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=3600,
+        description="Cache TTL in seconds (default 300 = 5 minutes)",
+    )
+
+    key_prefix: str = Field(default="mcp:cache:", description="Prefix for all cache keys")
+
+    max_connections: int = Field(default=10, ge=1, le=100, description="Maximum Redis connections in pool")
+
+
 class DebugSettings(BaseSettings):
     """Debug and development configuration."""
 
@@ -804,6 +827,7 @@ class Settings(BaseSettings):
     encoding_context: EncodingContextSettings = Field(default_factory=EncodingContextSettings)
     three_tier: ThreeTierSettings = Field(default_factory=ThreeTierSettings)
     toon: TOONSettings = Field(default_factory=TOONSettings)
+    redis_cache: RedisCacheSettings = Field(default_factory=RedisCacheSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
     summary: SummarySettings = Field(default_factory=SummarySettings)
