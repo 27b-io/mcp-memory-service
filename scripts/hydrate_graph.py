@@ -233,28 +233,40 @@ async def simulate_hebbian_edges(
                 continue
 
             # Create Hebbian edges between all pairs in result set
-            # In production, this goes through the write queue, but for bulk hydration
-            # we create edges directly
+            # Bulk creation using MERGE (idempotent)
+            timestamp = time.time()
+            initial_weight = 0.1  # Default initial weight
+
             for j in range(len(result_hashes)):
                 for k in range(j + 1, len(result_hashes)):
                     source = result_hashes[j]
                     target = result_hashes[k]
 
-                    # Create bidirectional edges
-                    # Check if edge exists first, update weight if so
-                    existing = await graph_client.get_edge(source, target)
+                    try:
+                        # Create bidirectional Hebbian edges
+                        # source -> target
+                        await graph_client.graph.query(
+                            "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
+                            "MERGE (a)-[e:HEBBIAN]->(b) "
+                            "ON CREATE SET e.weight = $w, e.co_access_count = 1, e.last_co_access = $ts "
+                            "ON MATCH SET e.co_access_count = e.co_access_count + 1, e.last_co_access = $ts",
+                            params={"src": source, "dst": target, "w": initial_weight, "ts": timestamp}
+                        )
 
-                    if existing:
-                        # Edge exists - would normally strengthen it, but for simulation just count
-                        pass
-                    else:
-                        # Create new edge with initial weight
-                        # Note: This is a simplified version. Production uses HebbianWriteQueue
-                        # For now, we'll use create_typed_edge as a proxy
-                        # TODO: Add a bulk Hebbian edge creation method to GraphClient
-                        pass
+                        # target -> source (bidirectional)
+                        await graph_client.graph.query(
+                            "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
+                            "MERGE (a)-[e:HEBBIAN]->(b) "
+                            "ON CREATE SET e.weight = $w, e.co_access_count = 1, e.last_co_access = $ts "
+                            "ON MATCH SET e.co_access_count = e.co_access_count + 1, e.last_co_access = $ts",
+                            params={"src": target, "dst": source, "w": initial_weight, "ts": timestamp}
+                        )
 
-                    stats["co_accesses"] += 1
+                        stats["edges_created"] += 2
+                        stats["co_accesses"] += 1
+
+                    except Exception as e:
+                        logger.error(f"Failed to create Hebbian edge {source[:8]} <-> {target[:8]}: {e}")
 
             stats["queries"] += 1
 
@@ -267,8 +279,7 @@ async def simulate_hebbian_edges(
     logger.info(f"\n✓ Hebbian simulation complete:")
     logger.info(f"  Queries simulated: {stats['queries']}")
     logger.info(f"  Co-access pairs: {stats['co_accesses']:,}")
-    logger.info(f"\nNote: Full Hebbian edge creation requires HebbianWriteQueue integration")
-    logger.info("This simulation identified co-access patterns for future implementation")
+    logger.info(f"  Hebbian edges created: {stats['edges_created']:,}")
 
     return stats
 
