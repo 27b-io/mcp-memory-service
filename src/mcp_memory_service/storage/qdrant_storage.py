@@ -705,6 +705,8 @@ class QdrantStorage(MemoryStorage):
         memory_type: str | None = None,
         min_similarity: float | None = None,
         offset: int = 0,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> list[MemoryQueryResult]:
         """
         Retrieve memories by semantic search with optional filtering and retry logic.
@@ -719,6 +721,8 @@ class QdrantStorage(MemoryStorage):
             memory_type: Optional memory type filter (AND logic)
             min_similarity: Optional minimum similarity threshold
             offset: Number of results to skip for pagination (default: 0)
+            start_timestamp: Unix timestamp - filter memories from this time (inclusive)
+            end_timestamp: Unix timestamp - filter memories until this time (inclusive)
 
         Returns:
             List of MemoryQueryResult objects, filtered and sorted by relevance
@@ -1763,6 +1767,8 @@ class QdrantStorage(MemoryStorage):
         tags: list[str] | None = None,
         memory_type: str | None = None,
         min_similarity: float | None = None,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> int:
         """
         Count memories matching semantic search criteria.
@@ -1775,6 +1781,8 @@ class QdrantStorage(MemoryStorage):
             tags: Optional list of tags to filter by (matches ANY tag)
             memory_type: Optional memory type filter
             min_similarity: Optional minimum similarity threshold
+            start_timestamp: Unix timestamp - filter memories from this time (inclusive)
+            end_timestamp: Unix timestamp - filter memories until this time (inclusive)
 
         Returns:
             Total number of memories matching the criteria
@@ -1788,6 +1796,8 @@ class QdrantStorage(MemoryStorage):
                 memory_type=memory_type,
                 min_similarity=min_similarity,
                 offset=0,
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
             )
             return len(results)
         except Exception as e:
