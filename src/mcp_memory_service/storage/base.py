@@ -100,6 +100,8 @@ class MemoryStorage(ABC):
         memory_type: str | None = None,
         min_similarity: float | None = None,
         offset: int = 0,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> list[MemoryQueryResult]:
         """
         Retrieve memories by semantic search with optional filtering and pagination.
@@ -111,6 +113,8 @@ class MemoryStorage(ABC):
             memory_type: Optional memory type filter
             min_similarity: Optional minimum similarity threshold
             offset: Number of results to skip for pagination (default: 0)
+            start_timestamp: Unix timestamp - filter memories from this time (inclusive)
+            end_timestamp: Unix timestamp - filter memories until this time (inclusive)
 
         Returns:
             List of MemoryQueryResult objects, filtered and sorted by relevance
@@ -303,10 +307,14 @@ class MemoryStorage(ABC):
         memory_type: str | None = None,
         min_similarity: float | None = None,
         offset: int = 0,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> list[Memory]:
         """Recall memories based on natural language time expression. Override for specific implementations."""
         # Default implementation just uses regular search
-        results = await self.retrieve(query, n_results, tags, memory_type, min_similarity, offset)
+        results = await self.retrieve(
+            query, n_results, tags, memory_type, min_similarity, offset, start_timestamp, end_timestamp
+        )
         return [r.memory for r in results]
 
     async def search(
@@ -317,9 +325,11 @@ class MemoryStorage(ABC):
         memory_type: str | None = None,
         min_similarity: float | None = None,
         offset: int = 0,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> list[MemoryQueryResult]:
         """Search memories. Default implementation uses retrieve."""
-        return await self.retrieve(query, n_results, tags, memory_type, min_similarity, offset)
+        return await self.retrieve(query, n_results, tags, memory_type, min_similarity, offset, start_timestamp, end_timestamp)
 
     async def get_all_memories(
         self, limit: int = None, offset: int = 0, memory_type: str | None = None, tags: list[str] | None = None
@@ -403,7 +413,13 @@ class MemoryStorage(ABC):
 
     @abstractmethod
     async def count_semantic_search(
-        self, query: str, tags: list[str] | None = None, memory_type: str | None = None, min_similarity: float | None = None
+        self,
+        query: str,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+        min_similarity: float | None = None,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> int:
         """
         Count memories matching semantic search criteria.
@@ -416,6 +432,8 @@ class MemoryStorage(ABC):
             tags: Optional list of tags to filter by (matches ANY tag)
             memory_type: Optional memory type filter
             min_similarity: Optional minimum similarity threshold
+            start_timestamp: Unix timestamp - filter memories from this time (inclusive)
+            end_timestamp: Unix timestamp - filter memories until this time (inclusive)
 
         Returns:
             Total number of memories matching the criteria
