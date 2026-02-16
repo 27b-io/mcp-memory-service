@@ -10,7 +10,8 @@ Features:
 - Native MCP protocol implementation using FastMCP
 - Direct integration with existing memory storage backends
 - Streamable HTTP transport for remote access
-- All 22 core memory operations (excluding dashboard tools)
+- 5 core tools: store_memory, search, delete_memory, check_database_health, relation
+- Three-tier memory tools available behind MCP_THREE_TIER_EXPOSE_TOOLS=true
 - SSL/HTTPS support with proper certificate handling
 """
 
@@ -175,6 +176,15 @@ class StoreMemoryFailure(TypedDict):
 # =============================================================================
 
 
+def _normalize_tags(tags: str | list[str] | None) -> list[str]:
+    """Normalize tags from string or list format to a clean list of trimmed, non-empty strings."""
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        return [t.strip() for t in tags.split(",") if t.strip()]
+    return [s for item in tags if item is not None and (s := str(item).strip())]
+
+
 @mcp.tool()
 async def store_memory(
     content: str,
@@ -185,65 +195,31 @@ async def store_memory(
     client_hostname: str | None = None,
     summary: str | None = None,
 ) -> StoreMemorySuccess | StoreMemorySplitSuccess | StoreMemoryFailure:
-    """
-    Store a new memory for future semantic retrieval.
+    """Store a new memory for future semantic retrieval.
 
-    Persists content with optional categorization (tags, type, metadata) for later
-    retrieval via semantic search or tag filtering. Content is automatically vectorized
-    for similarity matching.
-
-    Emotional tagging and salience scoring are computed automatically:
-    - Emotional valence (sentiment, magnitude, category) is detected from content
-    - Salience score combines emotional intensity, access frequency, and explicit importance
-    - Higher-salience memories receive a retrieval boost
-
-    Proactive interference detection:
-    - New memories are checked against existing ones for contradictions
-    - Contradictions are flagged (not blocked) with signal type and confidence
-    - CONTRADICTS edges are created in the knowledge graph for flagged pairs
-    - Signal types: negation, antonym, temporal (supersession)
+    Content is vectorized for similarity search. Emotional valence, salience scoring,
+    and contradiction detection are computed automatically.
 
     Args:
-        content: The text content to store (will be embedded for semantic search)
-        tags: Categorization labels (accepts ["tag1", "tag2"] or "tag1,tag2")
-        memory_type: Classification - "note", "decision", "task", or "reference"
-        metadata: Additional structured data to attach. Special keys:
-            - importance: float (0.0-1.0) - explicit importance weight for salience scoring
-        client_hostname: Source machine identifier (optional)
-        summary: Optional one-line summary (~50 tokens). Auto-generated if not provided.
-
-    Content Length Handling:
-        - No limit on content length
-        - Auto-splitting preserves context with 50-char overlap
-        - Respects natural boundaries: paragraphs → sentences → words
-
-    Tag Formats (both supported):
-        - Array: tags=["python", "bug-fix", "urgent"]
-        - String: tags="python,bug-fix,urgent"
+        content: Text to store (embedded for semantic search)
+        tags: Labels — accepts ["tag1", "tag2"] or "tag1,tag2"
+        memory_type: Classification — "note", "decision", "task", or "reference"
+        metadata: Structured data to attach. Special key: importance (float 0.0-1.0)
+        client_hostname: Source machine identifier
+        summary: One-line summary (~50 tokens). Auto-generated if omitted.
 
     Returns:
-        Single memory:
-            - success: True/False
-            - message: Status description
-            - content_hash: Unique identifier for retrieval/deletion
-            - interference: (optional) Contradiction detection results if conflicts found
-
-        Split memory (when auto-split enabled):
-            - success: True/False
-            - message: Status description
-            - chunks_created: Number of linked chunks
-            - chunk_hashes: List of content hashes
-            - interference: (optional) Contradiction detection results if conflicts found
-
-    Use this for: Capturing information for later retrieval, building knowledge base,
-    recording decisions, storing context across conversations.
+        {success, content_hash, message} or {success, chunks_created, chunk_hashes} if auto-split.
+        May include interference dict if contradictions detected.
     """
     _t0 = time.perf_counter()
+    # C1 fix: normalize tags before passing to service layer
+    normalized_tags = _normalize_tags(tags)
     # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.store_memory(
         content=content,
-        tags=tags,
+        tags=normalized_tags or None,
         memory_type=memory_type,
         metadata=metadata,
         client_hostname=client_hostname,
@@ -282,66 +258,101 @@ async def store_memory(
 
 
 @mcp.tool()
-async def retrieve_memory(
-    query: str,
+async def search(
     ctx: Context,
+    query: str = "",
+    mode: str = "hybrid",
+    tags: str | list[str] | None = None,
+    match_all: bool = False,
+    k: int = 10,
     page: int = 1,
     page_size: int = 10,
     min_similarity: float = 0.6,
+    output: str = "full",
+    memory_type: str | None = None,
     encoding_context: dict[str, Any] | None = None,
-) -> str:
-    """
-    Retrieve memories using hybrid search (semantic + tag matching).
-
-    Combines vector similarity with automatic tag extraction for improved retrieval.
-    When query terms match existing tags, those memories receive a score boost.
-    This solves the "rathole problem" where project-specific queries return
-    semantically similar but categorically unrelated results.
-
-    Hybrid search is enabled by default. To opt-out to pure vector search:
-    - Set environment variable MCP_MEMORY_HYBRID_ALPHA=1.0
+) -> str | dict[str, Any]:
+    """Search and retrieve memories. Consolidates all retrieval modes into one tool.
 
     Args:
-        query: Natural language search query (tags extracted automatically)
-        page: Page number (1-indexed, default: 1)
+        query: Natural language search query (required for hybrid/scan/similar modes)
+        mode: Search strategy:
+            - "hybrid" (default): Semantic + tag-boosted search. Best for most queries.
+            - "scan": Like hybrid but returns ~50-token summaries (cheap triage).
+            - "similar": Pure k-NN vector search, no tag boosting. For duplicate detection.
+            - "tag": Exact tag matching. Requires `tags` param.
+            - "recent": Chronological (newest first). Optional tag/memory_type filter.
+        tags: Tags to filter by (for "tag" mode, or optional boost hints for "hybrid")
+        match_all: For "tag" mode — True=AND, False=OR (default: OR)
+        k: Max results for "scan" and "similar" modes (default: 10)
+        page: Page number, 1-indexed (default: 1)
         page_size: Results per page (default: 10, max: 100)
-        min_similarity: Quality threshold (0.0-1.0, default: 0.6)
-            - 0.6-0.7: Good matches (recommended)
-            - 0.7-0.9: Very similar matches
-            - 0.9+: Nearly identical
-            - Lower for exploratory search, higher for precision
-        encoding_context: Optional current context for context-dependent retrieval.
-            Memories stored in a similar context receive a score boost.
-            Keys: time_of_day (morning|afternoon|evening|night),
-            day_type (weekday|weekend), agent (hostname/agent name),
-            task_tags (list of current task/project tags)
+        min_similarity: Similarity threshold 0.0-1.0 (default: 0.6). Higher=stricter.
+        output: "full" (default), "summary" (token-efficient ~50-token summaries), or "both". Applies to scan mode.
+        memory_type: Filter by type for "recent" mode (note/decision/task/reference)
+        encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
 
-    Response Format:
-        Returns memories in TOON (Terser Object Notation) format - a compact, pipe-delimited
-        format optimized for LLM token efficiency.
-
-        First line contains pagination metadata:
-        # page=2 total=250 page_size=10 has_more=true total_pages=25
-
-        Followed by memory records, each on a single line with fields:
-        content|tags|metadata|created_at|updated_at|content_hash|similarity_score
-
-        For complete TOON specification, see resource: toon://format/documentation
-
-    Use this for: Finding relevant context, answering questions, discovering related information.
+    Returns:
+        hybrid/tag/recent: TOON-formatted string (pipe-delimited, with pagination header).
+        scan/similar: dict with results list and metadata.
     """
     _t0 = time.perf_counter()
-    # Delegate to shared MemoryService business logic
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.retrieve_memories(
-        query=query,
-        page=page,
-        page_size=page_size,
-        min_similarity=min_similarity,
-        encoding_context=encoding_context,
-    )
 
-    # Extract pagination metadata
+    # C2: validate mode
+    _VALID_MODES = {"hybrid", "scan", "similar", "tag", "recent"}
+    if mode not in _VALID_MODES:
+        return _inject_latency({"error": f"Unknown mode: '{mode}'. Valid: {', '.join(sorted(_VALID_MODES))}"}, _t0)
+
+    # C3: require query for query-dependent modes
+    if mode in {"hybrid", "scan", "similar"} and not (query or "").strip():
+        return _inject_latency({"error": f"query is required for '{mode}' mode"}, _t0)
+
+    # M3: clamp numeric params to safe ranges
+    k = max(1, min(k, 100))
+    page = max(1, page)
+    page_size = max(1, min(page_size, 100))
+    min_similarity = max(0.0, min(min_similarity, 1.0))
+
+    memory_service = ctx.request_context.lifespan_context.memory_service
+
+    if mode == "scan":
+        # M4: output param applies to scan mode
+        output_format = output if output in {"full", "summary", "both"} else "full"
+        result = await memory_service.scan_memories(
+            query=query,
+            n_results=k,
+            min_relevance=min_similarity,
+            output_format=output_format,
+        )
+        return _inject_latency(result, _t0)
+
+    if mode == "similar":
+        result = await memory_service.find_similar_memories(query=query, k=k)
+        return _inject_latency(result, _t0)
+
+    if mode == "tag":
+        normalized = _normalize_tags(tags)
+        if not normalized:
+            return _inject_latency({"error": "tags parameter required for tag mode"}, _t0)
+        result = await memory_service.search_by_tag(tags=normalized, match_all=match_all, page=page, page_size=page_size)
+    elif mode == "recent":
+        normalized = _normalize_tags(tags)
+        if len(normalized) > 1:
+            logger.warning("recent mode only supports a single tag filter; using first tag '%s'", normalized[0])
+        tag_filter = normalized[0] if normalized else None
+        result = await memory_service.list_memories(page=page, page_size=page_size, tag=tag_filter, memory_type=memory_type)
+    else:
+        # hybrid search — M1: pass tags through for boosting
+        normalized_tags = _normalize_tags(tags) or None
+        result = await memory_service.retrieve_memories(
+            query=query,
+            page=page,
+            page_size=page_size,
+            min_similarity=min_similarity,
+            encoding_context=encoding_context,
+            tags=normalized_tags,
+        )
+
     pagination = {
         "page": result.get("page", page),
         "total": result.get("total", 0),
@@ -349,160 +360,6 @@ async def retrieve_memory(
         "has_more": result.get("has_more", False),
         "total_pages": result.get("total_pages", 0),
     }
-
-    # Convert results to TOON format with pagination
-    toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
-    return _inject_latency(toon_output, _t0)
-
-
-@mcp.tool()
-async def memory_scan(
-    query: str,
-    ctx: Context,
-    n_results: int = 5,
-    min_relevance: float = 0.5,
-    output_format: str = "summary",
-) -> dict[str, Any]:
-    """
-    Token-efficient memory scanning — returns summaries instead of full content.
-
-    Use this BEFORE retrieve_memory for quick, cheap lookups. Returns ~50-token
-    summaries per result instead of full content (500-3000+ tokens each).
-
-    Typical token budget: ~250-500 tokens for 5 results vs 5000-15000 for retrieve_memory.
-
-    Args:
-        query: Natural language search query
-        n_results: Maximum results to return (default: 5)
-        min_relevance: Minimum similarity threshold (0.0-1.0, default: 0.5)
-        output_format: Output detail level:
-            - "summary" (default): Summary, relevance, tags, hash — cheapest
-            - "full": Full content (same as retrieve_memory but simpler output)
-            - "both": Summary + full content for spot-checking
-
-    Returns:
-        Dictionary with:
-        - results: List of scan entries, each containing:
-            - content_hash: Unique identifier
-            - relevance: Similarity score (0.0-1.0)
-            - tags: Memory tags
-            - created_at: Creation timestamp
-            - memory_type: Memory classification
-            - summary: One-line summary (when output_format is "summary" or "both")
-            - content: Full content (when output_format is "full" or "both")
-        - query: The search query used
-        - count: Number of results returned
-        - format: The output_format used
-
-    Use this for: Quick memory triage, proactive context checks, deciding
-    which memories to fetch in full with retrieve_memory.
-    """
-    _t0 = time.perf_counter()
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.scan_memories(
-        query=query,
-        n_results=n_results,
-        min_relevance=min_relevance,
-        output_format=output_format,
-    )
-    return _inject_latency(result, _t0)
-
-
-@mcp.tool()
-async def find_similar_memories(
-    query: str,
-    ctx: Context,
-    k: int = 5,
-    distance_metric: str = "cosine",
-) -> dict[str, Any]:
-    """
-    Find k most similar memories using pure vector similarity (k-nearest neighbors).
-
-    Unlike retrieve_memory which uses hybrid search with tag extraction and boosting,
-    this method performs pure k-NN vector similarity search. It returns exactly k
-    results ordered by similarity score without any tag matching or filtering.
-
-    Args:
-        query: Search query text to find similar memories
-        k: Number of most similar memories to return (default: 5)
-        distance_metric: Distance metric to use (default: "cosine")
-            Supported values: "cosine", "euclidean", "dot"
-            Note: The actual metric used depends on the Qdrant collection configuration.
-            This parameter is provided for API compatibility.
-
-    Returns:
-        Dictionary with:
-        - count: Number of memories returned
-        - memories: List of memory objects with relevance_score field
-        - distance_metric: The distance metric requested
-        - k: The k value used
-        - error: (optional) Error message if search failed
-
-    Use this for: Finding semantically similar memories, clustering analysis,
-    duplicate detection, content recommendations based on pure vector similarity.
-    """
-    _t0 = time.perf_counter()
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.find_similar_memories(
-        query=query,
-        k=k,
-        distance_metric=distance_metric,
-    )
-    return _inject_latency(result, _t0)
-
-
-@mcp.tool()
-async def search_by_tag(tags: str | list[str], ctx: Context, match_all: bool = False, page: int = 1, page_size: int = 10) -> str:
-    """
-    Search memories by exact tag matches with flexible filtering.
-
-    Finds memories tagged with specific labels. Use for categorical retrieval
-    when you know the exact tags (e.g., "python", "bug-fix", "customer-support").
-
-    Args:
-        tags: Single tag string or list of tags to search for
-        match_all: Matching mode (default: False = ANY)
-            - False (ANY): Returns memories with at least one matching tag
-              Use for: Broad category search, exploration
-            - True (ALL): Returns only memories with every specified tag
-              Use for: Precise filtering, intersection of categories
-        page: Page number (1-indexed, default: 1)
-        page_size: Results per page (default: 10, max: 100)
-
-    Response Format:
-        Returns memories in TOON (Terser Object Notation) format - a compact, pipe-delimited
-        format optimized for LLM token efficiency.
-
-        First line contains pagination metadata:
-        # page=2 total=250 page_size=10 has_more=true total_pages=25
-
-        Followed by memory records, each on a single line with fields:
-        content|tags|metadata|created_at|updated_at|content_hash
-
-        For complete TOON specification, see resource: toon://format/documentation
-
-    Examples:
-        - ["python", "api"] with match_all=False → memories tagged python OR api
-        - ["python", "api"] with match_all=True → memories tagged python AND api
-        - "bug-fix" → all memories tagged bug-fix
-
-    Use this for: Tag-based filtering, categorical search, known classification retrieval.
-    """
-    _t0 = time.perf_counter()
-    # Delegate to shared MemoryService business logic
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.search_by_tag(tags=tags, match_all=match_all, page=page, page_size=page_size)
-
-    # Extract pagination metadata
-    pagination = {
-        "page": result.get("page", page),
-        "total": result.get("total", 0),
-        "page_size": result.get("page_size", page_size),
-        "has_more": result.get("has_more", False),
-        "total_pages": result.get("total_pages", 0),
-    }
-
-    # Convert results to TOON format with pagination
     toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
     return _inject_latency(toon_output, _t0)
 
@@ -562,360 +419,155 @@ async def check_database_health(ctx: Context) -> dict[str, Any]:
     return _inject_latency(result, _t0)
 
 
-@mcp.tool()
-async def list_memories(
-    ctx: Context,
-    page: int = 1,
-    page_size: int = 10,
-    tag: str | None = None,
-    memory_type: str | None = None,
-) -> str:
-    """
-    List memories in chronological order with optional filtering.
-
-    Returns memories ordered by creation time (newest first), without semantic
-    ranking. Use this for browsing recent memories or getting a chronological view.
-
-    Args:
-        page: Page number (1-indexed, default: 1)
-        page_size: Results per page (default: 10, max: 100)
-        tag: Optional - return only memories with this specific tag
-        memory_type: Optional - filter by type (note, decision, task, reference)
-
-    Response Format:
-        Returns memories in TOON (Terser Object Notation) format - a compact, pipe-delimited
-        format optimized for LLM token efficiency.
-
-        First line contains pagination metadata:
-        # page=2 total=250 page_size=10 has_more=true total_pages=25
-
-        Followed by memory records, each on a single line with fields:
-        content|tags|metadata|created_at|updated_at|content_hash
-
-        For complete TOON specification, see resource: toon://format/documentation
-
-    Differences from other search tools:
-        - retrieve_memory: Semantic similarity ranking (finds meaning)
-        - search_by_tag: Exact tag matching with AND/OR logic
-        - list_memories: Chronological order (this tool)
-
-    Use this for: Browsing recent activity, reviewing what was stored,
-    chronological exploration, getting latest entries.
-    """
-    _t0 = time.perf_counter()
-    # Delegate to shared MemoryService business logic
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.list_memories(page=page, page_size=page_size, tag=tag, memory_type=memory_type)
-
-    # Extract pagination metadata
-    pagination = {
-        "page": result.get("page", page),
-        "total": result.get("total", 0),
-        "page_size": result.get("page_size", page_size),
-        "has_more": result.get("has_more", False),
-        "total_pages": result.get("total_pages", 0),
-    }
-
-    # Convert results to TOON format with pagination
-    toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
-    return _inject_latency(toon_output, _t0)
-
-
 # =============================================================================
 # KNOWLEDGE GRAPH RELATIONSHIP OPERATIONS
 # =============================================================================
 
 
 @mcp.tool()
-async def create_relation(
-    source_hash: str,
-    target_hash: str,
-    relation_type: str,
-    ctx: Context,
-) -> dict[str, Any]:
-    """
-    Create a typed relationship between two memories in the knowledge graph.
-
-    Typed edges represent explicit semantic relationships between memories,
-    unlike Hebbian edges which form implicitly through co-retrieval patterns.
-    These are lower-frequency writes typically created during memory storage
-    or when a user identifies a connection between memories.
-
-    Args:
-        source_hash: Content hash of the source memory
-        target_hash: Content hash of the target memory
-        relation_type: Type of relationship. Must be one of:
-            - "RELATES_TO": Generic semantic relationship
-            - "PRECEDES": Temporal/causal ordering (source happened before target)
-            - "CONTRADICTS": Conflicting information between memories
-
-    Returns:
-        Dictionary with:
-        - success: True if relation was created
-        - source: Source memory hash
-        - target: Target memory hash
-        - relation_type: Normalized relation type
-        - error: Error message if failed
-
-    Use this for: Building knowledge graphs, linking related memories,
-    tracking temporal sequences, flagging contradictions.
-    """
-    _t0 = time.perf_counter()
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.create_relation(
-        source_hash=source_hash,
-        target_hash=target_hash,
-        relation_type=relation_type,
-    )
-    return _inject_latency(result, _t0)
-
-
-@mcp.tool()
-async def get_relations(
+async def relation(
+    action: str,
     content_hash: str,
     ctx: Context,
+    target_hash: str | None = None,
     relation_type: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Get typed relationships for a specific memory.
-
-    Returns all typed edges (RELATES_TO, PRECEDES, CONTRADICTS) connected
-    to the given memory, in both directions.
+    """Manage typed relationships between memories in the knowledge graph.
 
     Args:
-        content_hash: Content hash of the memory to query
-        relation_type: Optional filter - only return edges of this type
+        action: Operation to perform:
+            - "create": Create an edge (requires target_hash and relation_type)
+            - "get": List edges for a memory (optional relation_type filter)
+            - "delete": Remove an edge (requires target_hash and relation_type)
+        content_hash: Content hash of the primary/source memory
+        target_hash: Content hash of the related memory (required for create/delete)
+        relation_type: Edge type — "RELATES_TO", "PRECEDES", or "CONTRADICTS"
+            Required for create/delete. Optional filter for get.
 
     Returns:
-        Dictionary with:
-        - relations: List of relationship edges, each containing:
-            - source: Source memory hash
-            - target: Target memory hash
-            - relation_type: Edge type (RELATES_TO, PRECEDES, CONTRADICTS)
-            - direction: "outgoing" or "incoming" relative to queried memory
-            - created_at: Timestamp when relation was created
-        - content_hash: The queried memory hash
-        - count: Number of relations found
-
-    Use this for: Exploring knowledge graph connections, finding related memories,
-    understanding temporal sequences, identifying contradictions.
+        create: {success, source, target, relation_type}
+        get: {relations: [...], content_hash, count}
+        delete: {success, source, target, relation_type}
     """
     _t0 = time.perf_counter()
+
+    _VALID_ACTIONS = {"create", "get", "delete"}
+    if action not in _VALID_ACTIONS:
+        return _inject_latency(
+            {"success": False, "error": f"Unknown action: '{action}'. Valid: {', '.join(sorted(_VALID_ACTIONS))}"}, _t0
+        )
+
     memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.get_relations(
-        content_hash=content_hash,
-        relation_type=relation_type,
-    )
-    return _inject_latency(result, _t0)
 
+    if action == "create":
+        if not target_hash or not relation_type:
+            return _inject_latency({"success": False, "error": "target_hash and relation_type required for create"}, _t0)
+        result = await memory_service.create_relation(
+            source_hash=content_hash, target_hash=target_hash, relation_type=relation_type
+        )
+    elif action == "get":
+        result = await memory_service.get_relations(content_hash=content_hash, relation_type=relation_type)
+    elif action == "delete":
+        if not target_hash or not relation_type:
+            return _inject_latency({"success": False, "error": "target_hash and relation_type required for delete"}, _t0)
+        result = await memory_service.delete_relation(
+            source_hash=content_hash, target_hash=target_hash, relation_type=relation_type
+        )
 
-@mcp.tool()
-async def delete_relation(
-    source_hash: str,
-    target_hash: str,
-    relation_type: str,
-    ctx: Context,
-) -> dict[str, Any]:
-    """
-    Delete a typed relationship between two memories.
-
-    Removes a specific directed edge from the knowledge graph. This only
-    removes the relationship — the memories themselves are not affected.
-
-    Args:
-        source_hash: Content hash of the source memory
-        target_hash: Content hash of the target memory
-        relation_type: Type of relationship to delete (RELATES_TO, PRECEDES, CONTRADICTS)
-
-    Returns:
-        Dictionary with:
-        - success: True if relation was deleted, False if not found
-        - source: Source memory hash
-        - target: Target memory hash
-        - relation_type: The relation type that was deleted
-
-    Use this for: Removing incorrect relationships, cleaning up knowledge graph.
-    """
-    _t0 = time.perf_counter()
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.delete_relation(
-        source_hash=source_hash,
-        target_hash=target_hash,
-        relation_type=relation_type,
-    )
     return _inject_latency(result, _t0)
 
 
 # =============================================================================
-# THREE-TIER MEMORY OPERATIONS
+# THREE-TIER MEMORY (server-side automation, not exposed as tools by default)
 # =============================================================================
+# The three-tier memory model (sensory → working → long-term) runs server-side.
+# To expose these as MCP tools for autonomous agent rigs, set:
+#   MCP_THREE_TIER_EXPOSE_TOOLS=true
 
 
-@mcp.tool()
-async def push_to_sensory_buffer(
-    content: str,
-    ctx: Context,
-    tags: str | list[str] | None = None,
-    memory_type: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Push raw input to the sensory buffer for short-term capture.
+def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
+    """Conditionally register three-tier memory tools behind feature flag."""
 
-    The sensory buffer is a ring buffer (~7 items, 1s TTL) that captures raw
-    input before the system decides what's important. Items expire quickly and
-    are not persisted. Use `activate_working_memory` to promote items to working
-    memory, or `flush_sensory_to_working` to promote all valid items.
+    @mcp_instance.tool()
+    async def push_to_sensory_buffer(
+        content: str,
+        ctx: Context,
+        tags: str | list[str] | None = None,
+        memory_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Push raw input to the sensory buffer (~7 items, 1s TTL ring buffer)."""
+        memory_service = ctx.request_context.lifespan_context.memory_service
+        three_tier = memory_service.three_tier
+        if three_tier is None:
+            return {"success": False, "error": "Three-tier memory is disabled"}
+        tag_list = _normalize_tags(tags)
+        three_tier.push_sensory(content, metadata=metadata, tags=tag_list, memory_type=memory_type)
+        return {"success": True, "message": "Item pushed to sensory buffer", "buffer": three_tier.sensory.stats()}
 
-    Part of Cowan's three-tier memory model:
-    Sensory Buffer → Working Memory → Long-Term Memory
+    @mcp_instance.tool()
+    async def activate_working_memory(
+        key: str,
+        content: str,
+        ctx: Context,
+        tags: str | list[str] | None = None,
+        memory_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Bring a memory into active working memory (~4 chunks, Cowan's limit)."""
+        memory_service = ctx.request_context.lifespan_context.memory_service
+        three_tier = memory_service.three_tier
+        if three_tier is None:
+            return {"success": False, "error": "Three-tier memory is disabled"}
+        tag_list = _normalize_tags(tags)
+        chunk = three_tier.attend(key=key, content=content, metadata=metadata, tags=tag_list, memory_type=memory_type)
+        return {"success": True, "key": key, "access_count": chunk.access_count, "working_memory": three_tier.working.stats()}
 
-    Args:
-        content: The raw content to buffer
-        tags: Optional tags (accepts ["tag1", "tag2"] or "tag1,tag2")
-        memory_type: Optional type classification
-        metadata: Optional additional data
+    @mcp_instance.tool()
+    async def flush_sensory_to_working(ctx: Context) -> dict[str, Any]:
+        """Promote valid sensory buffer items to working memory."""
+        memory_service = ctx.request_context.lifespan_context.memory_service
+        three_tier = memory_service.three_tier
+        if three_tier is None:
+            return {"success": False, "error": "Three-tier memory is disabled"}
+        activated = three_tier.flush_sensory_to_working()
+        return {
+            "success": True,
+            "items_promoted": len(activated),
+            "promoted_keys": [key[:12] + "..." for key, _ in activated],
+            "tiers": three_tier.stats(),
+        }
 
-    Returns:
-        Dictionary with buffer status and item info.
-    """
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    three_tier = memory_service.three_tier
-    if three_tier is None:
-        return {"success": False, "error": "Three-tier memory is disabled"}
+    @mcp_instance.tool()
+    async def consolidate_working_memory(ctx: Context) -> dict[str, Any]:
+        """Consolidate working memory items accessed 2+ times to long-term storage."""
+        memory_service = ctx.request_context.lifespan_context.memory_service
+        three_tier = memory_service.three_tier
+        if three_tier is None:
+            return {"success": False, "error": "Three-tier memory is disabled"}
+        results = await three_tier.consolidate()
+        return {
+            "success": True,
+            "items_consolidated": len(results),
+            "results": results,
+            "working_memory": three_tier.working.stats(),
+        }
 
-    tag_list = _normalize_tags(tags)
-    three_tier.push_sensory(content, metadata=metadata, tags=tag_list, memory_type=memory_type)
-    return {
-        "success": True,
-        "message": "Item pushed to sensory buffer",
-        "buffer": three_tier.sensory.stats(),
-    }
-
-
-@mcp.tool()
-async def activate_working_memory(
-    key: str,
-    content: str,
-    ctx: Context,
-    tags: str | list[str] | None = None,
-    memory_type: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Bring a memory into active working memory (attention gate).
-
-    Working memory holds ~4 chunks for the current task context (Cowan's limit).
-    Items accessed multiple times are automatically consolidated to long-term memory.
-    Least-recently-used items are evicted when capacity is reached.
-
-    This is the attention transition: items you reference are promoted to active context.
-
-    Args:
-        key: Unique identifier for this chunk (e.g., content hash or topic name)
-        content: The content to hold in working memory
-        tags: Optional tags
-        memory_type: Optional type classification
-        metadata: Optional additional data
-
-    Returns:
-        Dictionary with chunk status (access count, whether consolidated).
-    """
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    three_tier = memory_service.three_tier
-    if three_tier is None:
-        return {"success": False, "error": "Three-tier memory is disabled"}
-
-    tag_list = _normalize_tags(tags)
-    chunk = three_tier.attend(key=key, content=content, metadata=metadata, tags=tag_list, memory_type=memory_type)
-    return {
-        "success": True,
-        "key": key,
-        "access_count": chunk.access_count,
-        "working_memory": three_tier.working.stats(),
-    }
+    @mcp_instance.tool()
+    async def get_working_memory_status(ctx: Context) -> dict[str, Any]:
+        """Get sensory buffer and working memory tier statistics."""
+        memory_service = ctx.request_context.lifespan_context.memory_service
+        three_tier = memory_service.three_tier
+        if three_tier is None:
+            return {"enabled": False, "message": "Three-tier memory is disabled"}
+        return {"enabled": True, "tiers": three_tier.stats()}
 
 
-@mcp.tool()
-async def flush_sensory_to_working(ctx: Context) -> dict[str, Any]:
-    """
-    Promote all valid sensory buffer items to working memory.
+# Conditionally register three-tier tools
+from .config import settings as _settings  # noqa: E402
 
-    Flushes non-expired items from the sensory buffer and activates them
-    in working memory. Items that were already in working memory get their
-    access count incremented (strengthening their consolidation candidacy).
-
-    Returns:
-        Dictionary with number of items promoted and tier stats.
-    """
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    three_tier = memory_service.three_tier
-    if three_tier is None:
-        return {"success": False, "error": "Three-tier memory is disabled"}
-
-    activated = three_tier.flush_sensory_to_working()
-    return {
-        "success": True,
-        "items_promoted": len(activated),
-        "promoted_keys": [key[:12] + "..." for key, _ in activated],
-        "tiers": three_tier.stats(),
-    }
-
-
-@mcp.tool()
-async def consolidate_working_memory(ctx: Context) -> dict[str, Any]:
-    """
-    Consolidate eligible working memory items to long-term storage.
-
-    Items accessed 2+ times in working memory are promoted to permanent
-    Qdrant storage via the standard store_memory pipeline. This mimics
-    the cognitive process of rehearsal leading to long-term encoding.
-
-    Already-consolidated items are skipped (idempotent within a session).
-
-    Returns:
-        Dictionary with consolidation results (items stored, any errors).
-    """
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    three_tier = memory_service.three_tier
-    if three_tier is None:
-        return {"success": False, "error": "Three-tier memory is disabled"}
-
-    results = await three_tier.consolidate()
-    return {
-        "success": True,
-        "items_consolidated": len(results),
-        "results": results,
-        "working_memory": three_tier.working.stats(),
-    }
-
-
-@mcp.tool()
-async def get_working_memory_status(ctx: Context) -> dict[str, Any]:
-    """
-    Get current status of sensory buffer and working memory.
-
-    Returns capacity, occupancy, chunk access counts, and consolidation status
-    for both ephemeral memory tiers. Useful for debugging and monitoring.
-
-    Returns:
-        Dictionary with tier statistics (sensory buffer + working memory).
-    """
-    memory_service = ctx.request_context.lifespan_context.memory_service
-    three_tier = memory_service.three_tier
-    if three_tier is None:
-        return {"enabled": False, "message": "Three-tier memory is disabled"}
-
-    return {"enabled": True, "tiers": three_tier.stats()}
-
-
-def _normalize_tags(tags: str | list[str] | None) -> list[str]:
-    """Normalize tags from string or list format to list."""
-    if tags is None:
-        return []
-    if isinstance(tags, str):
-        return [t.strip() for t in tags.split(",") if t.strip()]
-    return tags
+if _settings.three_tier.expose_tools:
+    _register_three_tier_tools(mcp)
 
 
 # =============================================================================
