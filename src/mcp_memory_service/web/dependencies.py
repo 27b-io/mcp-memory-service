@@ -20,7 +20,9 @@ import logging
 
 from fastapi import Depends, HTTPException
 
+from ..config import settings
 from ..services.memory_service import MemoryService
+from ..services.quota_service import QuotaService
 from ..shared_storage import get_graph_client, get_write_queue
 from ..storage.base import MemoryStorage
 
@@ -28,12 +30,25 @@ logger = logging.getLogger(__name__)
 
 # Global storage instance
 _storage: MemoryStorage | None = None
+# Global quota service instance
+_quota_service: QuotaService | None = None
 
 
 def set_storage(storage: MemoryStorage) -> None:
-    """Set the global storage instance."""
-    global _storage
+    """Set the global storage instance and initialize quota service if enabled."""
+    global _storage, _quota_service
     _storage = storage
+
+    # Initialize quota service if enabled in config
+    if settings.quota.enabled:
+        logger.info("Initializing QuotaService (quota enforcement enabled)")
+        _quota_service = QuotaService(
+            storage=storage,
+            settings=settings.quota,
+        )
+    else:
+        logger.info("QuotaService disabled (quota.enabled=False)")
+        _quota_service = None
 
 
 def get_storage() -> MemoryStorage:
@@ -44,11 +59,12 @@ def get_storage() -> MemoryStorage:
 
 
 def get_memory_service(storage: MemoryStorage = Depends(get_storage)) -> MemoryService:
-    """Get a MemoryService instance with the configured storage backend."""
+    """Get a MemoryService instance with the configured storage backend and quota service."""
     return MemoryService(
         storage,
         graph_client=get_graph_client(),
         write_queue=get_write_queue(),
+        quota_service=_quota_service,
     )
 
 

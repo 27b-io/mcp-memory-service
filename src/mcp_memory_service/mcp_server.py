@@ -98,12 +98,26 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
         storage = await create_storage_instance()
 
     # Initialize memory service with shared business logic (including graph layer if available)
+    from .config import settings
+    from .services.quota_service import QuotaService
     from .shared_storage import get_graph_client, get_write_queue
+
+    # Initialize quota service if enabled
+    quota_service = None
+    if settings.quota.enabled:
+        logger.info("Initializing QuotaService (quota enforcement enabled)")
+        quota_service = QuotaService(
+            storage=storage,
+            settings=settings.quota,
+        )
+    else:
+        logger.info("QuotaService disabled (quota.enabled=False)")
 
     memory_service = MemoryService(
         storage,
         graph_client=get_graph_client(),
         write_queue=get_write_queue(),
+        quota_service=quota_service,
     )
 
     try:
