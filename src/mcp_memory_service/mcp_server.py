@@ -288,7 +288,7 @@ async def search(
         page: Page number, 1-indexed (default: 1)
         page_size: Results per page (default: 10, max: 100)
         min_similarity: Similarity threshold 0.0-1.0 (default: 0.6). Higher=stricter.
-        output: "full" (default) or "summary" (scan mode only — token-efficient ~50-token summaries)
+        output: "full" (default), "summary" (token-efficient ~50-token summaries), or "both". Applies to scan mode.
         memory_type: Filter by type for "recent" mode (note/decision/task/reference)
         encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
 
