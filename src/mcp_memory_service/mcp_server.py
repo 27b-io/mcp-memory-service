@@ -177,12 +177,12 @@ class StoreMemoryFailure(TypedDict):
 
 
 def _normalize_tags(tags: str | list[str] | None) -> list[str]:
-    """Normalize tags from string or list format to list."""
+    """Normalize tags from string or list format to a clean list of trimmed, non-empty strings."""
     if tags is None:
         return []
     if isinstance(tags, str):
         return [t.strip() for t in tags.split(",") if t.strip()]
-    return tags
+    return [s for item in tags if item is not None and (s := str(item).strip())]
 
 
 @mcp.tool()
@@ -330,14 +330,15 @@ async def search(
         return _inject_latency(result, _t0)
 
     if mode == "tag":
-        if not tags:
+        normalized = _normalize_tags(tags)
+        if not normalized:
             return _inject_latency({"error": "tags parameter required for tag mode"}, _t0)
-        result = await memory_service.search_by_tag(tags=tags, match_all=match_all, page=page, page_size=page_size)
+        result = await memory_service.search_by_tag(tags=normalized, match_all=match_all, page=page, page_size=page_size)
     elif mode == "recent":
-        # M2: recent mode only supports single tag filter — warn on multi-tag
-        if isinstance(tags, list) and len(tags) > 1:
-            logger.warning("recent mode only supports a single tag filter; using first tag '%s'", tags[0])
-        tag_filter = tags[0] if isinstance(tags, list) and tags else (tags if isinstance(tags, str) else None)
+        normalized = _normalize_tags(tags)
+        if len(normalized) > 1:
+            logger.warning("recent mode only supports a single tag filter; using first tag '%s'", normalized[0])
+        tag_filter = normalized[0] if normalized else None
         result = await memory_service.list_memories(page=page, page_size=page_size, tag=tag_filter, memory_type=memory_type)
     else:
         # hybrid search — M1: pass tags through for boosting
