@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.7.0](https://github.com/27b-io/mcp-memory-service/compare/v11.6.0...v11.7.0) (2026-02-16)
+
+
+### Features
+
+* consolidate 16 MCP tools to 5 (69% token reduction) ([#90](https://github.com/27b-io/mcp-memory-service/issues/90)) ([2bf4d9c](https://github.com/27b-io/mcp-memory-service/commit/2bf4d9cf42da17b2a7456a5c0a95899241a93a47))
+
 ## [11.6.0](https://github.com/27b-io/mcp-memory-service/compare/v11.5.0...v11.6.0) (2026-02-13)
 
 
