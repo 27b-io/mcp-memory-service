@@ -1,6 +1,7 @@
 """Unit tests for quota configuration settings."""
 
 import pytest
+
 from mcp_memory_service.config import QuotaSettings
 
 

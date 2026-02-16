@@ -80,10 +80,12 @@ class MemoryService:
         storage: MemoryStorage,
         graph_client: GraphClient | None = None,
         write_queue: HebbianWriteQueue | None = None,
+        quota_service: "QuotaService | None" = None,
     ):
         self.storage = storage
         self._graph = graph_client
         self._write_queue = write_queue
+        self._quota_service = quota_service
         self._tag_cache: tuple[float, set[str]] | None = None
         self._three_tier: ThreeTierMemory | None = None
         self._init_three_tier()
@@ -607,6 +609,30 @@ class MemoryService:
                     final_tags.append(source_tag)
                 final_metadata["hostname"] = client_hostname
 
+            # Quota enforcement: check limits before processing
+            if self._quota_service is not None:
+                # Extract client_id from hostname or metadata
+                client_id = client_hostname or final_metadata.get("client_id") or "default"
+
+                # Check quota and raise QuotaExceededError if limit exceeded
+                quota_status = await self._quota_service.check_quota(client_id)
+
+                # Log warnings if approaching limits
+                if quota_status.has_warning:
+                    if quota_status.warning_level == "high":
+                        logger.warning(
+                            f"Client '{client_id}' approaching quota limits: "
+                            f"memory={quota_status.memory_usage_pct:.1%}, "
+                            f"storage={quota_status.storage_usage_pct:.1%}, "
+                            f"rate={quota_status.rate_usage_pct:.1%}"
+                        )
+                    elif quota_status.warning_level == "low":
+                        logger.info(
+                            f"Client '{client_id}' quota usage: "
+                            f"memory={quota_status.memory_usage_pct:.1%}, "
+                            f"storage={quota_status.storage_usage_pct:.1%}"
+                        )
+
             # Generate content hash for deduplication
             content_hash = generate_content_hash(content)
 
@@ -741,6 +767,11 @@ class MemoryService:
             logger.error(f"Storage connection error: {e}")
             return {"success": False, "error": f"Storage connection failed: {str(e)}"}
         except Exception as e:
+            # Re-raise QuotaExceededError (must propagate to caller)
+            from ..utils.quota import QuotaExceededError
+
+            if isinstance(e, QuotaExceededError):
+                raise
             # Handle unexpected errors
             logger.exception(f"Unexpected error storing memory: {e}")
             return {"success": False, "error": f"Failed to store memory: {str(e)}"}

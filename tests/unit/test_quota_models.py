@@ -1,6 +1,5 @@
 """Unit tests for quota error and status models."""
 
-import pytest
 from mcp_memory_service.utils.quota import QuotaExceededError, QuotaStatus
 
 

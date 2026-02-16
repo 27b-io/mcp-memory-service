@@ -8,7 +8,6 @@ import pytest
 from mcp_memory_service.config import QuotaSettings
 from mcp_memory_service.models.memory import Memory
 from mcp_memory_service.services.quota_service import QuotaService
-from mcp_memory_service.storage.base import MemoryStorage
 from mcp_memory_service.utils.quota import QuotaExceededError
 
 
