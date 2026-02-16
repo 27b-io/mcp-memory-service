@@ -479,3 +479,60 @@ def is_within_time_range(memory_time: datetime, time_filter: dict[str, Any]) -> 
         return memory_time <= end_time
 
     return True
+
+
+# Tag suggestion/autocomplete response model
+class TagSuggestion(BaseModel):
+    """Individual tag suggestion."""
+
+    tag: str = Field(..., description="The tag value")
+    count: int | None = Field(None, description="Number of memories with this tag (if available)")
+
+
+class TagSuggestionsResponse(BaseModel):
+    """Response model for tag autocomplete suggestions."""
+
+    suggestions: list[TagSuggestion]
+    query: str | None = Field(None, description="The search query used for filtering")
+    total: int = Field(..., description="Total number of suggestions returned")
+
+
+@router.get("/tags/suggest", response_model=TagSuggestionsResponse, tags=["search"])
+async def suggest_tags(
+    q: str | None = Query(None, description="Tag prefix/query to filter suggestions (case-insensitive)"),
+    limit: int = Query(default=10, ge=1, le=100, description="Maximum number of suggestions to return"),
+    storage: MemoryStorage = Depends(get_storage),
+    user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None,
+):
+    """
+    Get tag autocomplete suggestions.
+
+    Returns a list of existing tags, optionally filtered by a prefix query.
+    Useful for building tag input UIs with autocomplete functionality.
+
+    Examples:
+    - /tags/suggest?q=py → Returns ["python", "pytorch", "pydantic"]
+    - /tags/suggest?limit=5 → Returns top 5 most common tags
+    """
+    try:
+        # Get all unique tags from storage
+        all_tags = await storage.get_all_tags()
+
+        # Filter tags if query provided (case-insensitive prefix match)
+        if q and q.strip():
+            query_lower = q.strip().lower()
+            filtered_tags = [tag for tag in all_tags if tag.lower().startswith(query_lower)]
+        else:
+            filtered_tags = all_tags
+
+        # Sort alphabetically and limit results
+        sorted_tags = sorted(filtered_tags)[:limit]
+
+        # Convert to response format
+        suggestions = [TagSuggestion(tag=tag, count=None) for tag in sorted_tags]
+
+        return TagSuggestionsResponse(suggestions=suggestions, query=q, total=len(suggestions))
+
+    except Exception as e:
+        logger.error(f"Tag suggestion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Tag suggestion operation failed. Please try again.") from e
