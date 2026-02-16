@@ -116,6 +116,23 @@ class MemoryUpdateResponse(BaseModel):
     memory: MemoryResponse | None = None
 
 
+class QuotaStatusResponse(BaseModel):
+    """Response model for quota status."""
+
+    client_id: str
+    memory_count: int
+    memory_limit: int
+    memory_usage_pct: float
+    storage_bytes: int
+    storage_limit: int
+    storage_usage_pct: float
+    memories_last_hour: int
+    rate_limit: int
+    rate_usage_pct: float
+    has_warning: bool
+    warning_level: str | None
+
+
 class TagResponse(BaseModel):
     """Response model for a single tag with its count."""
 
@@ -432,3 +449,41 @@ async def get_tags(
         raise HTTPException(status_code=501, detail=f"Tags endpoint not supported by current storage backend: {str(e)}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get tags: {str(e)}") from e
+
+
+@router.get("/quota", response_model=QuotaStatusResponse, tags=["quota"])
+async def get_quota_status(
+    memory_service: MemoryService = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None,
+):
+    """
+    Get current quota usage for the authenticated client.
+
+    Returns memory count, storage size, and rate limit usage with warning flags.
+    """
+    # Extract client_id from auth context or use "anonymous"
+    client_id = "anonymous"  # TODO: Extract from OAuth user if enabled
+
+    # Get quota service from memory service
+    if not memory_service._quota_service:
+        raise HTTPException(
+            status_code=503,
+            detail="Quota service not enabled",
+        )
+
+    status = await memory_service._quota_service.get_quota_status(client_id)
+
+    return QuotaStatusResponse(
+        client_id=status.client_id,
+        memory_count=status.memory_count,
+        memory_limit=status.memory_limit,
+        memory_usage_pct=status.memory_usage_pct,
+        storage_bytes=status.storage_bytes,
+        storage_limit=status.storage_limit,
+        storage_usage_pct=status.storage_usage_pct,
+        memories_last_hour=status.memories_last_hour,
+        rate_limit=status.rate_limit,
+        rate_usage_pct=status.rate_usage_pct,
+        has_warning=status.has_warning,
+        warning_level=status.warning_level,
+    )
