@@ -757,6 +757,12 @@ class QdrantStorage(MemoryStorage):
                 # must[] creates AND logic - all conditions must be true
                 must_conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=memory_type)))
 
+            # Date range filter: AND logic (must match time range)
+            if start_timestamp is not None:
+                must_conditions.append(FieldCondition(key="created_at", range=Range(gte=start_timestamp)))
+            if end_timestamp is not None:
+                must_conditions.append(FieldCondition(key="created_at", range=Range(lte=end_timestamp)))
+
             # Create Filter object only if we have conditions
             if must_conditions or should_conditions:
                 query_filter = Filter(
