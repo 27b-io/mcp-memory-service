@@ -293,7 +293,8 @@ async def search(
         encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
 
     Returns:
-        TOON-formatted string (hybrid/tag/recent modes) or dict (scan/similar modes).
+        hybrid/tag/recent: TOON-formatted string (pipe-delimited, with pagination header).
+        scan/similar: dict with results list and metadata.
     """
     _t0 = time.perf_counter()
 
@@ -303,7 +304,7 @@ async def search(
         return _inject_latency({"error": f"Unknown mode: '{mode}'. Valid: {', '.join(sorted(_VALID_MODES))}"}, _t0)
 
     # C3: require query for query-dependent modes
-    if mode in {"hybrid", "scan", "similar"} and not query.strip():
+    if mode in {"hybrid", "scan", "similar"} and not (query or "").strip():
         return _inject_latency({"error": f"query is required for '{mode}' mode"}, _t0)
 
     # M3: clamp numeric params to safe ranges
@@ -449,6 +450,13 @@ async def relation(
         delete: {success, source, target, relation_type}
     """
     _t0 = time.perf_counter()
+
+    _VALID_ACTIONS = {"create", "get", "delete"}
+    if action not in _VALID_ACTIONS:
+        return _inject_latency(
+            {"success": False, "error": f"Unknown action: '{action}'. Valid: {', '.join(sorted(_VALID_ACTIONS))}"}, _t0
+        )
+
     memory_service = ctx.request_context.lifespan_context.memory_service
 
     if action == "create":
@@ -465,8 +473,6 @@ async def relation(
         result = await memory_service.delete_relation(
             source_hash=content_hash, target_hash=target_hash, relation_type=relation_type
         )
-    else:
-        return _inject_latency({"success": False, "error": f"Unknown action: {action}. Use create/get/delete."}, _t0)
 
     return _inject_latency(result, _t0)
 
