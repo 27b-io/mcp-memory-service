@@ -421,6 +421,48 @@ async def find_similar(
         raise HTTPException(status_code=500, detail=f"Similar search failed: {str(e)}") from e
 
 
+class TagSuggestionsResponse(BaseModel):
+    """Response model for tag suggestions."""
+
+    suggestions: list[str] = Field(..., description="List of matching tags")
+    query: str = Field(..., description="The query prefix used for matching")
+    total: int = Field(..., description="Total number of matching tags")
+
+
+@router.get("/tags/suggest", response_model=TagSuggestionsResponse, tags=["search"])
+async def suggest_tags(
+    query: str = Query(default="", description="Prefix to match tags against (case-insensitive)"),
+    limit: int = Query(default=10, ge=1, le=100, description="Maximum number of suggestions to return"),
+    storage: MemoryStorage = Depends(get_storage),
+    user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None,
+):
+    """
+    Get tag suggestions for autocompletion in UIs.
+
+    Returns tags that start with the specified query prefix (case-insensitive).
+    Useful for tag input fields with autocomplete functionality.
+    """
+    try:
+        # Get all unique tags from storage
+        all_tags = await storage.get_all_tags()
+
+        # Filter tags by query prefix (case-insensitive)
+        if query:
+            query_lower = query.lower()
+            matching_tags = [tag for tag in all_tags if tag.lower().startswith(query_lower)]
+        else:
+            matching_tags = all_tags
+
+        # Limit results
+        suggestions = matching_tags[:limit]
+
+        return TagSuggestionsResponse(suggestions=suggestions, query=query, total=len(matching_tags))
+
+    except Exception as e:
+        logger.error(f"Tag suggestions failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Tag suggestions failed. Please try again.") from e
+
+
 # Helper functions for time parsing
 def parse_time_query(query: str) -> dict[str, Any] | None:
     """
