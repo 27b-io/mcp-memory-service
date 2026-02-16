@@ -22,12 +22,14 @@ import socket
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ...config import INCLUDE_HOSTNAME, OAUTH_ENABLED
 from ...models.memory import Memory
 from ...services.memory_service import MemoryService
 from ...storage.base import MemoryStorage
+from ...utils.quota import QuotaExceededError
 from ..dependencies import get_memory_service, get_storage
 from ..sse import create_memory_deleted_event, create_memory_stored_event, sse_manager
 from ..write_queue import write_queue
@@ -237,6 +239,23 @@ async def store_memory(
         else:
             return MemoryCreateResponse(success=False, message=result.get("error", "Failed to store memory"), content_hash=None)
 
+    except QuotaExceededError as e:
+        # Return HTTP 429 with quota information
+        return JSONResponse(
+            status_code=429,
+            headers={
+                "X-RateLimit-Limit": str(int(e.limit)),
+                "X-RateLimit-Remaining": "0",
+                "Retry-After": str(e.retry_after or 3600),
+            },
+            content={
+                "error": "quota_exceeded",
+                "quota_type": e.quota_type,
+                "current": int(e.current),
+                "limit": int(e.limit),
+                "message": str(e),
+            },
+        )
     except Exception as e:
         logger.error(f"Failed to store memory: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to store memory. Please try again.") from e
