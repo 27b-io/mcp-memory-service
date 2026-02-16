@@ -626,6 +626,8 @@ class ThreeTierSettings(BaseSettings):
         default=True, description="Automatically consolidate working memory items to LTM on access threshold"
     )
 
+    expose_tools: bool = Field(default=False, description="Expose three-tier memory as MCP tools (for autonomous agent rigs)")
+
 
 class TOONSettings(BaseSettings):
     """TOON format encoding configuration."""
