@@ -60,6 +60,7 @@ dependencies = [
     "onnxruntime>=1.17.0", # Explicit ONNX Runtime for ARM64 optimization
     "toon-format>=0.9.0b1",
     "platformdirs>=4.0.0",
+    "einops>=0.8.2",
 ]
 
 [project.optional-dependencies]

@@ -40,6 +40,7 @@ async def migrate_embeddings(
     dry_run: bool = False,
     batch_size: int = 50,
     keep_backup: bool = True,
+    old_collection: str = "memories",
 ):
     """
     Migrate memories to nomic-embed-text-v1.5.
@@ -60,9 +61,8 @@ async def migrate_embeddings(
     start_time = time.time()
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
-    old_collection = "memories"
     new_collection = f"memories_nomic768"
-    backup_collection = f"memories_backup_arctic1024_{timestamp}"
+    backup_collection = f"{old_collection}_backup_{timestamp}"
 
     logger.info("=" * 60)
     logger.info("Embedding Model Migration: Arctic → Nomic")
@@ -246,6 +246,7 @@ async def migrate_embeddings(
 def main():
     parser = argparse.ArgumentParser(description="Migrate to nomic-embed-text-v1.5")
     parser.add_argument("--url", help="Qdrant URL (overrides MCP_QDRANT_URL)")
+    parser.add_argument("--old-collection", default="memories", help="Source collection name (default: memories)")
     parser.add_argument("--dry-run", action="store_true", help="Preview without changes")
     parser.add_argument("--batch-size", type=int, default=50, help="Memories per batch")
     parser.add_argument("--no-backup", action="store_true", help="Delete backup after swap")
@@ -261,6 +262,7 @@ def main():
         dry_run=args.dry_run,
         batch_size=args.batch_size,
         keep_backup=not args.no_backup,
+        old_collection=args.old_collection,
     ))
 
     if result.get("success"):

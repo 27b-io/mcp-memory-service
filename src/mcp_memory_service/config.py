@@ -323,7 +323,7 @@ class QdrantSettings(BaseSettings):
     quantization_enabled: bool = Field(default=False, description="Enable scalar quantization (32x memory savings, ~10% slower)")
 
     # Auto-tuned constants (not configurable by users)
-    COLLECTION_NAME: str = "memories"
+    COLLECTION_NAME: str = "memories_nomic768"
     DISTANCE_METRIC: str = "Cosine"  # Qdrant Distance enum value
 
     # HNSW parameters optimized for <1M vectors
