@@ -87,6 +87,7 @@ path = "src/mcp_memory_service/__init__.py"
 dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
+    "pytest-timeout>=2.3.1",
     "pre-commit>=3.5.0",
     "ruff>=0.7.0",
     "pytest-cov>=7.0.0",
@@ -134,6 +135,16 @@ known-first-party = ["mcp_memory_service"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+timeout = 300
+timeout_method = "thread"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests (uses 600s timeout)",
+    "performance: performance tests (uses 1800s timeout)",
+    "slow: mark test as slow (can be skipped with -m 'not slow')",
+    "asyncio: mark test as async",
+    "llm_judge: requires an LLM judge endpoint (not run by default)",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]

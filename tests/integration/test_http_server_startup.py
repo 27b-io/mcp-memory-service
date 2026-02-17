@@ -11,6 +11,9 @@ made it past 55 unit tests because we had zero HTTP server integration tests.
 import pytest
 from fastapi.testclient import TestClient
 
+# All integration tests get 600s timeout (10 minutes for slow CI/startup)
+pytestmark = pytest.mark.timeout(600)
+
 
 def test_http_server_starts():
     """Test that server imports and starts without errors.

@@ -21,6 +21,9 @@ sys.path.insert(0, str(src_dir))
 
 from mcp_memory_service.cli.main import memory_server_main  # noqa: E402
 
+# All integration tests get 600s timeout (10 minutes for slow CI/startup)
+pytestmark = pytest.mark.timeout(600)
+
 
 class TestCLIInterfaces:
     """Test CLI interface compatibility and functionality."""
