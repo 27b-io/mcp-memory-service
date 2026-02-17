@@ -17,6 +17,9 @@ from src.mcp_memory_service.shared_storage import (
     is_storage_initialized,
 )
 
+# All integration tests get 600s timeout (10 minutes for slow CI/startup)
+pytestmark = pytest.mark.timeout(600)
+
 
 class TestSharedStorage:
     """Test shared storage management between servers."""

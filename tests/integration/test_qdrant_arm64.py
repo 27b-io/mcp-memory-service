@@ -25,6 +25,9 @@ import pytest_asyncio
 IS_ARM64 = platform.machine().lower() in ["aarch64", "arm64"]
 ARM64_SKIP_REASON = f"Skipping ARM64-specific tests on {platform.machine()} platform"
 
+# All integration tests get 600s timeout (10 minutes for slow CI/startup)
+pytestmark = pytest.mark.timeout(600)
+
 
 class TestQdrantARM64Import:
     """Test 1: Pure Python wheel import validation."""

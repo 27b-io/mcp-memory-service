@@ -23,6 +23,9 @@ from src.mcp_memory_service.models.memory import Memory
 # Import real Qdrant and storage classes
 from src.mcp_memory_service.storage.qdrant_storage import QdrantStorage
 
+# All integration tests get 600s timeout (10 minutes for slow CI/startup)
+pytestmark = pytest.mark.timeout(600)
+
 
 def create_deterministic_embedding(text: str, vector_size: int = 384) -> list[float]:
     """
