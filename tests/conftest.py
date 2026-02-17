@@ -12,4 +12,3 @@ if "QDRANT_URL" not in os.environ and "QDRANT_STORAGE_PATH" not in os.environ:
 
 # Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
-
