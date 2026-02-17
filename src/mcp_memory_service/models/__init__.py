@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .audit_log import AuditLog
 from .memory import Memory, MemoryQueryResult
 
-__all__ = ["Memory", "MemoryQueryResult"]
+__all__ = ["AuditLog", "Memory", "MemoryQueryResult"]

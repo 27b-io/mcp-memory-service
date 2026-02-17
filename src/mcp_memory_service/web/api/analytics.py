@@ -205,6 +205,30 @@ class AccessPatternsResponse(BaseModel):
     unique_memories_accessed: int
 
 
+class AuditLogEntry(BaseModel):
+    """Information about an audit log entry."""
+
+    operation: str
+    content_hash: str
+    timestamp: float
+    actor: str | None
+    memory_type: str | None
+    tags: list[str] | None
+    success: bool
+    error: str | None
+    metadata: dict[str, Any]
+
+
+class AuditTrailResponse(BaseModel):
+    """Response for audit trail endpoint."""
+
+    total_operations: int
+    operations: list[AuditLogEntry]
+    operations_by_type: dict[str, int]
+    operations_by_actor: dict[str, int]
+    success_rate: float
+
+
 @router.get("/overview", response_model=AnalyticsOverview, tags=["analytics"])
 async def get_analytics_overview(
     storage: MemoryStorage = Depends(get_storage),
@@ -855,3 +879,55 @@ async def get_access_patterns(
     except Exception as e:
         logger.error(f"Failed to get access patterns: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get access patterns: {str(e)}") from e
+
+
+@router.get("/audit-trail", response_model=AuditTrailResponse, tags=["analytics"])
+async def get_audit_trail(
+    limit: int = Query(100, description="Maximum number of log entries to return"),
+    operation: str | None = Query(None, description="Filter by operation type (CREATE, DELETE, DELETE_RELATION)"),
+    actor: str | None = Query(None, description="Filter by actor (client_hostname)"),
+    content_hash: str | None = Query(None, description="Filter by content hash"),
+    memory_service: MemoryService = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None,
+):
+    """
+    Get audit trail of memory operations.
+
+    Returns recent CREATE, DELETE, and DELETE_RELATION operations with optional filtering.
+    Useful for compliance, debugging, and change history analysis.
+    """
+    try:
+        audit_data = memory_service.get_audit_trail(
+            limit=limit,
+            operation=operation,
+            actor=actor,
+            content_hash=content_hash,
+        )
+
+        # Convert to response format
+        audit_entries = [
+            AuditLogEntry(
+                operation=entry["operation"],
+                content_hash=entry["content_hash"],
+                timestamp=entry["timestamp"],
+                actor=entry["actor"],
+                memory_type=entry["memory_type"],
+                tags=entry["tags"],
+                success=entry["success"],
+                error=entry["error"],
+                metadata=entry["metadata"],
+            )
+            for entry in audit_data["operations"]
+        ]
+
+        return AuditTrailResponse(
+            total_operations=audit_data["total_operations"],
+            operations=audit_entries,
+            operations_by_type=audit_data["operations_by_type"],
+            operations_by_actor=audit_data["operations_by_actor"],
+            success_rate=audit_data["success_rate"],
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get audit trail: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get audit trail: {str(e)}") from e

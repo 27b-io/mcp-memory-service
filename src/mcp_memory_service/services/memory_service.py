@@ -22,6 +22,7 @@ from ..config import (
 from ..graph.client import GraphClient
 from ..graph.queue import HebbianWriteQueue
 from ..memory_tiers import ThreeTierMemory
+from ..models.audit_log import AuditLog
 from ..models.memory import Memory
 from ..models.search_log import SearchLog
 from ..storage.base import MemoryStorage
@@ -78,6 +79,8 @@ class MemoryService:
     _TAG_CACHE_TTL = 60
     # Maximum search logs to keep in memory (circular buffer)
     _MAX_SEARCH_LOGS = 10000
+    # Maximum audit logs to keep in memory (circular buffer)
+    _MAX_AUDIT_LOGS = 10000
 
     def __init__(
         self,
@@ -91,6 +94,7 @@ class MemoryService:
         self._tag_cache: tuple[float, set[str]] | None = None
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
+        self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
         self._init_three_tier()
 
     def _init_three_tier(self) -> None:
@@ -484,6 +488,119 @@ class MemoryService:
             logger.error(f"Error getting most accessed memories: {e}")
             return []
 
+    def _log_audit(
+        self,
+        operation: str,
+        content_hash: str,
+        actor: str | None = None,
+        memory_type: str | None = None,
+        tags: list[str] | None = None,
+        success: bool = True,
+        error: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Log a memory operation for audit trail tracking.
+
+        Non-blocking, stores in circular buffer (last 10K operations).
+        Used for compliance, debugging, and change history analysis.
+
+        Args:
+            operation: Operation type (CREATE, DELETE, DELETE_RELATION)
+            content_hash: Content hash of affected memory
+            actor: Client hostname or user identifier
+            memory_type: Memory type if applicable
+            tags: Memory tags if applicable
+            success: Whether operation succeeded
+            error: Error message if operation failed
+            metadata: Additional operation metadata
+        """
+        log_entry = AuditLog(
+            operation=operation,
+            content_hash=content_hash,
+            timestamp=time.time(),
+            actor=actor,
+            memory_type=memory_type,
+            tags=tags,
+            success=success,
+            error=error,
+            metadata=metadata or {},
+        )
+        self._audit_logs.append(log_entry)
+
+    def get_audit_trail(
+        self,
+        limit: int = 100,
+        operation: str | None = None,
+        actor: str | None = None,
+        content_hash: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Get audit trail of memory operations.
+
+        Returns recent operations with optional filtering.
+
+        Args:
+            limit: Maximum number of log entries to return
+            operation: Filter by operation type (CREATE, DELETE, DELETE_RELATION)
+            actor: Filter by actor (client_hostname)
+            content_hash: Filter by specific content hash
+
+        Returns:
+            Dictionary with audit log entries and statistics
+        """
+        if not self._audit_logs:
+            return {
+                "total_operations": 0,
+                "operations": [],
+                "operations_by_type": {},
+                "operations_by_actor": {},
+                "success_rate": 1.0,
+            }
+
+        # Apply filters
+        filtered_logs = list(self._audit_logs)
+        if operation:
+            filtered_logs = [log for log in filtered_logs if log.operation == operation]
+        if actor:
+            filtered_logs = [log for log in filtered_logs if log.actor == actor]
+        if content_hash:
+            filtered_logs = [log for log in filtered_logs if log.content_hash == content_hash]
+
+        # Sort by timestamp descending (newest first)
+        filtered_logs.sort(key=lambda x: x.timestamp, reverse=True)
+
+        # Limit results
+        limited_logs = filtered_logs[:limit]
+
+        # Compute statistics from ALL filtered logs (not just limited)
+        operations_by_type: dict[str, int] = {}
+        operations_by_actor: dict[str, int] = {}
+        success_count = 0
+
+        for log in filtered_logs:
+            # Count by operation type
+            operations_by_type[log.operation] = operations_by_type.get(log.operation, 0) + 1
+
+            # Count by actor
+            if log.actor:
+                operations_by_actor[log.actor] = operations_by_actor.get(log.actor, 0) + 1
+
+            # Track success
+            if log.success:
+                success_count += 1
+
+        total_ops = len(filtered_logs)
+        success_rate = success_count / total_ops if total_ops > 0 else 1.0
+
+        return {
+            "total_operations": total_ops,
+            "operations": [log.to_dict() for log in limited_logs],
+            "operations_by_type": operations_by_type,
+            "operations_by_actor": operations_by_actor,
+            "success_rate": success_rate,
+        }
+
     async def _get_cached_tags(self) -> set[str]:
         """Get all tags with 60-second TTL caching for performance."""
         now = time.time()
@@ -812,6 +929,16 @@ class MemoryService:
                     success, message = await self.storage.store(memory)
                     if success:
                         stored_memories.append(self._format_memory_response(memory))
+                        # Log successful chunk create operation
+                        self._log_audit(
+                            operation="CREATE",
+                            content_hash=chunk_hash,
+                            actor=client_hostname,
+                            memory_type=memory_type,
+                            tags=final_tags,
+                            success=True,
+                            metadata={"chunk_index": i, "total_chunks": len(chunks), "original_hash": content_hash},
+                        )
 
                 result = {
                     "success": True,
@@ -856,6 +983,16 @@ class MemoryService:
                         except Exception as e:
                             logger.warning(f"Graph node creation failed (non-fatal): {e}")
 
+                    # Log successful create operation
+                    self._log_audit(
+                        operation="CREATE",
+                        content_hash=content_hash,
+                        actor=client_hostname,
+                        memory_type=memory_type,
+                        tags=final_tags,
+                        success=True,
+                    )
+
                     result = {"success": True, "memory": self._format_memory_response(memory)}
 
                     # Detect contradictions with existing memories
@@ -869,6 +1006,16 @@ class MemoryService:
 
                     return result
                 else:
+                    # Log failed create operation
+                    self._log_audit(
+                        operation="CREATE",
+                        content_hash=content_hash,
+                        actor=client_hostname,
+                        memory_type=memory_type,
+                        tags=final_tags,
+                        success=False,
+                        error=message,
+                    )
                     return {"success": False, "error": message}
 
         except ValueError as e:
@@ -1265,12 +1412,36 @@ class MemoryService:
                         await self._graph.delete_memory_node(content_hash)
                     except Exception as e:
                         logger.warning(f"Graph node deletion failed (non-fatal): {e}")
+
+                # Log successful delete operation
+                self._log_audit(
+                    operation="DELETE",
+                    content_hash=content_hash,
+                    actor=None,  # TODO: Add client_hostname parameter to track actor
+                    success=True,
+                )
                 return {"success": True, "content_hash": content_hash}
             else:
+                # Log failed delete operation
+                self._log_audit(
+                    operation="DELETE",
+                    content_hash=content_hash,
+                    actor=None,
+                    success=False,
+                    error=message,
+                )
                 return {"success": False, "content_hash": content_hash, "error": message}
 
         except Exception as e:
             logger.error(f"Error deleting memory: {e}")
+            # Log exception during delete
+            self._log_audit(
+                operation="DELETE",
+                content_hash=content_hash,
+                actor=None,
+                success=False,
+                error=str(e),
+            )
             return {"success": False, "content_hash": content_hash, "error": f"Failed to delete memory: {str(e)}"}
 
     async def check_database_health(self) -> dict[str, Any]:
@@ -1608,6 +1779,16 @@ class MemoryService:
                 target_hash=target_hash,
                 relation_type=relation_type,
             )
+
+            # Log relation delete operation
+            self._log_audit(
+                operation="DELETE_RELATION",
+                content_hash=source_hash,
+                actor=None,  # TODO: Add client_hostname parameter to track actor
+                success=deleted,
+                metadata={"target_hash": target_hash, "relation_type": relation_type.upper()},
+            )
+
             return {
                 "success": deleted,
                 "source": source_hash,
@@ -1615,9 +1796,27 @@ class MemoryService:
                 "relation_type": relation_type.upper(),
             }
         except ValueError as e:
+            # Log failed relation delete
+            self._log_audit(
+                operation="DELETE_RELATION",
+                content_hash=source_hash,
+                actor=None,
+                success=False,
+                error=str(e),
+                metadata={"target_hash": target_hash, "relation_type": relation_type},
+            )
             return {"success": False, "error": str(e)}
         except Exception as e:
             logger.error(f"Failed to delete relation: {e}")
+            # Log exception during relation delete
+            self._log_audit(
+                operation="DELETE_RELATION",
+                content_hash=source_hash,
+                actor=None,
+                success=False,
+                error=str(e),
+                metadata={"target_hash": target_hash, "relation_type": relation_type},
+            )
             return {"success": False, "error": f"Failed to delete relation: {e}"}
 
     async def scan_memories(
