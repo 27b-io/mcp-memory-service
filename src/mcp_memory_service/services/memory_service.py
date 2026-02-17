@@ -9,6 +9,7 @@ all memory operations, eliminating the DRY violation and ensuring consistent beh
 import asyncio
 import logging
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any, TypedDict
 
@@ -22,6 +23,7 @@ from ..graph.client import GraphClient
 from ..graph.queue import HebbianWriteQueue
 from ..memory_tiers import ThreeTierMemory
 from ..models.memory import Memory
+from ..models.search_log import SearchLog
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
 from ..utils.emotional_analysis import analyze_emotion
@@ -74,6 +76,8 @@ class MemoryService:
 
     # Tag cache TTL in seconds
     _TAG_CACHE_TTL = 60
+    # Maximum search logs to keep in memory (circular buffer)
+    _MAX_SEARCH_LOGS = 10000
 
     def __init__(
         self,
@@ -86,6 +90,7 @@ class MemoryService:
         self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
         self._three_tier: ThreeTierMemory | None = None
+        self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._init_three_tier()
 
     def _init_three_tier(self) -> None:
@@ -344,6 +349,140 @@ class MemoryService:
         except RuntimeError:
             # No running event loop — skip silently
             pass
+
+    def _log_search(
+        self,
+        query: str,
+        start_time: float,
+        result_count: int,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+        min_similarity: float | None = None,
+        hybrid_enabled: bool = True,
+        keywords_extracted: list[str] | None = None,
+        error: str | None = None,
+    ) -> None:
+        """
+        Log a search query for analytics tracking.
+
+        Non-blocking, stores in circular buffer (last 10K queries).
+        Used for search analytics and query pattern analysis.
+        """
+        response_time_ms = (time.time() - start_time) * 1000
+        log_entry = SearchLog(
+            query=query,
+            timestamp=time.time(),
+            response_time_ms=response_time_ms,
+            result_count=result_count,
+            tags=tags,
+            memory_type=memory_type,
+            min_similarity=min_similarity,
+            hybrid_enabled=hybrid_enabled,
+            keywords_extracted=keywords_extracted or [],
+            error=error,
+        )
+        self._search_logs.append(log_entry)
+
+    def get_search_analytics(self, limit: int = 1000) -> dict[str, Any]:
+        """
+        Get aggregated search analytics from recent queries.
+
+        Returns statistics about search patterns, performance, and popular queries.
+        """
+        if not self._search_logs:
+            return {
+                "total_searches": 0,
+                "avg_response_time_ms": None,
+                "popular_queries": [],
+                "popular_tags": [],
+                "search_types": {},
+                "error_rate": 0.0,
+                "queries_per_hour": 0.0,
+            }
+
+        # Get recent logs (up to limit)
+        recent_logs = list(self._search_logs)[-limit:]
+        total = len(recent_logs)
+
+        # Calculate average response time
+        response_times = [log.response_time_ms for log in recent_logs if log.error is None]
+        avg_response_time = sum(response_times) / len(response_times) if response_times else None
+
+        # Count query frequencies
+        from collections import Counter
+
+        query_counts = Counter(log.query for log in recent_logs)
+        popular_queries = [{"query": q, "count": c} for q, c in query_counts.most_common(10)]
+
+        # Count tag frequencies from search filters
+        tag_counts = Counter()
+        for log in recent_logs:
+            if log.tags:
+                tag_counts.update(log.tags)
+        popular_tags = [{"tag": t, "count": c} for t, c in tag_counts.most_common(10)]
+
+        # Count search types (hybrid vs vector-only)
+        search_types = {
+            "hybrid": sum(1 for log in recent_logs if log.hybrid_enabled),
+            "vector_only": sum(1 for log in recent_logs if not log.hybrid_enabled),
+        }
+
+        # Calculate error rate
+        errors = sum(1 for log in recent_logs if log.error is not None)
+        error_rate = (errors / total * 100) if total > 0 else 0.0
+
+        # Calculate queries per hour (based on time span)
+        if total > 1:
+            time_span_hours = (recent_logs[-1].timestamp - recent_logs[0].timestamp) / 3600
+            queries_per_hour = total / time_span_hours if time_span_hours > 0 else 0.0
+        else:
+            queries_per_hour = 0.0
+
+        return {
+            "total_searches": total,
+            "avg_response_time_ms": round(avg_response_time, 2) if avg_response_time else None,
+            "popular_queries": popular_queries,
+            "popular_tags": popular_tags,
+            "search_types": search_types,
+            "error_rate": round(error_rate, 2),
+            "queries_per_hour": round(queries_per_hour, 2),
+        }
+
+    async def get_most_accessed_memories(self, limit: int = 20) -> list[dict[str, Any]]:
+        """
+        Get the most frequently accessed memories based on access_count.
+
+        Returns a list of memory objects sorted by access frequency.
+        """
+        try:
+            # Get a large sample of recent memories
+            # TODO: Add dedicated storage method for sorting by access_count
+            memories = await self.storage.get_recent_memories(n=1000)
+
+            # Sort by access_count
+            sorted_memories = sorted(memories, key=lambda m: m.access_count, reverse=True)
+
+            # Limit and format
+            result = []
+            for memory in sorted_memories[:limit]:
+                result.append(
+                    {
+                        "content_hash": memory.content_hash,
+                        "content_preview": (memory.content or "")[:200] + ("..." if len(memory.content or "") > 200 else ""),
+                        "access_count": memory.access_count,
+                        "last_accessed": memory.access_timestamps[-1] if memory.access_timestamps else None,
+                        "tags": memory.tags or [],
+                        "memory_type": memory.memory_type,
+                        "created_at": memory.created_at,
+                        "salience_score": memory.salience_score,
+                    }
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error getting most accessed memories: {e}")
+            return []
 
     async def _get_cached_tags(self) -> set[str]:
         """Get all tags with 60-second TTL caching for performance."""
@@ -777,6 +916,12 @@ class MemoryService:
         Returns:
             Dictionary with search results and pagination metadata
         """
+        start_time = time.time()
+        result_count = 0
+        keywords = []
+        hybrid_enabled = True
+        error_msg = None
+
         try:
             config = settings.hybrid_search
 
@@ -950,6 +1095,19 @@ class MemoryService:
             # Track access counts (fire-and-forget)
             self._fire_access_count_updates(result_hashes)
 
+            # Log search for analytics
+            result_count = len(results)
+            self._log_search(
+                query=query,
+                start_time=start_time,
+                result_count=result_count,
+                tags=tags,
+                memory_type=memory_type,
+                min_similarity=min_similarity,
+                hybrid_enabled=True,
+                keywords_extracted=keywords,
+            )
+
             return {
                 "memories": results,
                 "query": query,
@@ -960,8 +1118,23 @@ class MemoryService:
             }
 
         except Exception as e:
+            error_msg = f"Failed to retrieve memories: {str(e)}"
             logger.error(f"Error retrieving memories: {e}")
-            return {"memories": [], "query": query, "error": f"Failed to retrieve memories: {str(e)}"}
+
+            # Log error for analytics
+            self._log_search(
+                query=query,
+                start_time=start_time,
+                result_count=0,
+                tags=tags,
+                memory_type=memory_type,
+                min_similarity=min_similarity,
+                hybrid_enabled=hybrid_enabled,
+                keywords_extracted=keywords,
+                error=error_msg,
+            )
+
+            return {"memories": [], "query": query, "error": error_msg}
 
     async def search_by_tag(
         self,

@@ -27,8 +27,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ...config import OAUTH_ENABLED
+from ...services.memory_service import MemoryService
 from ...storage.base import MemoryStorage
-from ..dependencies import get_storage
+from ..dependencies import get_memory_service, get_storage
 
 # OAuth authentication imports (conditional)
 if OAUTH_ENABLED or TYPE_CHECKING:
@@ -181,6 +182,27 @@ class StorageStats(BaseModel):
     largest_memories: list[dict[str, Any]]
     growth_trend: list[dict[str, Any]]  # Size over time
     storage_efficiency: float  # Percentage of efficient storage
+
+
+class AccessedMemory(BaseModel):
+    """Information about an accessed memory."""
+
+    content_hash: str
+    content_preview: str
+    access_count: int
+    last_accessed: float | None
+    tags: list[str]
+    memory_type: str | None
+    created_at: float | None
+    salience_score: float
+
+
+class AccessPatternsResponse(BaseModel):
+    """Response for access patterns endpoint."""
+
+    most_accessed: list[AccessedMemory]
+    total_accesses: int
+    unique_memories_accessed: int
 
 
 @router.get("/overview", response_model=AnalyticsOverview, tags=["analytics"])
@@ -414,16 +436,27 @@ async def get_memory_type_distribution(
 
 
 @router.get("/search-analytics", response_model=SearchAnalytics, tags=["analytics"])
-async def get_search_analytics(user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None):
+async def get_search_analytics(
+    memory_service: MemoryService = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None,
+):
     """
     Get search usage analytics.
 
-    Returns statistics about search patterns and performance.
-    This is a placeholder - real implementation would need search logging.
+    Returns statistics about search patterns and performance based on recent query logs.
     """
-    # Placeholder implementation
-    # In a real system, this would analyze search logs
-    return SearchAnalytics(total_searches=0, avg_response_time=None, popular_tags=[], search_types={})
+    try:
+        analytics = memory_service.get_search_analytics(limit=1000)
+
+        return SearchAnalytics(
+            total_searches=analytics["total_searches"],
+            avg_response_time=analytics["avg_response_time_ms"],
+            popular_tags=analytics["popular_tags"],
+            search_types=analytics["search_types"],
+        )
+    except Exception as e:
+        logger.error(f"Failed to get search analytics: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get search analytics: {str(e)}") from e
 
 
 @router.get("/performance", response_model=PerformanceMetrics, tags=["analytics"])
@@ -778,3 +811,47 @@ async def get_storage_stats(
     except Exception as e:
         logger.error(f"Failed to get storage stats: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {str(e)}") from e
+
+
+@router.get("/access-patterns", response_model=AccessPatternsResponse, tags=["analytics"])
+async def get_access_patterns(
+    limit: int = Query(20, description="Maximum number of memories to return"),
+    memory_service: MemoryService = Depends(get_memory_service),
+    user: AuthenticationResult = Depends(require_read_access) if OAUTH_ENABLED else None,
+):
+    """
+    Get memory access patterns showing most frequently accessed memories.
+
+    Returns the memories with highest access counts, sorted by retrieval frequency.
+    """
+    try:
+        most_accessed = await memory_service.get_most_accessed_memories(limit=limit)
+
+        # Calculate aggregate stats
+        total_accesses = sum(m["access_count"] for m in most_accessed)
+        unique_memories = len(most_accessed)
+
+        # Convert to response format
+        accessed_memories = [
+            AccessedMemory(
+                content_hash=m["content_hash"],
+                content_preview=m["content_preview"],
+                access_count=m["access_count"],
+                last_accessed=m["last_accessed"],
+                tags=m["tags"],
+                memory_type=m["memory_type"],
+                created_at=m["created_at"],
+                salience_score=m["salience_score"],
+            )
+            for m in most_accessed
+        ]
+
+        return AccessPatternsResponse(
+            most_accessed=accessed_memories,
+            total_accesses=total_accesses,
+            unique_memories_accessed=unique_memories,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get access patterns: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get access patterns: {str(e)}") from e
