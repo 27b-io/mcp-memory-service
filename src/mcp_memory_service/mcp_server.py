@@ -84,6 +84,9 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     """Manage MCP server lifecycle with proper resource initialization and cleanup."""
     logger.info("Initializing MCP Memory Service components...")
 
+    # Register optional three-tier tools before accepting requests
+    _maybe_register_three_tier_tools()
+
     # Check if shared storage is already initialized (by unified_server)
     from .shared_storage import get_shared_storage, is_storage_initialized
 
@@ -563,11 +566,15 @@ def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
         return {"enabled": True, "tiers": three_tier.stats()}
 
 
-# Conditionally register three-tier tools
-from .config import settings as _settings  # noqa: E402
+def _maybe_register_three_tier_tools() -> None:
+    """Register three-tier tools if expose_tools is enabled.
 
-if _settings.three_tier.expose_tools:
-    _register_three_tier_tools(mcp)
+    Deferred to startup (not module-level) to preserve lazy _SettingsProxy behavior.
+    """
+    from .config import settings as _settings
+
+    if _settings.three_tier.expose_tools:
+        _register_three_tier_tools(mcp)
 
 
 # =============================================================================

@@ -28,6 +28,7 @@ tests/integration/test_storage_integration.py
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from src.mcp_memory_service.models.memory import Memory
 
@@ -300,3 +301,117 @@ class TestHashToUuidConversion:
         uuid2 = storage._hash_to_uuid(hash2)
 
         assert uuid1 != uuid2
+
+
+# =============================================================================
+# Embedding Prompt Prefix Tests (Issue #101)
+# Models like E5, Nomic, Arctic require instruction prefixes for meaningful
+# cosine similarity. Without them, scores are ~0.01 instead of ~0.7+.
+# =============================================================================
+
+
+class TestEmbeddingPromptPrefix:
+    """Test that prompt_name is passed to encode() for instruction-tuned models."""
+
+    def _make_storage(self):
+        """Create a QdrantStorage with mocked model."""
+        with patch("src.mcp_memory_service.storage.qdrant_storage.QdrantClient"):
+            storage = QdrantStorage(embedding_model="intfloat/e5-base-v2", storage_path="/tmp/test")
+        # Inject a mock model that has prompts configured
+        mock_model = MagicMock()
+        mock_model.prompts = {"query": "query: ", "passage": "passage: "}
+        mock_model.encode.return_value = np.zeros(768, dtype=np.float32)
+        storage._embedding_model_instance = mock_model
+        storage._vector_size = 768
+        return storage, mock_model
+
+    def test_storage_embedding_uses_passage_prompt(self):
+        """Bug #101: _generate_embedding for storage must use prompt_name='passage'."""
+        storage, mock_model = self._make_storage()
+
+        storage._generate_embedding("test content")
+
+        mock_model.encode.assert_called_once_with("test content", prompt_name="passage", convert_to_tensor=False)
+
+    def test_query_embedding_uses_query_prompt(self):
+        """Bug #101: _generate_embedding for queries must use prompt_name='query'."""
+        storage, mock_model = self._make_storage()
+
+        storage._generate_embedding("search terms", prompt_name="query")
+
+        mock_model.encode.assert_called_once_with("search terms", prompt_name="query", convert_to_tensor=False)
+
+    def test_fallback_when_model_has_no_prompts(self):
+        """Models without prompts configured must still work (no prompt_name arg)."""
+        with patch("src.mcp_memory_service.storage.qdrant_storage.QdrantClient"):
+            storage = QdrantStorage(embedding_model="all-MiniLM-L6-v2", storage_path="/tmp/test")
+
+        mock_model = MagicMock()
+        mock_model.prompts = {}  # No prompts configured
+        mock_model.encode.return_value = np.zeros(384, dtype=np.float32)
+        storage._embedding_model_instance = mock_model
+        storage._vector_size = 384
+
+        storage._generate_embedding("test content")
+
+        # Should NOT pass prompt_name when model has no prompts
+        mock_model.encode.assert_called_once_with("test content", convert_to_tensor=False)
+
+    def test_fallback_when_model_has_no_prompts_attribute(self):
+        """Models without prompts attribute at all must still work."""
+        with patch("src.mcp_memory_service.storage.qdrant_storage.QdrantClient"):
+            storage = QdrantStorage(embedding_model="custom-model", storage_path="/tmp/test")
+
+        mock_model = MagicMock(spec=[])  # No attributes at all
+        mock_model.encode = MagicMock(return_value=np.zeros(384, dtype=np.float32))
+        storage._embedding_model_instance = mock_model
+        storage._vector_size = 384
+
+        storage._generate_embedding("test content")
+
+        mock_model.encode.assert_called_once_with("test content", convert_to_tensor=False)
+
+    @pytest.mark.asyncio
+    async def test_retrieve_uses_query_prompt(self):
+        """Bug #101: retrieve() must pass prompt_name='query' for search embeddings."""
+        storage, mock_model = self._make_storage()
+        storage._initialized = True
+        storage._failure_count = 0
+        storage._circuit_open_until = None
+
+        # Mock the qdrant client search to return empty results
+        storage.client = MagicMock()
+        storage.client.query_points.return_value = MagicMock(points=[])
+
+        await storage.retrieve("search query", n_results=5)
+
+        # The embedding call should use prompt_name="query"
+        mock_model.encode.assert_called_once_with("search query", prompt_name="query", convert_to_tensor=False)
+
+    def test_manual_prefix_fallback_for_old_sentence_transformers(self):
+        """sentence-transformers <3.0 doesn't support prompt_name; fall back to manual prefix."""
+        storage, mock_model = self._make_storage()
+
+        # Simulate old sentence-transformers: prompt_name kwarg raises TypeError
+        def encode_side_effect(text, **kwargs):
+            if "prompt_name" in kwargs:
+                raise TypeError("encode() got an unexpected keyword argument 'prompt_name'")
+            return np.zeros(768, dtype=np.float32)
+
+        mock_model.encode.side_effect = encode_side_effect
+
+        storage._generate_embedding("test content", prompt_name="query")
+
+        # Should have been called twice: first with prompt_name (fails), then with manual prefix
+        assert mock_model.encode.call_count == 2
+        second_call = mock_model.encode.call_args_list[1]
+        assert second_call == (("query: test content",), {"convert_to_tensor": False})
+
+    def test_unrelated_typeerror_is_reraised(self):
+        """TypeErrors unrelated to prompt_name must not be silently caught."""
+        storage, mock_model = self._make_storage()
+
+        mock_model.encode.side_effect = TypeError("expected str, got NoneType")
+
+        with pytest.raises(TypeError, match="expected str, got NoneType"):
+            storage._generate_embedding("test content", prompt_name="query")

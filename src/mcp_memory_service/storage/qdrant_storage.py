@@ -502,14 +502,26 @@ class QdrantStorage(MemoryStorage):
             uuid_hex = hashlib.sha256(hash_string.encode()).hexdigest()[:32]
         return str(uuid.UUID(uuid_hex))
 
-    def _generate_embedding(self, text: str) -> list[float]:
+    def _generate_embedding(self, text: str, prompt_name: str = "passage") -> list[float]:
         """
         Generate embedding for text using configured model.
 
         Thread-safe lazy loading with lock to prevent race conditions.
 
+        For instruction-tuned models (E5, Nomic, Arctic), uses prompt_name to
+        apply the model's configured prefix (e.g. "query: " or "passage: ").
+        Falls back gracefully for models without prompt support.
+
+        NOTE: Embeddings stored before this fix were created WITHOUT prefixes.
+        Legacy collections will have lower similarity scores until re-embedded.
+        To re-embed: iterate stored memories, call _generate_embedding(content)
+        with the new defaults, and update the stored vectors in Qdrant.
+
         Args:
             text: Text to generate embedding for
+            prompt_name: Prompt name for instruction-tuned models.
+                "passage" (default) for storing documents,
+                "query" for search queries.
 
         Returns:
             List of float values representing the embedding vector
@@ -535,7 +547,27 @@ class QdrantStorage(MemoryStorage):
                         logger.info(f"Loaded model: {self.embedding_model} on device: {device}")
 
             # Generate embedding (outside lock - model is thread-safe for inference)
-            embeddings = self._embedding_model_instance.encode(text, convert_to_tensor=False)
+            # Use prompt_name for instruction-tuned models (E5, Nomic, Arctic)
+            # that require prefixes for meaningful cosine similarity scores.
+            # prompt_name and model.prompts were introduced in sentence-transformers v2.4.0;
+            # for older versions (our floor is >=2.2.2), manually prepend the prompt text.
+            model = self._embedding_model_instance
+            prompts = getattr(model, "prompts", None) or {}
+            if prompt_name and prompt_name in prompts:
+                try:
+                    embeddings = model.encode(text, prompt_name=prompt_name, convert_to_tensor=False)
+                except TypeError as exc:
+                    # sentence-transformers < 2.4.0: prompt_name not supported, prepend manually.
+                    # Only fall back for the specific unsupported kwarg error; re-raise others.
+                    message = str(exc)
+                    if "unexpected keyword argument" in message and "prompt_name" in message:
+                        prefix = prompts[prompt_name]
+                        logger.debug(f"Falling back to manual prefix for prompt_name='{prompt_name}': '{prefix}'")
+                        embeddings = model.encode(f"{prefix}{text}", convert_to_tensor=False)
+                    else:
+                        raise
+            else:
+                embeddings = model.encode(text, convert_to_tensor=False)
             embedding_list = embeddings.tolist() if hasattr(embeddings, "tolist") else embeddings
 
             # Validate embedding
@@ -731,7 +763,7 @@ class QdrantStorage(MemoryStorage):
             try:
                 # Use _generate_embedding which handles lazy model loading
                 loop = asyncio.get_event_loop()
-                query_embedding = await loop.run_in_executor(None, lambda: self._generate_embedding(query))
+                query_embedding = await loop.run_in_executor(None, lambda: self._generate_embedding(query, prompt_name="query"))
             except Exception as e:
                 logger.error(f"Failed to generate query embedding: {e}")
                 self._record_failure()
