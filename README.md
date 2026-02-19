@@ -56,7 +56,7 @@ uv run memory server
 
 ## Architecture
 
-```
+```text
                          ┌─────────────────────────────────┐
   Claude Desktop         │        MCP Memory Service       │
   Claude Code     ──MCP──│                                 │
@@ -158,7 +158,7 @@ Graph features: spreading activation search boost, consolidation pruning, async 
 
 Terser Object Notation — a pipe-delimited output format optimized for LLM token budgets.
 
-```
+```text
 # page=1 total=42 page_size=10 has_more=true total_pages=5
 Meeting notes about auth redesign|planning,auth|{"priority":"high"}|2026-01-15T10:30:00Z|2026-01-15T10:30:00Z|abc123|0.95
 Fixed race condition in worker pool|bugfix,concurrency|{}|2026-01-14T09:00:00Z|2026-01-14T09:00:00Z|def456|0.87
@@ -228,13 +228,13 @@ All config via environment variables. Pydantic-settings under the hood — type-
 | Backend | Best for | Notes |
 |---------|----------|-------|
 | **Qdrant** | Production | HNSW index, scalar quantization option (32x memory savings), embedded or remote mode. Default. |
-| **SQLite-vec** | Lightweight / Docker | CPU-only, zero external dependencies. Used as Docker default. |
+| **SQLite-vec** | Lightweight / Docker | CPU-only, zero external dependencies. Docker images default to this via env var. |
 
 Both implement the `MemoryStorage` protocol. Swap with one env var.
 
 ## Development
 
-```
+```text
 src/mcp_memory_service/
 ├── mcp_server.py              # 5 MCP tools (+ optional three-tier)
 ├── config.py                  # Pydantic settings
