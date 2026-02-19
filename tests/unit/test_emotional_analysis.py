@@ -213,6 +213,11 @@ class TestEdgeCases:
         result = analyze_emotion("Version 42 on line 123 at offset 0xff")
         assert result.category == "neutral"
 
+    def test_technical_error_terms_low_magnitude(self):
+        """Common log terms like 'error' shouldn't trigger strong emotion."""
+        result = analyze_emotion("Error code 42 on line 123 at offset 0xff")
+        assert result.magnitude < 0.5
+
     def test_unicode_content(self):
         """Should handle unicode without errors."""
         result = analyze_emotion("This is amazing! \u2764\ufe0f Best solution ever \ud83d\ude80")

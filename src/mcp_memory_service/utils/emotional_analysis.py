@@ -253,9 +253,12 @@ def analyze_emotion(text: str) -> EmotionalValence:
     Analyze emotional content of text using VADER + domain keyword hybrid.
 
     Algorithm:
-        1. VADER computes sentiment (compound score) and magnitude (1 - neutrality)
-        2. Domain keyword lexicon determines emotion category via set intersection
-        3. Edge cases reconcile mismatches between VADER and category detection
+        1. VADER computes sentiment using the compound score; magnitude starts
+           as the absolute value of this compound score
+        2. A domain keyword lexicon determines the emotion category via set
+           intersection and can boost magnitude based on keyword density
+        3. When no domain keywords are present, the category falls back to
+           "neutral" while preserving VADER sentiment/magnitude
 
     Args:
         text: Raw text content to analyze
@@ -273,7 +276,15 @@ def analyze_emotion(text: str) -> EmotionalValence:
     # Category: domain-specific keyword matching
     tokens = _TOKEN_RE.findall(text.lower())
     if not tokens:
-        return EmotionalValence.neutral()
+        # No lexical tokens (emoji-only, punctuation-heavy), but VADER may
+        # still have a sentiment signal — preserve it with neutral category
+        magnitude = min(abs(sentiment), 1.0)
+        sentiment = max(-1.0, min(1.0, sentiment))
+        return EmotionalValence(
+            sentiment=sentiment,
+            magnitude=magnitude,
+            category="neutral",
+        )
 
     token_set = set(tokens)
     category_scores: dict[str, int] = {}
@@ -287,8 +298,9 @@ def analyze_emotion(text: str) -> EmotionalValence:
     if has_domain_keywords:
         category = max(category_scores, key=category_scores.get)  # type: ignore[arg-type]
     elif abs(sentiment) >= 0.3:
-        # Strong VADER signal without domain keywords — generic label
-        category = "positive" if sentiment > 0 else "negative"
+        # Strong VADER signal without domain keywords — keep neutral category
+        # to avoid expanding the API surface beyond the 8 domain categories
+        category = "neutral"
     else:
         category = "neutral"
 
