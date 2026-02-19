@@ -406,3 +406,12 @@ class TestEmbeddingPromptPrefix:
         assert mock_model.encode.call_count == 2
         second_call = mock_model.encode.call_args_list[1]
         assert second_call == (("query: test content",), {"convert_to_tensor": False})
+
+    def test_unrelated_typeerror_is_reraised(self):
+        """TypeErrors unrelated to prompt_name must not be silently caught."""
+        storage, mock_model = self._make_storage()
+
+        mock_model.encode.side_effect = TypeError("expected str, got NoneType")
+
+        with pytest.raises(TypeError, match="expected str, got NoneType"):
+            storage._generate_embedding("test content", prompt_name="query")

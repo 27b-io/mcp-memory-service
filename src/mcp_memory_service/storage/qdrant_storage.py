@@ -512,16 +512,15 @@ class QdrantStorage(MemoryStorage):
         apply the model's configured prefix (e.g. "query: " or "passage: ").
         Falls back gracefully for models without prompt support.
 
-        NOTE: Embeddings stored before this fix were created WITHOUT prefixes.
-        When querying collections with legacy embeddings, callers should pass
-        prompt_name="" to skip prefix application for consistent similarity.
+        NOTE: Embeddings stored before this fix were created WITHOUT prefixes,
+        so queries against legacy data may require skipping prefix application
+        to maintain consistent similarity behavior.
 
         Args:
             text: Text to generate embedding for
             prompt_name: Prompt name for instruction-tuned models.
                 "passage" (default) for storing documents,
                 "query" for search queries.
-                Empty string to skip prefix (legacy compatibility).
 
         Returns:
             List of float values representing the embedding vector
@@ -556,11 +555,16 @@ class QdrantStorage(MemoryStorage):
             if prompt_name and prompt_name in prompts:
                 try:
                     embeddings = model.encode(text, prompt_name=prompt_name, convert_to_tensor=False)
-                except TypeError:
-                    # sentence-transformers < 3.0: prompt_name not supported, prepend manually
-                    prefix = prompts[prompt_name]
-                    logger.debug(f"Falling back to manual prefix for prompt_name='{prompt_name}': '{prefix}'")
-                    embeddings = model.encode(f"{prefix}{text}", convert_to_tensor=False)
+                except TypeError as exc:
+                    # sentence-transformers < 3.0: prompt_name not supported, prepend manually.
+                    # Only fall back for the specific unsupported kwarg error; re-raise others.
+                    message = str(exc)
+                    if "unexpected keyword argument" in message and "prompt_name" in message:
+                        prefix = prompts[prompt_name]
+                        logger.debug(f"Falling back to manual prefix for prompt_name='{prompt_name}': '{prefix}'")
+                        embeddings = model.encode(f"{prefix}{text}", convert_to_tensor=False)
+                    else:
+                        raise
             else:
                 embeddings = model.encode(text, convert_to_tensor=False)
             embedding_list = embeddings.tolist() if hasattr(embeddings, "tolist") else embeddings

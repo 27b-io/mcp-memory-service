@@ -84,6 +84,9 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     """Manage MCP server lifecycle with proper resource initialization and cleanup."""
     logger.info("Initializing MCP Memory Service components...")
 
+    # Register optional three-tier tools before accepting requests
+    _maybe_register_three_tier_tools()
+
     # Check if shared storage is already initialized (by unified_server)
     from .shared_storage import get_shared_storage, is_storage_initialized
 
@@ -581,9 +584,6 @@ def _maybe_register_three_tier_tools() -> None:
 
 def main():
     """Main entry point for the FastAPI MCP server."""
-    # Register optional tools before starting transport
-    _maybe_register_three_tier_tools()
-
     # Configure for Claude Code integration
     port = int(os.getenv("MCP_SERVER_PORT", "8000"))
     host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
