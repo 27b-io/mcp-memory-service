@@ -8,6 +8,19 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.9.0](https://github.com/27b-io/mcp-memory-service/compare/v11.8.0...v11.9.0) (2026-02-19)
+
+
+### Features
+
+* Implement comprehensive memory access analytics ([fd615a3](https://github.com/27b-io/mcp-memory-service/commit/fd615a31cf78b7a5caec3dd32ea021bf7bd1173a))
+* Implement memory audit logging ([2a15778](https://github.com/27b-io/mcp-memory-service/commit/2a15778fdef756433c39bb8fecf3e395143c462a))
+
+
+### Bug Fixes
+
+* add prompt_name support for instruction-tuned embedding models ([#102](https://github.com/27b-io/mcp-memory-service/issues/102)) ([e9064d1](https://github.com/27b-io/mcp-memory-service/commit/e9064d15bf268a5bb15c5a5b8c9de3786c8dc4d0))
+
 ## [11.8.0](https://github.com/27b-io/mcp-memory-service/compare/v11.7.0...v11.8.0) (2026-02-16)
 
 
