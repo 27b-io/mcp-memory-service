@@ -389,7 +389,7 @@ class TestEmbeddingPromptPrefix:
         mock_model.encode.assert_called_once_with("search query", prompt_name="query", convert_to_tensor=False)
 
     def test_manual_prefix_fallback_for_old_sentence_transformers(self):
-        """sentence-transformers <3.0 doesn't support prompt_name; fall back to manual prefix."""
+        """sentence-transformers <2.4.0 doesn't support prompt_name; fall back to manual prefix."""
         storage, mock_model = self._make_storage()
 
         # Simulate old sentence-transformers: prompt_name kwarg raises TypeError
