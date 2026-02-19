@@ -42,11 +42,12 @@ mcp_memory_service/
 
 ## Embedding Models
 
-Default: `intfloat/e5-base-v2` (768-dim, ~63 MTEB avg)
+Default: `nomic-ai/nomic-embed-text-v1.5` (768-dim, 8K context, ~62 MTEB avg)
 
 | Model | Dims | Use Case |
 |-------|------|----------|
-| **intfloat/e5-base-v2** ⭐ | 768 | Default (best balance) |
+| **nomic-ai/nomic-embed-text-v1.5** ⭐ | 768 | Default (best balance, 8K context) |
+| **intfloat/e5-base-v2** | 768 | Alternative (shorter context) |
 | **intfloat/e5-small-v2** | 384 | Speed > accuracy |
 | **intfloat/e5-large-v2** | 1024 | Best quality |
 
