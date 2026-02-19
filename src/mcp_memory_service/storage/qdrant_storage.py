@@ -549,10 +549,18 @@ class QdrantStorage(MemoryStorage):
             # Generate embedding (outside lock - model is thread-safe for inference)
             # Use prompt_name for instruction-tuned models (E5, Nomic, Arctic)
             # that require prefixes for meaningful cosine similarity scores.
+            # prompt_name parameter requires sentence-transformers >= 3.0;
+            # for older versions, manually prepend the prompt text.
             model = self._embedding_model_instance
-            model_has_prompts = getattr(model, "prompts", None) and prompt_name in model.prompts
-            if prompt_name and model_has_prompts:
-                embeddings = model.encode(text, prompt_name=prompt_name, convert_to_tensor=False)
+            prompts = getattr(model, "prompts", None) or {}
+            if prompt_name and prompt_name in prompts:
+                try:
+                    embeddings = model.encode(text, prompt_name=prompt_name, convert_to_tensor=False)
+                except TypeError:
+                    # sentence-transformers < 3.0: prompt_name not supported, prepend manually
+                    prefix = prompts[prompt_name]
+                    logger.debug(f"Falling back to manual prefix for prompt_name='{prompt_name}': '{prefix}'")
+                    embeddings = model.encode(f"{prefix}{text}", convert_to_tensor=False)
             else:
                 embeddings = model.encode(text, convert_to_tensor=False)
             embedding_list = embeddings.tolist() if hasattr(embeddings, "tolist") else embeddings

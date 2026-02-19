@@ -563,11 +563,15 @@ def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
         return {"enabled": True, "tiers": three_tier.stats()}
 
 
-# Conditionally register three-tier tools
-from .config import settings as _settings  # noqa: E402
+def _maybe_register_three_tier_tools() -> None:
+    """Register three-tier tools if expose_tools is enabled.
 
-if _settings.three_tier.expose_tools:
-    _register_three_tier_tools(mcp)
+    Deferred to startup (not module-level) to preserve lazy _SettingsProxy behavior.
+    """
+    from .config import settings as _settings
+
+    if _settings.three_tier.expose_tools:
+        _register_three_tier_tools(mcp)
 
 
 # =============================================================================
@@ -577,6 +581,9 @@ if _settings.three_tier.expose_tools:
 
 def main():
     """Main entry point for the FastAPI MCP server."""
+    # Register optional tools before starting transport
+    _maybe_register_three_tier_tools()
+
     # Configure for Claude Code integration
     port = int(os.getenv("MCP_SERVER_PORT", "8000"))
     host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")

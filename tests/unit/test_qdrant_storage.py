@@ -387,3 +387,22 @@ class TestEmbeddingPromptPrefix:
 
         # The embedding call should use prompt_name="query"
         mock_model.encode.assert_called_once_with("search query", prompt_name="query", convert_to_tensor=False)
+
+    def test_manual_prefix_fallback_for_old_sentence_transformers(self):
+        """sentence-transformers <3.0 doesn't support prompt_name; fall back to manual prefix."""
+        storage, mock_model = self._make_storage()
+
+        # Simulate old sentence-transformers: prompt_name kwarg raises TypeError
+        def encode_side_effect(text, **kwargs):
+            if "prompt_name" in kwargs:
+                raise TypeError("encode() got an unexpected keyword argument 'prompt_name'")
+            return np.zeros(768, dtype=np.float32)
+
+        mock_model.encode.side_effect = encode_side_effect
+
+        storage._generate_embedding("test content", prompt_name="query")
+
+        # Should have been called twice: first with prompt_name (fails), then with manual prefix
+        assert mock_model.encode.call_count == 2
+        second_call = mock_model.encode.call_args_list[1]
+        assert second_call == (("query: test content",), {"convert_to_tensor": False})
