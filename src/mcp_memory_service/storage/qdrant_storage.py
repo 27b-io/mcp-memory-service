@@ -512,9 +512,10 @@ class QdrantStorage(MemoryStorage):
         apply the model's configured prefix (e.g. "query: " or "passage: ").
         Falls back gracefully for models without prompt support.
 
-        NOTE: Embeddings stored before this fix were created WITHOUT prefixes,
-        so queries against legacy data may require skipping prefix application
-        to maintain consistent similarity behavior.
+        NOTE: Embeddings stored before this fix were created WITHOUT prefixes.
+        Legacy collections will have lower similarity scores until re-embedded.
+        To re-embed: iterate stored memories, call _generate_embedding(content)
+        with the new defaults, and update the stored vectors in Qdrant.
 
         Args:
             text: Text to generate embedding for
@@ -548,15 +549,15 @@ class QdrantStorage(MemoryStorage):
             # Generate embedding (outside lock - model is thread-safe for inference)
             # Use prompt_name for instruction-tuned models (E5, Nomic, Arctic)
             # that require prefixes for meaningful cosine similarity scores.
-            # prompt_name parameter requires sentence-transformers >= 3.0;
-            # for older versions, manually prepend the prompt text.
+            # prompt_name and model.prompts were introduced in sentence-transformers v2.4.0;
+            # for older versions (our floor is >=2.2.2), manually prepend the prompt text.
             model = self._embedding_model_instance
             prompts = getattr(model, "prompts", None) or {}
             if prompt_name and prompt_name in prompts:
                 try:
                     embeddings = model.encode(text, prompt_name=prompt_name, convert_to_tensor=False)
                 except TypeError as exc:
-                    # sentence-transformers < 3.0: prompt_name not supported, prepend manually.
+                    # sentence-transformers < 2.4.0: prompt_name not supported, prepend manually.
                     # Only fall back for the specific unsupported kwarg error; re-raise others.
                     message = str(exc)
                     if "unexpected keyword argument" in message and "prompt_name" in message:
