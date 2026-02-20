@@ -61,6 +61,7 @@ dependencies = [
     "toon-format>=0.9.0b1",
     "platformdirs>=4.0.0",
     "vadersentiment>=3.3.2",
+    "spacy>=3.8.11",
 ]
 
 [project.optional-dependencies]

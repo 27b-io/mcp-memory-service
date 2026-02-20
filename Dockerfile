@@ -41,8 +41,9 @@ RUN uv venv && \
 COPY src/ ./src/
 RUN uv pip install --no-deps -e .
 
-# Pre-download embedding model and clean up in the same layer
-RUN .venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')" && \
+# Pre-download embedding model + spaCy model and clean up in the same layer
+RUN .venv/bin/python -m spacy download en_core_web_sm && \
+    .venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')" && \
     rm -rf /root/.cache/pip /root/.cache/uv && \
     find .venv -name "*.pyc" -delete 2>/dev/null || true && \
     find .venv -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
