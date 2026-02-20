@@ -1154,12 +1154,6 @@ class MemoryService:
             # Combine using RRF
             combined = combine_results_rrf(vector_results, tag_matches, alpha)
 
-            # Apply temporal decay (new floored formula) or legacy recency decay
-            if config.temporal_decay_lambda > 0:
-                combined = apply_recency_decay(combined, config.temporal_decay_lambda, config.temporal_decay_base)
-            elif config.recency_decay > 0:
-                combined = apply_recency_decay(combined, config.recency_decay)
-
             # Boost stages below operate on and re-sort by cosine display scores,
             # not RRF rank. RRF determines initial ordering; boosts refine from there.
             # Apply spreading activation boost from graph layer
@@ -1229,6 +1223,13 @@ class MemoryService:
                             debug_info = {**debug_info, "context_similarity": ctx_sim}
                     context_boosted.append((memory, score, debug_info))
                 combined = sorted(context_boosted, key=lambda x: x[1], reverse=True)
+
+            # Apply temporal decay after all boosts (matches vector-only path order:
+            # boosts represent intrinsic quality, decay represents freshness)
+            if config.temporal_decay_lambda > 0:
+                combined = apply_recency_decay(combined, config.temporal_decay_lambda, config.temporal_decay_base)
+            elif config.recency_decay > 0:
+                combined = apply_recency_decay(combined, config.recency_decay)
 
             # Cap scores at 1.0 and sync debug final_score after all boosts
             combined = [(m, min(1.0, s), {**d, "final_score": min(1.0, s)}) for m, s, d in combined]

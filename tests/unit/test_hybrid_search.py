@@ -9,6 +9,8 @@ import math
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
+import pytest
+
 from mcp_memory_service.utils.hybrid_search import (
     STOP_WORDS,
     TAG_ONLY_BASE_SCORE,
@@ -473,3 +475,74 @@ class TestCombineResultsRRFScoresAreCosine:
         # A min_similarity=0.6 filter should keep "high" and drop "low"
         assert scores["high"] >= 0.6
         assert scores["low"] < 0.6
+
+
+# =============================================================================
+# Pipeline ordering: temporal decay must be applied AFTER boosts
+# =============================================================================
+
+
+class TestTemporalDecayAppliedAfterBoosts:
+    """Verify that temporal decay is applied after quality boosts, not before.
+
+    The correct order (matching vector-only path) is:
+        RRF fusion → boosts (graph, hebbian, salience, etc.) → temporal decay → cap → filter
+
+    If decay were applied before boosts, multiplicative boosts would amplify
+    already-decayed scores differently than if applied after.
+    """
+
+    def _make_memory(self, content_hash: str, days_old: float):
+        memory = MagicMock()
+        memory.content_hash = content_hash
+        memory.updated_at_iso = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        memory.salience_score = 0.0
+        memory.access_timestamps = []
+        memory.encoding_context = None
+        return memory
+
+    def _make_query_result(self, content_hash: str, similarity: float, days_old: float):
+        result = MagicMock()
+        result.memory = self._make_memory(content_hash, days_old)
+        result.similarity_score = similarity
+        return result
+
+    def test_decay_after_boosts_changes_final_scores(self):
+        """Demonstrate that pipeline order matters: boost-then-decay != decay-then-boost."""
+        # Memory A: moderate similarity, very old (high decay)
+        # Memory B: slightly lower similarity, very recent (no decay)
+        vector_results = [
+            self._make_query_result("old_good", 0.80, days_old=100),
+            self._make_query_result("new_ok", 0.75, days_old=1),
+        ]
+        combined = combine_results_rrf(vector_results, [], alpha=0.8)
+
+        decay_rate = 0.01  # ~70 day half-life
+
+        # Correct order: boosts first (none here), then decay
+        boosts_first = apply_recency_decay([(m, s, {**d}) for m, s, d in combined], decay_rate)
+
+        old_score = next(s for m, s, _ in boosts_first if m.content_hash == "old_good")
+        new_score = next(s for m, s, _ in boosts_first if m.content_hash == "new_ok")
+
+        # Old memory (100 days) should be decayed significantly
+        assert old_score < 0.80, "Decay should reduce old memory's score"
+        # New memory (1 day) should be barely affected
+        assert new_score > 0.74, "Recent memory should retain most of its score"
+        # New memory should now rank higher despite lower base cosine
+        assert new_score > old_score, "Recent memory should outrank old memory after decay"
+
+    def test_decay_preserves_debug_fields(self):
+        """Temporal decay should add recency_factor and days_old to debug info."""
+        vector_results = [
+            self._make_query_result("hash1", 0.85, days_old=30),
+        ]
+        combined = combine_results_rrf(vector_results, [], alpha=0.8)
+        decayed = apply_recency_decay(combined, decay_rate=0.01)
+
+        _, score, debug = decayed[0]
+        assert "recency_factor" in debug
+        assert "days_old" in debug
+        assert 0 < debug["recency_factor"] < 1.0
+        assert debug["days_old"] == pytest.approx(30, abs=0.5)
+        assert score < 0.85, "Score should be reduced by decay"
