@@ -195,6 +195,56 @@ class MemoryService:
             logger.warning(f"Hebbian boost query failed (non-fatal): {e}")
             return {}
 
+    async def _inject_graph_neighbors(
+        self,
+        combined: list[tuple[Memory, float, dict]],
+        seed_hashes: list[str],
+        inject_limit: int = 10,
+        min_activation: float = 0.05,
+    ) -> list[tuple[Memory, float, dict]]:
+        """Inject graph-activated neighbors as new candidates."""
+        if self._graph is None or not seed_hashes:
+            return combined
+
+        try:
+            graph_activation = await self._graph.spreading_activation(
+                seed_hashes=seed_hashes[:5],
+                max_hops=2,
+                decay_factor=0.5,
+                min_activation=min_activation,
+            )
+
+            if not graph_activation:
+                return combined
+
+            result_hashes = {m.content_hash for m, _, _ in combined}
+            neighbor_hashes = [
+                h
+                for h, score in sorted(graph_activation.items(), key=lambda x: x[1], reverse=True)
+                if h not in result_hashes and score >= min_activation
+            ][:inject_limit]
+
+            if not neighbor_hashes:
+                return combined
+
+            neighbors = await self.storage.get_memories_batch(neighbor_hashes)
+            for memory in neighbors:
+                activation = graph_activation.get(memory.content_hash, 0.0)
+                combined.append(
+                    (
+                        memory,
+                        activation,
+                        {"source": "graph_injection", "activation": activation},
+                    )
+                )
+
+            logger.debug(f"Graph injection: added {len(neighbors)} neighbors from {len(seed_hashes)} seeds")
+
+        except Exception as e:
+            logger.warning(f"Graph injection failed (non-fatal): {e}")
+
+        return combined
+
     async def _fire_hebbian_co_access(self, content_hashes: list[str], spacing_qualities: list[float] | None = None) -> None:
         """
         Enqueue Hebbian strengthening for all pairs of co-retrieved memories.
@@ -551,6 +601,9 @@ class MemoryService:
         hybrid_enabled: bool = True,
         keywords_extracted: list[str] | None = None,
         error: str | None = None,
+        intent_enabled: bool = False,
+        concepts_extracted: list[str] | None = None,
+        sub_queries_count: int = 1,
     ) -> None:
         """
         Log a search query for analytics tracking.
@@ -570,6 +623,11 @@ class MemoryService:
             hybrid_enabled=hybrid_enabled,
             keywords_extracted=keywords_extracted or [],
             error=error,
+            metadata={
+                "intent_enabled": intent_enabled,
+                "concepts_extracted": concepts_extracted or [],
+                "sub_queries_count": sub_queries_count,
+            },
         )
         self._search_logs.append(log_entry)
 
@@ -1407,6 +1465,16 @@ class MemoryService:
                 vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
                 combined = combine_results_rrf(vector_results, tag_matches, alpha)
 
+            # ── Graph injection: add associatively-connected neighbors ──
+            if settings.intent.graph_inject and self._graph is not None:
+                top_hashes = [m.content_hash for m, _, _ in combined[:5]]
+                combined = await self._inject_graph_neighbors(
+                    combined=combined,
+                    seed_hashes=top_hashes,
+                    inject_limit=settings.intent.graph_inject_limit,
+                    min_activation=settings.intent.graph_inject_min_activation,
+                )
+
             # Boost stages below operate on and re-sort by cosine display scores,
             # not RRF rank. RRF determines initial ordering; boosts refine from there.
             # Apply spreading activation boost from graph layer
@@ -1538,6 +1606,9 @@ class MemoryService:
                 min_similarity=min_similarity,
                 hybrid_enabled=True,
                 keywords_extracted=keywords,
+                intent_enabled=bool(intent_result and len(intent_result.sub_queries) > 1),
+                concepts_extracted=intent_result.concepts if intent_result else [],
+                sub_queries_count=len(intent_result.sub_queries) if intent_result else 1,
             )
 
             return {
