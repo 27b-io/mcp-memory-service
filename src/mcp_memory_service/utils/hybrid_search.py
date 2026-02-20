@@ -133,6 +133,9 @@ STOP_WORDS: frozenset[str] = frozenset(
 # Regex for tokenization - split on non-alphanumeric characters
 _TOKEN_PATTERN = re.compile(r"[^a-zA-Z0-9]+")
 
+# Base score for tag-only results that have no vector cosine similarity
+TAG_ONLY_BASE_SCORE = 0.1
+
 
 def extract_query_keywords(query: str, existing_tags: set[str] | None = None) -> list[str]:
     """
@@ -199,9 +202,10 @@ def combine_results_rrf(
     """
     Combine vector search and tag search results using RRF.
 
-    Formula: final_score = alpha * vector_rrf + (1-alpha) * tag_rrf
-
-    For memories appearing in both lists, scores are summed.
+    RRF (alpha * 1/(k+rank)) determines result **ordering**, but the returned
+    score is the original **cosine similarity** from vector search (or a base
+    score of 0.1 for tag-only results). This keeps scores on a meaningful [0,1]
+    scale compatible with min_similarity thresholds.
 
     Args:
         vector_results: Ranked results from semantic search (with similarity scores)
@@ -210,10 +214,11 @@ def combine_results_rrf(
         k: RRF smoothing constant
 
     Returns:
-        List of (memory, combined_score, debug_info) tuples, sorted by score desc
+        List of (memory, cosine_score, debug_info) tuples, sorted by RRF rank desc
     """
     # Build score maps
-    scores: dict[str, float] = {}  # content_hash -> combined score
+    rrf_scores: dict[str, float] = {}  # content_hash -> RRF score (for ordering)
+    cosine_scores: dict[str, float] = {}  # content_hash -> cosine similarity (for display)
     memories: dict[str, Memory] = {}  # content_hash -> memory object
     debug: dict[str, dict] = {}  # content_hash -> debug info
 
@@ -224,7 +229,8 @@ def combine_results_rrf(
         vec_contribution = alpha * vec_rrf
 
         memories[content_hash] = result.memory
-        scores[content_hash] = vec_contribution
+        rrf_scores[content_hash] = vec_contribution
+        cosine_scores[content_hash] = result.similarity_score
         debug[content_hash] = {
             "vector_score": result.similarity_score,
             "vector_rank": rank,
@@ -241,15 +247,16 @@ def combine_results_rrf(
     for memory in tag_matches:
         content_hash = memory.content_hash
 
-        if content_hash in scores:
-            # Overlap: add tag contribution to existing score
-            scores[content_hash] += tag_contribution
+        if content_hash in rrf_scores:
+            # Overlap: add tag contribution to RRF score for ordering
+            rrf_scores[content_hash] += tag_contribution
             debug[content_hash]["tag_boost"] = tag_contribution
             debug[content_hash]["tag_matches"].append("matched")
         else:
             # Tag-only result (not in vector results)
             memories[content_hash] = memory
-            scores[content_hash] = tag_contribution
+            rrf_scores[content_hash] = tag_contribution
+            cosine_scores[content_hash] = TAG_ONLY_BASE_SCORE
             debug[content_hash] = {
                 "vector_score": 0.0,
                 "vector_rank": 0,
@@ -258,16 +265,18 @@ def combine_results_rrf(
                 "tag_matches": ["matched"],
             }
 
-    # Build final results with debug info
+    # Build final results: sort by RRF score, but return cosine similarity as the score
     results: list[tuple[Memory, float, dict]] = []
-    for content_hash, score in scores.items():
+    for content_hash in rrf_scores:
         info = debug[content_hash]
-        info["final_score"] = score
+        display_score = cosine_scores[content_hash]
+        info["final_score"] = display_score
+        info["rrf_score"] = rrf_scores[content_hash]
         info["alpha_used"] = alpha
-        results.append((memories[content_hash], score, info))
+        results.append((memories[content_hash], display_score, info))
 
-    # Sort by score descending
-    results.sort(key=lambda x: x[1], reverse=True)
+    # Sort by RRF score descending (preserves RRF ranking)
+    results.sort(key=lambda x: x[2]["rrf_score"], reverse=True)
 
     return results
 

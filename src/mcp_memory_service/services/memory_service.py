@@ -745,6 +745,14 @@ class MemoryService:
                 result["temporal_decay_factor"] = factor
             results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
 
+        # Cap scores at 1.0 (boosts can push above cosine range)
+        for result in results:
+            result["similarity_score"] = min(1.0, result.get("similarity_score", 0.0))
+
+        # Re-filter by min_similarity after boosts (scores may have shifted)
+        if min_similarity is not None and min_similarity > 0:
+            results = [r for r in results if r.get("similarity_score", 0.0) >= min_similarity]
+
         # Fire Hebbian co-access events for co-retrieved memories
         await self._fire_hebbian_co_access(result_hashes, spacing_qualities or None)
 
@@ -1125,12 +1133,14 @@ class MemoryService:
             fetch_size = min(max(page_size * 3, offset + page_size), 100)
 
             # Parallel fetch: vector results + tag-matching memories
+            # Bug #105: Use min_similarity=0.0 for pre-RRF fetch to avoid filtering
+            # relevant candidates before fusion. The user's threshold is applied post-fusion.
             vector_task = self.storage.retrieve(
                 query=query,
                 n_results=fetch_size,
                 tags=None,
                 memory_type=memory_type,
-                min_similarity=min_similarity,
+                min_similarity=0.0,
                 offset=0,
             )
             tag_task = self.storage.search_by_tags(
@@ -1150,6 +1160,8 @@ class MemoryService:
             elif config.recency_decay > 0:
                 combined = apply_recency_decay(combined, config.recency_decay)
 
+            # Boost stages below operate on and re-sort by cosine display scores,
+            # not RRF rank. RRF determines initial ordering; boosts refine from there.
             # Apply spreading activation boost from graph layer
             all_hashes = [m.content_hash for m, _, _ in combined]
             graph_boosts = await self._compute_graph_boosts(all_hashes)
@@ -1217,6 +1229,13 @@ class MemoryService:
                             debug_info = {**debug_info, "context_similarity": ctx_sim}
                     context_boosted.append((memory, score, debug_info))
                 combined = sorted(context_boosted, key=lambda x: x[1], reverse=True)
+
+            # Cap scores at 1.0 and sync debug final_score after all boosts
+            combined = [(m, min(1.0, s), {**d, "final_score": min(1.0, s)}) for m, s, d in combined]
+
+            # Post-fusion threshold: apply min_similarity filter on final cosine-based scores
+            if min_similarity is not None and min_similarity > 0:
+                combined = [(m, s, d) for m, s, d in combined if s >= min_similarity]
 
             # Apply pagination to combined results (offset calculated above for fetch_size)
             total = len(combined)

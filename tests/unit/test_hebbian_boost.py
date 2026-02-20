@@ -192,9 +192,9 @@ class TestHebbianBoostIntegration:
         )
 
         memories = result["memories"]
-        # hash_a: 0.9 * (1 + 0.8 * 0.15) = 0.9 * 1.12 = 1.008
+        # hash_a: 0.9 * (1 + 0.8 * 0.15) = 0.9 * 1.12 = 1.008, capped to 1.0
         hash_a = next(m for m in memories if m["content_hash"] == "hash_a")
-        assert hash_a["similarity_score"] == pytest.approx(0.9 * (1 + 0.8 * 0.15))
+        assert hash_a["similarity_score"] == pytest.approx(1.0)
         assert hash_a["hebbian_boost"] == pytest.approx(0.8)
 
         # hash_b: 0.8 * (1 + 0.6 * 0.15) = 0.8 * 1.09 = 0.872
