@@ -189,6 +189,7 @@ class HTTPSettings(BaseSettings):
     http_enabled: bool = Field(default=False)
     http_port: int = Field(default=8000, ge=1024, le=65535)
     http_host: str = Field(default="0.0.0.0")
+    http_workers: int = Field(default=1, ge=1, le=32, description="Number of uvicorn worker processes (env: MCP_HTTP_WORKERS)")
     cors_origins: list[str] = Field(default=[])  # Secure default: no cross-origin access (CWE-942 fix)
     sse_heartbeat: int = Field(default=30, ge=5, le=300, alias="SSE_HEARTBEAT_INTERVAL")
     api_key: SecretStr | None = Field(default=None)
@@ -925,6 +926,7 @@ def __getattr__(name: str):
         "HTTP_ENABLED": lambda: _settings.http.http_enabled,
         "HTTP_PORT": lambda: _settings.http.http_port,
         "HTTP_HOST": lambda: _settings.http.http_host,
+        "HTTP_WORKERS": lambda: _settings.http.http_workers,
         "CORS_ORIGINS": lambda: _settings.http.cors_origins,
         "SSE_HEARTBEAT_INTERVAL": lambda: _settings.http.sse_heartbeat,
         "API_KEY": lambda: _settings.http.api_key.get_secret_value() if _settings.http.api_key else None,
