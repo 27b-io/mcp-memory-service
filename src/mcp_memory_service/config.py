@@ -684,6 +684,41 @@ class HybridSearchSettings(BaseSettings):
     adaptive_threshold_large: int = Field(default=5000, ge=1, description="Corpus size above which alpha=0.8 (strong semantic)")
 
 
+class QueryIntentSettings(BaseSettings):
+    """Query intent inference configuration for concept extraction and fan-out."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_INTENT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # Master switch
+    enabled: bool = Field(default=True, description="Enable query intent inference and fan-out")
+
+    # NLP concept extraction
+    spacy_model: str = Field(default="en_core_web_sm", description="spaCy model for concept extraction")
+    max_sub_queries: int = Field(default=4, ge=1, le=8, description="Maximum sub-queries from concept extraction")
+    min_query_tokens: int = Field(
+        default=3, ge=1, description="Minimum meaningful tokens to trigger fan-out (shorter queries use single-vector)"
+    )
+
+    # Graph injection
+    graph_inject: bool = Field(default=True, description="Inject graph neighbors into candidate pool")
+    graph_inject_limit: int = Field(default=10, ge=1, le=50, description="Maximum graph-injected neighbors")
+    graph_inject_min_activation: float = Field(
+        default=0.05, ge=0.0, le=1.0, description="Minimum spreading activation score for injection"
+    )
+
+    # LLM re-ranking (off by default)
+    llm_rerank: bool = Field(default=False, description="Enable LLM-based re-ranking of results")
+    llm_provider: str = Field(default="anthropic", description="LLM provider for re-ranking")
+    llm_model: str = Field(default="claude-haiku-4-5-20251001", description="LLM model for re-ranking")
+    llm_timeout_ms: int = Field(default=2000, ge=500, le=10000, description="LLM re-ranking timeout in milliseconds")
+
+
 class SummarySettings(BaseSettings):
     """Summary generation configuration for memory_scan and store operations."""
 
@@ -808,6 +843,7 @@ class Settings(BaseSettings):
     toon: TOONSettings = Field(default_factory=TOONSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
+    intent: QueryIntentSettings = Field(default_factory=QueryIntentSettings)
     summary: SummarySettings = Field(default_factory=SummarySettings)
 
     @model_validator(mode="after")
