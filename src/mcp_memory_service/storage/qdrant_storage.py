@@ -867,6 +867,209 @@ class QdrantStorage(MemoryStorage):
             logger.error(f"Failed to retrieve memories from Qdrant: {e}")
             return []
 
+    async def generate_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts in a single batched forward pass.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embedding vectors
+        """
+        if not texts:
+            return []
+
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            raise RuntimeError("sentence_transformers not installed")
+
+        # Ensure model is loaded (same pattern as _generate_embedding)
+        if not hasattr(self, "_embedding_model_instance"):
+            with self._model_lock:
+                if not hasattr(self, "_embedding_model_instance"):
+                    logger.info(f"Loading embedding model: {self.embedding_model}")
+                    device = get_torch_device()
+                    self._embedding_model_instance = SentenceTransformer(
+                        self.embedding_model, device=device, trust_remote_code=True
+                    )
+
+        model = self._embedding_model_instance
+        prompts = getattr(model, "prompts", None) or {}
+
+        def _encode_batch():
+            if "query" in prompts:
+                try:
+                    return model.encode(texts, prompt_name="query", convert_to_tensor=False)
+                except TypeError as exc:
+                    if "unexpected keyword argument" in str(exc) and "prompt_name" in str(exc):
+                        prefix = prompts["query"]
+                        prefixed = [f"{prefix}{t}" for t in texts]
+                        return model.encode(prefixed, convert_to_tensor=False)
+                    raise
+            return model.encode(texts, convert_to_tensor=False)
+
+        loop = asyncio.get_event_loop()
+        embeddings = await loop.run_in_executor(None, _encode_batch)
+
+        return [e.tolist() if hasattr(e, "tolist") else list(e) for e in embeddings]
+
+    async def search_by_vector(
+        self,
+        embedding: list[float],
+        n_results: int = 10,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+        min_similarity: float | None = None,
+        offset: int = 0,
+    ) -> list[MemoryQueryResult]:
+        """Search using a pre-computed embedding vector (skips embedding generation).
+
+        Args:
+            embedding: Pre-computed embedding vector
+            n_results: Maximum number of results
+            tags: Optional tag filter (OR logic)
+            memory_type: Optional memory type filter
+            min_similarity: Optional minimum similarity threshold
+            offset: Pagination offset
+
+        Returns:
+            List of MemoryQueryResult objects
+        """
+        self._check_circuit_breaker()
+
+        try:
+            # Build filter (same logic as retrieve)
+            must_conditions = []
+            should_conditions = []
+
+            if tags:
+                should_conditions.append(FieldCondition(key="tags", match=MatchAny(any=tags)))
+            if memory_type:
+                must_conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=memory_type)))
+
+            query_filter = None
+            if must_conditions or should_conditions:
+                query_filter = Filter(
+                    must=must_conditions if must_conditions else None,
+                    should=should_conditions if should_conditions else None,
+                )
+
+            loop = asyncio.get_event_loop()
+            search_results = await loop.run_in_executor(
+                None,
+                lambda: self.client.query_points(
+                    collection_name=self.collection_name,
+                    query=embedding,
+                    query_filter=query_filter,
+                    limit=n_results,
+                    offset=offset,
+                    score_threshold=min_similarity if min_similarity else None,
+                    with_payload=True,
+                    with_vectors=False,
+                ),
+            )
+
+            results = []
+            for scored_point in search_results.points:
+                if scored_point.id == self.METADATA_POINT_ID:
+                    continue
+
+                payload = scored_point.payload
+                memory = Memory(
+                    content=payload.get("content", ""),
+                    content_hash=payload.get("content_hash", str(scored_point.id)),
+                    tags=self._normalize_tags(payload.get("tags", [])),
+                    memory_type=payload.get("memory_type"),
+                    metadata=payload.get("metadata", {}),
+                    created_at=payload.get("created_at"),
+                    updated_at=payload.get("updated_at"),
+                    emotional_valence=payload.get("emotional_valence"),
+                    salience_score=float(payload.get("salience_score", 0.0)),
+                    access_count=int(payload.get("access_count", 0)),
+                    access_timestamps=payload.get("access_timestamps", []),
+                    summary=payload.get("summary"),
+                )
+
+                relevance_score = float(scored_point.score)
+                if min_similarity is not None and relevance_score < min_similarity:
+                    continue
+
+                results.append(
+                    MemoryQueryResult(
+                        memory=memory,
+                        relevance_score=relevance_score,
+                        debug_info={"score": scored_point.score, "backend": "qdrant"},
+                    )
+                )
+
+            self._record_success()
+            return results
+
+        except Exception as e:
+            self._record_failure()
+            logger.error(f"search_by_vector failed: {e}")
+            return []
+
+    async def get_memories_batch(self, content_hashes: list[str]) -> list[Memory]:
+        """Fetch multiple memories by content hash in a single operation.
+
+        Args:
+            content_hashes: List of content hashes to fetch
+
+        Returns:
+            List of Memory objects found
+        """
+        if not content_hashes:
+            return []
+
+        self._check_circuit_breaker()
+
+        try:
+            hash_filter = Filter(must=[FieldCondition(key="content_hash", match=MatchAny(any=content_hashes))])
+
+            loop = asyncio.get_event_loop()
+            scroll_result = await loop.run_in_executor(
+                None,
+                lambda: self.client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=hash_filter,
+                    limit=len(content_hashes),
+                    with_payload=True,
+                    with_vectors=False,
+                ),
+            )
+
+            memories = []
+            points = scroll_result[0] if scroll_result else []
+
+            for point in points:
+                if point.id == self.METADATA_POINT_ID:
+                    continue
+
+                payload = point.payload
+                memory = Memory(
+                    content=payload.get("content", ""),
+                    content_hash=payload.get("content_hash", str(point.id)),
+                    tags=self._normalize_tags(payload.get("tags", [])),
+                    memory_type=payload.get("memory_type"),
+                    metadata=payload.get("metadata", {}),
+                    created_at=payload.get("created_at"),
+                    updated_at=payload.get("updated_at"),
+                    emotional_valence=payload.get("emotional_valence"),
+                    salience_score=float(payload.get("salience_score", 0.0)),
+                    access_count=int(payload.get("access_count", 0)),
+                    access_timestamps=payload.get("access_timestamps", []),
+                    summary=payload.get("summary"),
+                )
+                memories.append(memory)
+
+            self._record_success()
+            return memories
+
+        except Exception as e:
+            self._record_failure()
+            logger.error(f"get_memories_batch failed: {e}")
+            return []
+
     async def _generate_query_embedding(self, query: str) -> list[float]:
         """
         Generate embedding for query text.

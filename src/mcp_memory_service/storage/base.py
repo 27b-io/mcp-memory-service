@@ -117,6 +117,26 @@ class MemoryStorage(ABC):
         """
         pass
 
+    async def generate_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts in a single batched forward pass."""
+        raise NotImplementedError("Subclass must implement generate_embeddings_batch")
+
+    async def search_by_vector(
+        self,
+        embedding: list[float],
+        n_results: int = 10,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+        min_similarity: float | None = None,
+        offset: int = 0,
+    ) -> list[MemoryQueryResult]:
+        """Search using a pre-computed embedding vector (skips embedding generation)."""
+        raise NotImplementedError("Subclass must implement search_by_vector")
+
+    async def get_memories_batch(self, content_hashes: list[str]) -> list[Memory]:
+        """Fetch multiple memories by content hash in a single operation."""
+        raise NotImplementedError("Subclass must implement get_memories_batch")
+
     @abstractmethod
     async def search_by_tag(
         self,
