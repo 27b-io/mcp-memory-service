@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 from mcp_memory_service.utils.hybrid_search import (
     STOP_WORDS,
+    TAG_ONLY_BASE_SCORE,
     apply_recency_decay,
     combine_results_rrf,
     extract_query_keywords,
@@ -160,9 +161,10 @@ class TestCombineResultsRRF:
 
         results = combine_results_rrf(vector_results, tag_matches, alpha=1.0)
 
-        # hash3 should have zero score (tags ignored)
+        # hash3 is tag-only; with alpha=1.0 its RRF contribution is 0, but it gets
+        # the base score constant (0.1) since it has no vector cosine similarity
         hash3_result = next((r for r in results if r[0].content_hash == "hash3"), None)
-        assert hash3_result[1] == 0.0
+        assert hash3_result[1] == TAG_ONLY_BASE_SCORE
 
         # hash1 should be ranked highest
         assert results[0][0].content_hash == "hash1"
@@ -392,3 +394,82 @@ class TestStopWords:
     def test_is_frozenset(self):
         """STOP_WORDS should be immutable frozenset."""
         assert isinstance(STOP_WORDS, frozenset)
+
+
+# =============================================================================
+# Bug #104: RRF scores must be cosine-based, not RRF-based
+# =============================================================================
+
+
+class TestCombineResultsRRFScoresAreCosine:
+    """Bug #104: combine_results_rrf should return cosine similarity scores, not tiny RRF scores."""
+
+    def _make_memory(self, content_hash: str):
+        memory = MagicMock()
+        memory.content_hash = content_hash
+        memory.updated_at_iso = datetime.now(timezone.utc).isoformat()
+        return memory
+
+    def _make_query_result(self, content_hash: str, similarity: float):
+        result = MagicMock()
+        result.memory = self._make_memory(content_hash)
+        result.similarity_score = similarity
+        return result
+
+    def test_vector_result_score_is_cosine_similarity(self):
+        """Score for vector results should be the original cosine similarity, not RRF."""
+        vector_results = [
+            self._make_query_result("hash1", 0.85),
+            self._make_query_result("hash2", 0.72),
+        ]
+        results = combine_results_rrf(vector_results, [], alpha=0.7)
+
+        # Scores should be the original cosine values, NOT tiny RRF numbers like 0.011
+        hash1_score = next(s for m, s, _ in results if m.content_hash == "hash1")
+        hash2_score = next(s for m, s, _ in results if m.content_hash == "hash2")
+        assert hash1_score == 0.85, f"Expected cosine 0.85, got {hash1_score}"
+        assert hash2_score == 0.72, f"Expected cosine 0.72, got {hash2_score}"
+
+    def test_tag_only_result_gets_low_base_score(self):
+        """Tag-only results (no vector match) should get a low base score."""
+        tag_memory = self._make_memory("tag_only")
+        results = combine_results_rrf([], [tag_memory], alpha=0.5)
+
+        score = results[0][1]
+        # Should be a small constant, not zero and not a meaningful cosine sim
+        assert 0.0 < score <= TAG_ONLY_BASE_SCORE + 0.05, f"Tag-only score should be low base, got {score}"
+
+    def test_rrf_ordering_preserved(self):
+        """Results should still be ordered by RRF rank (best vector first)."""
+        vector_results = [
+            self._make_query_result("hash1", 0.95),  # rank 1
+            self._make_query_result("hash2", 0.60),  # rank 2
+        ]
+        results = combine_results_rrf(vector_results, [], alpha=0.7)
+
+        assert results[0][0].content_hash == "hash1"
+        assert results[1][0].content_hash == "hash2"
+
+    def test_overlap_uses_vector_cosine_score(self):
+        """When a memory appears in both vector and tag results, use vector cosine score."""
+        vector_results = [self._make_query_result("hash1", 0.88)]
+        tag_matches = [self._make_memory("hash1")]
+
+        results = combine_results_rrf(vector_results, tag_matches, alpha=0.5)
+        # Score should be based on cosine, possibly with a tag boost, but still in cosine range
+        score = results[0][1]
+        assert score == 0.88, f"Overlap score should be cosine 0.88, got {score}"
+        assert score <= 1.0, f"Score should not exceed 1.0, got {score}"
+
+    def test_scores_compatible_with_min_similarity_threshold(self):
+        """Scores should be in 0-1 range compatible with min_similarity=0.6 filtering."""
+        vector_results = [
+            self._make_query_result("high", 0.9),
+            self._make_query_result("low", 0.4),
+        ]
+        results = combine_results_rrf(vector_results, [], alpha=0.7)
+
+        scores = {m.content_hash: s for m, s, _ in results}
+        # A min_similarity=0.6 filter should keep "high" and drop "low"
+        assert scores["high"] >= 0.6
+        assert scores["low"] < 0.6
