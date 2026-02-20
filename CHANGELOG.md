@@ -8,6 +8,14 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.11.0](https://github.com/27b-io/mcp-memory-service/compare/v11.10.0...v11.11.0) (2026-02-20)
+
+
+### Features
+
+* add configurable uvicorn worker count for HTTP server ([#111](https://github.com/27b-io/mcp-memory-service/issues/111)) ([0e268c6](https://github.com/27b-io/mcp-memory-service/commit/0e268c69773cdc898a73a5d7dd731d2987d582b7))
+* contradiction resolution and memory supersession ([#75](https://github.com/27b-io/mcp-memory-service/issues/75)) ([#109](https://github.com/27b-io/mcp-memory-service/issues/109)) ([aad607e](https://github.com/27b-io/mcp-memory-service/commit/aad607e721951b00afdfaf232f91f46235750d18))
+
 ## [11.10.0](https://github.com/27b-io/mcp-memory-service/compare/v11.9.0...v11.10.0) (2026-02-20)
 
 
