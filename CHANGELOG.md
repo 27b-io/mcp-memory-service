@@ -8,6 +8,19 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.10.0](https://github.com/27b-io/mcp-memory-service/compare/v11.9.0...v11.10.0) (2026-02-20)
+
+
+### Features
+
+* VADER hybrid emotional analysis ([#99](https://github.com/27b-io/mcp-memory-service/issues/99)) ([4c0d016](https://github.com/27b-io/mcp-memory-service/commit/4c0d01687042b34b611aa3ed2be88d408f457f3f))
+
+
+### Bug Fixes
+
+* move temporal decay after boosts in hybrid path for consistency ([#107](https://github.com/27b-io/mcp-memory-service/issues/107)) ([ac6230f](https://github.com/27b-io/mcp-memory-service/commit/ac6230f55b03919c806bff64d8eada5fbccee9dc))
+* return cosine similarity scores from hybrid search, not raw RRF ([#106](https://github.com/27b-io/mcp-memory-service/issues/106)) ([0bd0a34](https://github.com/27b-io/mcp-memory-service/commit/0bd0a34fb53fe480342a9b4205734d8e733d913f))
+
 ## [11.9.0](https://github.com/27b-io/mcp-memory-service/compare/v11.8.0...v11.9.0) (2026-02-19)
 
 
