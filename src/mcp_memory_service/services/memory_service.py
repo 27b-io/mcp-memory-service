@@ -38,11 +38,13 @@ from ..utils.hashing import generate_content_hash
 from ..utils.hybrid_search import (
     apply_recency_decay,
     combine_results_rrf,
+    combine_results_rrf_multi,
     extract_query_keywords,
     get_adaptive_alpha,
     temporal_decay_factor,
 )
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
+from ..utils.query_intent import get_analyzer
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
 from ..utils.summariser import summarise
@@ -1334,27 +1336,76 @@ class MemoryService:
             offset = (page - 1) * page_size
             fetch_size = min(max(page_size * 3, offset + page_size), 100)
 
-            # Parallel fetch: vector results + tag-matching memories
-            # Bug #105: Use min_similarity=0.0 for pre-RRF fetch to avoid filtering
-            # relevant candidates before fusion. The user's threshold is applied post-fusion.
-            vector_task = self.storage.retrieve(
-                query=query,
-                n_results=fetch_size,
-                tags=None,
-                memory_type=memory_type,
-                min_similarity=0.0,
-                offset=0,
-            )
-            tag_task = self.storage.search_by_tags(
-                tags=keywords,
-                match_all=False,  # ANY tag matches
-                limit=fetch_size,
-            )
+            # ── Fan-out: concept extraction + parallel search ──────────────
+            intent_result = None
+            if settings.intent.enabled:
+                try:
+                    analyzer = get_analyzer(
+                        model_name=settings.intent.spacy_model,
+                        max_sub_queries=settings.intent.max_sub_queries,
+                        min_query_tokens=settings.intent.min_query_tokens,
+                    )
+                    intent_result = analyzer.analyze(query)
+                except Exception as e:
+                    logger.warning(f"Intent analysis failed (non-fatal): {e}")
 
-            vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+            if intent_result and len(intent_result.sub_queries) > 1:
+                # Multi-vector fan-out path
+                sub_queries = intent_result.sub_queries
 
-            # Combine using RRF
-            combined = combine_results_rrf(vector_results, tag_matches, alpha)
+                # Stage 2: Batched embedding (single forward pass)
+                embeddings = await self.storage.generate_embeddings_batch(sub_queries)
+
+                # Stage 3: Parallel fan-out (asyncio.gather)
+                search_tasks = [
+                    self.storage.search_by_vector(
+                        embedding=emb,
+                        n_results=fetch_size,
+                        memory_type=memory_type,
+                        min_similarity=0.0,
+                        offset=0,
+                    )
+                    for emb in embeddings
+                ]
+                tag_task = self.storage.search_by_tags(tags=keywords, match_all=False, limit=fetch_size)
+
+                all_results = await asyncio.gather(*search_tasks, tag_task)
+                vector_result_sets = list(all_results[:-1])
+                tag_matches = all_results[-1]
+
+                # Weights: original query gets 1.5x, concept sub-queries get 1.0x
+                weights = []
+                for sq in sub_queries:
+                    if sq == intent_result.original_query:
+                        weights.append(1.5)
+                    else:
+                        weights.append(1.0)
+
+                combined = combine_results_rrf_multi(
+                    result_sets=vector_result_sets,
+                    weights=weights,
+                    tag_matches=tag_matches,
+                    k=60,
+                )
+            else:
+                # Single-vector path (existing behavior)
+                # Bug #105: Use min_similarity=0.0 for pre-RRF fetch to avoid filtering
+                # relevant candidates before fusion. The user's threshold is applied post-fusion.
+                vector_task = self.storage.retrieve(
+                    query=query,
+                    n_results=fetch_size,
+                    tags=None,
+                    memory_type=memory_type,
+                    min_similarity=0.0,
+                    offset=0,
+                )
+                tag_task = self.storage.search_by_tags(
+                    tags=keywords,
+                    match_all=False,  # ANY tag matches
+                    limit=fetch_size,
+                )
+                vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+                combined = combine_results_rrf(vector_results, tag_matches, alpha)
 
             # Boost stages below operate on and re-sort by cosine display scores,
             # not RRF rank. RRF determines initial ordering; boosts refine from there.
