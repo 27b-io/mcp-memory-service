@@ -14,7 +14,7 @@ NOTE: Tests that only verify mocks were called have been removed.
 We test BEHAVIOR, not implementation details.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -640,6 +640,7 @@ class TestInterferenceDetection:
             source_hash=result["memory"]["content_hash"],
             target_hash="existing_hash_123",
             relation_type="CONTRADICTS",
+            confidence=ANY,
         )
 
     @pytest.mark.asyncio
