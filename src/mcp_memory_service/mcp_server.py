@@ -274,6 +274,7 @@ async def search(
     output: str = "full",
     memory_type: str | None = None,
     encoding_context: dict[str, Any] | None = None,
+    include_superseded: bool = False,
 ) -> str | dict[str, Any]:
     """Search and retrieve memories. Consolidates all retrieval modes into one tool.
 
@@ -294,6 +295,7 @@ async def search(
         output: "full" (default), "summary" (token-efficient ~50-token summaries), or "both". Applies to scan mode.
         memory_type: Filter by type for "recent" mode (note/decision/task/reference)
         encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
+        include_superseded: If True, include superseded memories in results (default: False)
 
     Returns:
         hybrid/tag/recent: TOON-formatted string (pipe-delimited, with pagination header).
@@ -354,6 +356,7 @@ async def search(
             min_similarity=min_similarity,
             encoding_context=encoding_context,
             tags=normalized_tags,
+            include_superseded=include_superseded,
         )
 
     pagination = {
@@ -477,6 +480,66 @@ async def relation(
             source_hash=content_hash, target_hash=target_hash, relation_type=relation_type
         )
 
+    return _inject_latency(result, _t0)
+
+
+# =============================================================================
+# CONTRADICTION RESOLUTION TOOLS
+# =============================================================================
+
+
+@mcp.tool()
+async def memory_supersede(
+    old_id: str,
+    new_id: str,
+    ctx: Context,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Mark one memory as superseded by another, resolving a contradiction.
+
+    The old memory is NOT deleted — it is marked as superseded in its metadata
+    and excluded from default search results. A SUPERSEDES graph edge is created
+    from the new memory to the old for audit trail purposes.
+
+    Use this when you have confirmed that new_id contains more accurate or current
+    information than old_id, and you want to declare new_id the authoritative version.
+
+    Args:
+        old_id: Content hash of the memory being superseded (the outdated one)
+        new_id: Content hash of the newer memory that replaces it
+        reason: Human-readable explanation for why old_id is superseded
+
+    Returns:
+        {success, superseded, superseded_by, reason} on success, or {success, error} on failure.
+    """
+    _t0 = time.perf_counter()
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    result = await memory_service.supersede_memory(old_hash=old_id, new_hash=new_id, reason=reason)
+    return _inject_latency(result, _t0)
+
+
+@mcp.tool()
+async def memory_contradictions(
+    ctx: Context,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """List unresolved contradiction pairs for review and resolution.
+
+    Returns pairs of memories connected by CONTRADICTS edges, with content
+    previews to help decide which (if either) to supersede. Call memory_supersede
+    to resolve a contradiction once you've determined the authoritative version.
+
+    Args:
+        limit: Maximum number of contradiction pairs to return (default: 20)
+
+    Returns:
+        {success, pairs: [{memory_a_hash, memory_b_hash, confidence, memory_a_content,
+         memory_b_content, memory_a_superseded, memory_b_superseded}], total}
+    """
+    _t0 = time.perf_counter()
+    limit = max(1, min(limit, 100))
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    result = await memory_service.get_contradictions_dashboard(limit=limit)
     return _inject_latency(result, _t0)
 
 

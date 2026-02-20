@@ -42,8 +42,8 @@ class TestRelationTypes:
         assert "CONTRADICTS" in RELATION_TYPES
 
     def test_relation_types_count(self):
-        """Exactly 3 types — no accidental additions."""
-        assert len(RELATION_TYPES) == 3
+        """Exactly 4 types — SUPERSEDES added for contradiction resolution."""
+        assert len(RELATION_TYPES) == 4
 
     def test_relation_types_are_uppercase(self):
         """All types must be uppercase for Cypher compatibility."""

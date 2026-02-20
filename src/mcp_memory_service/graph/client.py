@@ -289,6 +289,7 @@ class GraphClient:
         target_hash: str,
         relation_type: str,
         created_at: float | None = None,
+        confidence: float | None = None,
     ) -> bool:
         """
         Create a typed relationship edge between two memories.
@@ -300,8 +301,9 @@ class GraphClient:
         Args:
             source_hash: Source memory content_hash
             target_hash: Target memory content_hash
-            relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS
+            relation_type: One of RELATES_TO, PRECEDES, CONTRADICTS, SUPERSEDES
             created_at: Optional timestamp (defaults to current time)
+            confidence: Optional confidence score (stored on CONTRADICTS edges)
 
         Returns:
             True if both source and target nodes exist and edge was created.
@@ -317,13 +319,22 @@ class GraphClient:
 
         # MATCH both nodes first — if either is missing, nothing happens.
         # This prevents dangling edges to non-existent memories.
-        result = await self._graph.query(
-            "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
-            f"MERGE (a)-[e:{rel}]->(b) "
-            "ON CREATE SET e.created_at = $ts "
-            "RETURN count(e)",
-            params={"src": source_hash, "dst": target_hash, "ts": ts},
-        )
+        if confidence is not None:
+            result = await self._graph.query(
+                "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
+                f"MERGE (a)-[e:{rel}]->(b) "
+                "ON CREATE SET e.created_at = $ts, e.confidence = $conf "
+                "RETURN count(e)",
+                params={"src": source_hash, "dst": target_hash, "ts": ts, "conf": confidence},
+            )
+        else:
+            result = await self._graph.query(
+                "MATCH (a:Memory {content_hash: $src}), (b:Memory {content_hash: $dst}) "
+                f"MERGE (a)-[e:{rel}]->(b) "
+                "ON CREATE SET e.created_at = $ts "
+                "RETURN count(e)",
+                params={"src": source_hash, "dst": target_hash, "ts": ts},
+            )
         count = int(result.result_set[0][0]) if result.result_set else 0
         return count > 0
 
@@ -395,6 +406,72 @@ class GraphClient:
                     )
 
         return results[:limit]
+
+    async def get_contradictions_for_hashes(self, hashes: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """
+        Get CONTRADICTS edges for a set of memory hashes.
+
+        Batch-queries all CONTRADICTS edges where either endpoint is in the
+        provided set. Used to enrich search results with contradiction warnings.
+
+        Args:
+            hashes: Content hashes to check for contradictions
+
+        Returns:
+            Dict of {hash: [{"contradicts_hash": str, "confidence": float | None}]}
+            for hashes that have at least one CONTRADICTS edge.
+        """
+        if not hashes:
+            return {}
+
+        hashes_set = set(hashes)
+        result = await self._graph.query(
+            "MATCH (a:Memory)-[e:CONTRADICTS]->(b:Memory) "
+            "WHERE a.content_hash IN $hashes OR b.content_hash IN $hashes "
+            "RETURN a.content_hash, b.content_hash, e.confidence",
+            params={"hashes": hashes},
+        )
+
+        contradictions: dict[str, list[dict[str, Any]]] = {}
+        for row in result.result_set:
+            src, dst = row[0], row[1]
+            conf = float(row[2]) if row[2] is not None else None
+            if src in hashes_set:
+                contradictions.setdefault(src, []).append({"contradicts_hash": dst, "confidence": conf})
+            if dst in hashes_set:
+                contradictions.setdefault(dst, []).append({"contradicts_hash": src, "confidence": conf})
+
+        return contradictions
+
+    async def get_all_contradictions(self, limit: int = 20) -> list[dict[str, Any]]:
+        """
+        Get all CONTRADICTS edges for the contradiction dashboard.
+
+        Returns unresolved contradiction pairs ordered by most recent first.
+
+        Args:
+            limit: Maximum pairs to return
+
+        Returns:
+            List of dicts with memory_a_hash, memory_b_hash, confidence, created_at
+        """
+        result = await self._graph.query(
+            "MATCH (a:Memory)-[e:CONTRADICTS]->(b:Memory) "
+            "RETURN a.content_hash, b.content_hash, e.confidence, e.created_at "
+            "ORDER BY e.created_at DESC "
+            "LIMIT $lim",
+            params={"lim": limit},
+        )
+
+        return [
+            {
+                "memory_a_hash": row[0],
+                "memory_b_hash": row[1],
+                "confidence": float(row[2]) if row[2] is not None else None,
+                "created_at": float(row[3]) if row[3] is not None else None,
+            }
+            for row in result.result_set
+        ]
 
     async def delete_typed_edge(self, source_hash: str, target_hash: str, relation_type: str) -> bool:
         """

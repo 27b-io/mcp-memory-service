@@ -13,6 +13,7 @@ Relationship Types:
     :RELATES_TO  - Generic semantic relationship (explicit, user-created).
     :PRECEDES    - Temporal/causal ordering: source precedes target.
     :CONTRADICTS - Conflicting information between two memories.
+    :SUPERSEDES  - New memory (source) supersedes old memory (target). Audit trail for contradiction resolution.
 
 Indices:
     Memory(content_hash) - Unique lookup for memory nodes
@@ -22,7 +23,7 @@ Indices:
 # Valid typed relationship types (whitelist for Cypher injection safety).
 # FalkorDB doesn't support parameterized relationship types, so we validate
 # against this set before string-formatting into queries.
-RELATION_TYPES: frozenset[str] = frozenset({"RELATES_TO", "PRECEDES", "CONTRADICTS"})
+RELATION_TYPES: frozenset[str] = frozenset({"RELATES_TO", "PRECEDES", "CONTRADICTS", "SUPERSEDES"})
 
 # Cypher statements executed idempotently on graph initialization.
 # FalkorDB supports CREATE INDEX IF NOT EXISTS syntax.

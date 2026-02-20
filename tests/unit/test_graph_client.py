@@ -210,19 +210,22 @@ class TestGraphClientReads:
         node_result.result_set = [[42]]
         hebbian_result = MagicMock()
         hebbian_result.result_set = [[100]]
-        # Typed edge counts: CONTRADICTS=2, PRECEDES=3, RELATES_TO=5
+        # Typed edge counts: CONTRADICTS=2, PRECEDES=3, RELATES_TO=5, SUPERSEDES=0
         contradicts_result = MagicMock()
         contradicts_result.result_set = [[2]]
         precedes_result = MagicMock()
         precedes_result.result_set = [[3]]
         relates_result = MagicMock()
         relates_result.result_set = [[5]]
+        supersedes_result = MagicMock()
+        supersedes_result.result_set = [[0]]
         mock_graph.query.side_effect = [
             node_result,
             hebbian_result,
             contradicts_result,
             precedes_result,
             relates_result,
+            supersedes_result,
         ]
 
         client = GraphClient.__new__(GraphClient)
@@ -233,11 +236,12 @@ class TestGraphClientReads:
         stats = await client.get_graph_stats()
         assert stats["node_count"] == 42
         assert stats["hebbian_edge_count"] == 100
-        assert stats["edge_count"] == 110  # 100 hebbian + 2 + 3 + 5
+        assert stats["edge_count"] == 110  # 100 hebbian + 2 + 3 + 5 + 0
         assert stats["typed_edge_counts"] == {
             "contradicts": 2,
             "precedes": 3,
             "relates_to": 5,
+            "supersedes": 0,
         }
         assert stats["status"] == "operational"
 
@@ -383,8 +387,8 @@ class TestGraphClientTypedEdges:
         out_result.result_set = [["hash_a", "hash_b", 1700000000.0]]
         empty_result = MagicMock()
         empty_result.result_set = []
-        # For each type: outgoing + incoming queries. 3 types = 6 queries.
-        # CONTRADICTS out, CONTRADICTS in, PRECEDES out, PRECEDES in, RELATES_TO out, RELATES_TO in
+        # For each type: outgoing + incoming queries. 4 types = 8 queries.
+        # CONTRADICTS out, in; PRECEDES out, in; RELATES_TO out, in; SUPERSEDES out, in
         mock_graph.query.side_effect = [
             empty_result,
             empty_result,  # CONTRADICTS out, in
@@ -392,6 +396,8 @@ class TestGraphClientTypedEdges:
             empty_result,  # PRECEDES out, in
             out_result,
             empty_result,  # RELATES_TO out, in
+            empty_result,
+            empty_result,  # SUPERSEDES out, in
         ]
 
         client = GraphClient.__new__(GraphClient)

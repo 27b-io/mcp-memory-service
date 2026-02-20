@@ -324,6 +324,7 @@ class MemoryService:
                     source_hash=new_hash,
                     target_hash=existing_hash,
                     relation_type="CONTRADICTS",
+                    confidence=signal.confidence,
                 )
                 logger.info(
                     f"Contradiction edge: {new_hash[:8]} -> {existing_hash[:8]} "
@@ -331,6 +332,189 @@ class MemoryService:
                 )
             except Exception as e:
                 logger.warning(f"Failed to create contradiction edge (non-fatal): {e}")
+
+    async def supersede_memory(
+        self,
+        old_hash: str,
+        new_hash: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """
+        Mark old_hash as superseded by new_hash.
+
+        - Updates old memory's metadata: sets superseded_by and supersession_reason
+        - Creates SUPERSEDES edge from new → old in the graph (audit trail)
+        - Old memory is NOT deleted — it remains for historical reference
+        - Superseded memories are excluded from default search results
+
+        Args:
+            old_hash: Content hash of the memory being superseded
+            new_hash: Content hash of the newer memory that replaces it
+            reason: Human-readable explanation for the supersession
+
+        Returns:
+            Dict with success status and details
+        """
+        if old_hash == new_hash:
+            return {"success": False, "error": "old_id and new_id must be different memories"}
+
+        # Verify both memories exist
+        old_memory = await self.storage.get_memory_by_hash(old_hash)
+        if old_memory is None:
+            return {"success": False, "error": f"Memory not found: {old_hash}"}
+
+        new_memory = await self.storage.get_memory_by_hash(new_hash)
+        if new_memory is None:
+            return {"success": False, "error": f"Memory not found: {new_hash}"}
+
+        # Mark old memory as superseded in storage metadata
+        try:
+            metadata_update = {
+                "metadata": {
+                    **(old_memory.metadata or {}),
+                    "superseded_by": new_hash,
+                    "supersession_reason": reason,
+                }
+            }
+            success, message = await self.storage.update_memory_metadata(old_hash, metadata_update, preserve_timestamps=True)
+            if not success:
+                return {"success": False, "error": f"Failed to mark memory as superseded: {message}"}
+        except Exception as e:
+            logger.error(f"Failed to update superseded metadata: {e}")
+            return {"success": False, "error": f"Failed to update memory metadata: {e}"}
+
+        # Create SUPERSEDES edge in graph (new → old, non-fatal)
+        if self._graph is not None:
+            try:
+                await self._graph.ensure_memory_node(new_hash, new_memory.created_at or time.time())
+                await self._graph.ensure_memory_node(old_hash, old_memory.created_at or time.time())
+                await self._graph.create_typed_edge(
+                    source_hash=new_hash,
+                    target_hash=old_hash,
+                    relation_type="SUPERSEDES",
+                )
+            except Exception as e:
+                logger.warning(f"Graph SUPERSEDES edge creation failed (non-fatal): {e}")
+
+        return {
+            "success": True,
+            "superseded": old_hash,
+            "superseded_by": new_hash,
+            "reason": reason,
+        }
+
+    async def get_contradictions_dashboard(self, limit: int = 20) -> dict[str, Any]:
+        """
+        Return all unresolved CONTRADICTS edges with memory content previews.
+
+        Enables periodic review and resolution by human or gardener agent.
+
+        Args:
+            limit: Maximum number of contradiction pairs to return
+
+        Returns:
+            Dict with contradiction pairs and metadata
+        """
+        if self._graph is None:
+            return {
+                "success": False,
+                "error": "Graph layer not enabled (set MCP_FALKORDB_ENABLED=true)",
+                "pairs": [],
+                "total": 0,
+            }
+
+        try:
+            edges = await self._graph.get_all_contradictions(limit=limit)
+        except Exception as e:
+            logger.error(f"Failed to fetch contradiction edges: {e}")
+            return {"success": False, "error": f"Failed to fetch contradictions: {e}", "pairs": [], "total": 0}
+
+        pairs = []
+        for edge in edges:
+            pair: dict[str, Any] = {
+                "memory_a_hash": edge["memory_a_hash"],
+                "memory_b_hash": edge["memory_b_hash"],
+                "confidence": edge.get("confidence"),
+                "created_at": edge.get("created_at"),
+            }
+
+            # Fetch content previews for both memories
+            for key, h in [("memory_a", edge["memory_a_hash"]), ("memory_b", edge["memory_b_hash"])]:
+                try:
+                    mem = await self.storage.get_memory_by_hash(h)
+                    if mem:
+                        content = mem.content or ""
+                        pair[f"{key}_content"] = content[:200] + ("..." if len(content) > 200 else "")
+                        pair[f"{key}_superseded"] = bool((mem.metadata or {}).get("superseded_by"))
+                    else:
+                        pair[f"{key}_content"] = None
+                        pair[f"{key}_superseded"] = False
+                except Exception:
+                    pair[f"{key}_content"] = None
+                    pair[f"{key}_superseded"] = False
+
+            pairs.append(pair)
+
+        return {"success": True, "pairs": pairs, "total": len(pairs), "limit": limit}
+
+    async def _get_contradiction_warnings(self, result_hashes: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """
+        Batch-fetch contradiction warnings for a set of result hashes.
+
+        For each hash in results, returns a list of contradicting memories
+        with content previews. Non-blocking, non-fatal.
+
+        Returns:
+            Dict of {hash: [{"memory_id": str, "content": str, "edge_confidence": float | None}]}
+        """
+        if self._graph is None or not result_hashes:
+            return {}
+
+        try:
+            edge_map = await self._graph.get_contradictions_for_hashes(result_hashes)
+        except Exception as e:
+            logger.warning(f"Contradiction warning fetch failed (non-fatal): {e}")
+            return {}
+
+        if not edge_map or not isinstance(edge_map, dict):
+            return {}
+
+        # Collect all unique hashes we need content for (those NOT in the result set)
+        result_set = set(result_hashes)
+        other_hashes: set[str] = set()
+        for warnings in edge_map.values():
+            for w in warnings:
+                h = w["contradicts_hash"]
+                if h not in result_set:
+                    other_hashes.add(h)
+
+        # Fetch content for contradicting memories not already in results
+        content_map: dict[str, str] = {}
+        for h in other_hashes:
+            try:
+                mem = await self.storage.get_memory_by_hash(h)
+                if mem:
+                    content_map[h] = mem.content or ""
+            except Exception:
+                pass
+
+        # Build enriched warnings
+        enriched: dict[str, list[dict[str, Any]]] = {}
+        for result_hash, warnings in edge_map.items():
+            enriched[result_hash] = [
+                {
+                    "memory_id": w["contradicts_hash"],
+                    "content": content_map.get(w["contradicts_hash"], ""),
+                    "edge_confidence": w["confidence"],
+                }
+                for w in warnings
+            ]
+
+        return enriched
+
+    def _filter_superseded(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Filter out superseded memories from a results list."""
+        return [r for r in results if not (r.get("metadata") or {}).get("superseded_by")]
 
     def _fire_access_count_updates(self, content_hashes: list[str]) -> None:
         """
@@ -623,6 +807,7 @@ class MemoryService:
         memory_type: str | None,
         min_similarity: float | None,
         encoding_context: dict[str, Any] | None = None,
+        include_superseded: bool = False,
     ) -> dict[str, Any]:
         """Fallback to pure vector search (original behavior)."""
         offset = (page - 1) * page_size
@@ -752,6 +937,18 @@ class MemoryService:
         # Re-filter by min_similarity after boosts (scores may have shifted)
         if min_similarity is not None and min_similarity > 0:
             results = [r for r in results if r.get("similarity_score", 0.0) >= min_similarity]
+
+        # Filter out superseded memories unless explicitly requested
+        if not include_superseded:
+            results = self._filter_superseded(results)
+
+        # Enrich results with contradiction warnings (non-blocking, non-fatal)
+        warning_map = await self._get_contradiction_warnings([r["content_hash"] for r in results])
+        if warning_map:
+            for r in results:
+                warnings = warning_map.get(r["content_hash"])
+                if warnings:
+                    r["contradictions"] = warnings
 
         # Fire Hebbian co-access events for co-retrieved memories
         await self._fire_hebbian_co_access(result_hashes, spacing_qualities or None)
@@ -1048,6 +1245,7 @@ class MemoryService:
         memory_type: str | None = None,
         min_similarity: float | None = None,
         encoding_context: dict[str, Any] | None = None,
+        include_superseded: bool = False,
     ) -> dict[str, Any]:
         """
         Retrieve memories using hybrid search (semantic + tag matching).
@@ -1067,6 +1265,7 @@ class MemoryService:
             tags: Optional explicit tag filtering (bypasses hybrid, uses vector only)
             memory_type: Optional memory type filtering
             min_similarity: Optional minimum similarity threshold (0.0 to 1.0)
+            include_superseded: If True, include superseded memories in results
 
         Returns:
             Dictionary with search results and pagination metadata
@@ -1091,6 +1290,7 @@ class MemoryService:
                     memory_type,
                     min_similarity,
                     encoding_context,
+                    include_superseded=include_superseded,
                 )
 
             # Get cached tags for keyword extraction
@@ -1109,6 +1309,7 @@ class MemoryService:
                     memory_type,
                     min_similarity,
                     encoding_context,
+                    include_superseded=include_superseded,
                 )
 
             # Determine alpha (explicit > env > adaptive)
@@ -1125,6 +1326,7 @@ class MemoryService:
                     memory_type,
                     min_similarity,
                     encoding_context,
+                    include_superseded=include_superseded,
                 )
 
             # Fetch larger result set for RRF combination
@@ -1255,6 +1457,18 @@ class MemoryService:
                 result_spacing.append(
                     compute_spacing_quality(memory.access_timestamps) if settings.spaced_repetition.enabled else 0.0
                 )
+
+            # Filter out superseded memories unless explicitly requested
+            if not include_superseded:
+                results = self._filter_superseded(results)
+
+            # Enrich results with contradiction warnings (non-blocking, non-fatal)
+            warning_map = await self._get_contradiction_warnings([r["content_hash"] for r in results])
+            if warning_map:
+                for r in results:
+                    warnings = warning_map.get(r["content_hash"])
+                    if warnings:
+                        r["contradictions"] = warnings
 
             # Fire Hebbian co-access events with spacing qualities for LTP
             await self._fire_hebbian_co_access(result_hashes, result_spacing or None)
