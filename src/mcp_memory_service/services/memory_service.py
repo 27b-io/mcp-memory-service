@@ -1978,6 +1978,189 @@ class MemoryService:
                 "error": f"Failed to find similar memories: {str(e)}",
             }
 
+    # =========================================================================
+    # CLUSTERING
+    # =========================================================================
+
+    async def run_clustering(
+        self,
+        min_cluster_size: int = 5,
+        min_samples: int | None = None,
+    ) -> dict[str, Any]:
+        """
+        Run HDBSCAN clustering on all stored memories and persist assignments.
+
+        Fetches all embeddings from Qdrant, clusters them, then writes
+        cluster_id + cluster_label back to each memory's payload.
+
+        Args:
+            min_cluster_size: Minimum number of memories to form a cluster.
+            min_samples: HDBSCAN min_samples (defaults to min_cluster_size).
+
+        Returns:
+            {success, clusters_found, noise_count, total_clustered, clusters[]}
+        """
+        from ..storage.qdrant_storage import QdrantStorage
+        from ..utils.clustering import CLUSTERING_AVAILABLE, build_cluster_infos, run_clustering
+
+        if not CLUSTERING_AVAILABLE:
+            return {"success": False, "error": "scikit-learn is required for clustering"}
+
+        if not isinstance(self.storage, QdrantStorage):
+            return {"success": False, "error": "Clustering is only supported with the Qdrant storage backend"}
+
+        # Phase 1: Fetch all embeddings
+        embeddings = await self.storage.get_all_embeddings()
+        if len(embeddings) < min_cluster_size:
+            return {
+                "success": False,
+                "error": f"Need at least {min_cluster_size} memories to cluster, found {len(embeddings)}",
+            }
+
+        # Phase 2: Run HDBSCAN
+        try:
+            assignments = run_clustering(embeddings, min_cluster_size=min_cluster_size, min_samples=min_samples)
+        except Exception as e:
+            logger.error(f"Clustering failed: {e}")
+            return {"success": False, "error": f"Clustering failed: {e}"}
+
+        # Phase 3: Build cluster metadata (labels, representatives)
+        # Fetch memories for label generation (payload only, no vectors needed)
+        all_memories = await self.storage.get_all_memories(limit=len(embeddings) + 10)
+        memories_by_hash = {m.content_hash: m for m in all_memories}
+
+        cluster_infos = build_cluster_infos(assignments, memories_by_hash)
+
+        # Build per-hash label lookup
+        # Hashes not in any cluster get label "" (cluster_id == -1 = noise)
+        hash_to_label: dict[str, str] = {}
+        label_by_cluster: dict[int, str] = {ci.cluster_id: ci.label for ci in cluster_infos}
+        for content_hash, cluster_id in assignments.items():
+            hash_to_label[content_hash] = label_by_cluster.get(cluster_id, "") if cluster_id != -1 else ""
+
+        # Phase 4: Persist assignments to Qdrant
+        updated = await self.storage.bulk_set_cluster_assignments(assignments, hash_to_label)
+
+        noise_count = sum(1 for cid in assignments.values() if cid == -1)
+        return {
+            "success": True,
+            "clusters_found": len(cluster_infos),
+            "noise_count": noise_count,
+            "total_clustered": len(embeddings) - noise_count,
+            "memories_updated": updated,
+            "clusters": [ci.to_dict() for ci in cluster_infos],
+        }
+
+    async def get_clusters(self) -> dict[str, Any]:
+        """
+        Return a list of all known clusters with their metadata.
+
+        Scans Qdrant payload for cluster_id fields. Does NOT re-run clustering.
+        Run run_clustering() first to populate cluster assignments.
+
+        Returns:
+            {success, clusters[{cluster_id, label, size, representative_hashes, summary}]}
+        """
+        from ..storage.qdrant_storage import QdrantStorage
+
+        if not isinstance(self.storage, QdrantStorage):
+            return {"success": False, "error": "Clustering is only supported with the Qdrant storage backend"}
+
+        # Scroll all memories, group by cluster_id
+        all_memories = await self.storage.get_all_memories(limit=100_000)
+
+        cluster_groups: dict[int, list] = {}
+        for mem in all_memories:
+            # cluster_id is stored as a top-level payload field, accessible via metadata dict
+            raw = mem.metadata.get("cluster_id")
+            if raw is None:
+                continue
+            try:
+                cid = int(raw)
+            except (ValueError, TypeError):
+                continue
+            if cid == -1:
+                continue
+            cluster_groups.setdefault(cid, []).append(mem)
+
+        if not cluster_groups:
+            return {"success": True, "clusters": [], "message": "No cluster assignments found. Run memory_clusters first."}
+
+        clusters = []
+        for cid, members in sorted(cluster_groups.items()):
+            # Label from any member (they all share the same label)
+            label = members[0].metadata.get("cluster_label", "") if members else ""
+            # Representatives: highest access_count
+            reps = sorted(members, key=lambda m: m.access_count, reverse=True)
+            rep_hashes = [m.content_hash for m in reps[:3]]
+            # Aggregate summaries
+            summaries = [m.summary for m in members if m.summary]
+            summary = "; ".join(summaries[:3]) if summaries else None
+            clusters.append(
+                {
+                    "cluster_id": cid,
+                    "label": label,
+                    "size": len(members),
+                    "representative_hashes": rep_hashes,
+                    "summary": summary,
+                }
+            )
+
+        return {"success": True, "clusters": clusters}
+
+    async def expand_cluster_results(
+        self,
+        result_memories: list[Memory],
+        top_n_siblings: int = 3,
+    ) -> list[Memory]:
+        """
+        Expand search results by including cluster neighbours.
+
+        For each result that has a cluster_id assigned (and cluster_id != -1),
+        fetch up to top_n_siblings additional memories from the same cluster,
+        de-duplicating against already-returned results.
+
+        Args:
+            result_memories: Primary search result memories.
+            top_n_siblings: Max sibling memories to add per cluster.
+
+        Returns:
+            Extended list with siblings appended (original results first).
+        """
+        from ..storage.qdrant_storage import QdrantStorage
+
+        if not isinstance(self.storage, QdrantStorage):
+            return result_memories
+
+        seen_hashes = {m.content_hash for m in result_memories}
+        expanded = list(result_memories)
+        fetched_cluster_ids: set[int] = set()
+
+        for mem in result_memories:
+            raw = mem.metadata.get("cluster_id")
+            if raw is None:
+                continue
+            try:
+                cid = int(raw)
+            except (ValueError, TypeError):
+                continue
+            if cid == -1 or cid in fetched_cluster_ids:
+                continue
+
+            fetched_cluster_ids.add(cid)
+            siblings = await self.storage.get_cluster_members(cid, limit=top_n_siblings + len(result_memories))
+            added = 0
+            for sibling in sorted(siblings, key=lambda m: m.access_count, reverse=True):
+                if sibling.content_hash in seen_hashes:
+                    continue
+                expanded.append(sibling)
+                seen_hashes.add(sibling.content_hash)
+                added += 1
+                if added >= top_n_siblings:
+                    break
+
+        return expanded
+
     def _format_memory_response(self, memory: Memory) -> MemoryResult:
         """
         Format a memory object for API response.

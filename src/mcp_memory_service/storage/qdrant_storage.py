@@ -819,13 +819,18 @@ class QdrantStorage(MemoryStorage):
                     # Extract payload data
                     payload = scored_point.payload
 
+                    # Merge top-level cluster fields into memory metadata
+                    base_metadata = payload.get("metadata", {})
+                    cluster_meta = {k: payload[k] for k in ("cluster_id", "cluster_label") if k in payload}
+                    merged_metadata = {**base_metadata, **cluster_meta} if cluster_meta else base_metadata
+
                     # Create Memory object from payload
                     memory = Memory(
                         content=payload.get("content", ""),
                         content_hash=payload.get("content_hash", str(scored_point.id)),
                         tags=self._normalize_tags(payload.get("tags", [])),
                         memory_type=payload.get("memory_type"),
-                        metadata=payload.get("metadata", {}),
+                        metadata=merged_metadata,
                         created_at=payload.get("created_at"),
                         updated_at=payload.get("updated_at"),
                         emotional_valence=payload.get("emotional_valence"),
@@ -1460,12 +1465,16 @@ class QdrantStorage(MemoryStorage):
                     continue
 
                 payload = point.payload
+                # Merge top-level cluster fields into memory metadata
+                base_metadata = payload.get("metadata", {})
+                cluster_meta = {k: payload[k] for k in ("cluster_id", "cluster_label") if k in payload}
+                merged_metadata = {**base_metadata, **cluster_meta} if cluster_meta else base_metadata
                 memory = Memory(
                     content=payload.get("content", ""),
                     content_hash=payload.get("content_hash", str(point.id)),
                     tags=self._normalize_tags(payload.get("tags", [])),
                     memory_type=payload.get("memory_type"),
-                    metadata=payload.get("metadata", {}),
+                    metadata=merged_metadata,
                     created_at=payload.get("created_at"),
                     updated_at=payload.get("updated_at"),
                     emotional_valence=payload.get("emotional_valence"),
@@ -1578,12 +1587,16 @@ class QdrantStorage(MemoryStorage):
                         continue
 
                     payload = point.payload
+                    # Merge top-level cluster fields into memory metadata
+                    base_metadata = payload.get("metadata", {})
+                    cluster_meta = {k: payload[k] for k in ("cluster_id", "cluster_label") if k in payload}
+                    merged_metadata = {**base_metadata, **cluster_meta} if cluster_meta else base_metadata
                     memory = Memory(
                         content=payload.get("content", ""),
                         content_hash=payload.get("content_hash", str(point.id)),
                         tags=self._normalize_tags(payload.get("tags", [])),
                         memory_type=payload.get("memory_type"),
-                        metadata=payload.get("metadata", {}),
+                        metadata=merged_metadata,
                         created_at=payload.get("created_at"),
                         updated_at=payload.get("updated_at"),
                         emotional_valence=payload.get("emotional_valence"),
@@ -1975,6 +1988,173 @@ class QdrantStorage(MemoryStorage):
             logger.error(f"Error counting time range results: {str(e)}")
             self._record_failure()
             return 0
+
+    async def get_all_embeddings(self, batch_size: int = 200) -> dict[str, list[float]]:
+        """
+        Fetch all memory embeddings from Qdrant for clustering.
+
+        Returns:
+            Mapping of content_hash → embedding vector for every non-metadata point.
+            Points without stored vectors are silently skipped.
+        """
+        self._check_circuit_breaker()
+
+        embeddings: dict[str, list[float]] = {}
+        offset = None
+        loop = asyncio.get_event_loop()
+
+        try:
+            while True:
+                scroll_result = await loop.run_in_executor(
+                    None,
+                    lambda _offset=offset: self.client.scroll(
+                        collection_name=self.collection_name,
+                        limit=batch_size,
+                        offset=_offset,
+                        with_payload=True,
+                        with_vectors=True,
+                    ),
+                )
+                points, next_offset = scroll_result
+
+                for point in points:
+                    if point.id == self.METADATA_POINT_ID:
+                        continue
+                    if point.vector is None:
+                        continue
+                    content_hash = point.payload.get("content_hash")
+                    if not content_hash:
+                        continue
+                    vector = point.vector if isinstance(point.vector, list) else list(point.vector)
+                    embeddings[content_hash] = vector
+
+                if next_offset is None:
+                    break
+                offset = next_offset
+
+            self._record_success()
+            logger.info(f"Fetched {len(embeddings)} embeddings for clustering")
+            return embeddings
+
+        except Exception as e:
+            self._record_failure()
+            logger.error(f"Failed to fetch embeddings: {e}")
+            return {}
+
+    async def bulk_set_cluster_assignments(
+        self,
+        assignments: dict[str, int],
+        labels: dict[str, str],
+    ) -> int:
+        """
+        Bulk-update cluster_id and cluster_label payload fields.
+
+        Uses Qdrant set_payload (merge, not replace) so all other payload
+        fields are preserved. Processes in batches to avoid large payloads.
+
+        Args:
+            assignments: {content_hash: cluster_id}
+            labels: {content_hash: cluster_label}
+
+        Returns:
+            Number of points successfully updated.
+        """
+        self._check_circuit_breaker()
+
+        updated = 0
+        loop = asyncio.get_event_loop()
+        hashes = list(assignments.keys())
+        batch_size = 100
+
+        try:
+            for i in range(0, len(hashes), batch_size):
+                batch = hashes[i : i + batch_size]
+                # Group by (cluster_id, cluster_label) to minimise set_payload calls
+                groups: dict[tuple[int, str], list] = {}
+                for h in batch:
+                    cid = assignments[h]
+                    clabel = labels.get(h, "")
+                    groups.setdefault((cid, clabel), []).append(self._hash_to_uuid(h))
+
+                for (cid, clabel), point_ids in groups.items():
+                    await loop.run_in_executor(
+                        None,
+                        lambda _ids=point_ids, _cid=cid, _clabel=clabel: self.client.set_payload(
+                            collection_name=self.collection_name,
+                            payload={"cluster_id": _cid, "cluster_label": _clabel},
+                            points=_ids,
+                        ),
+                    )
+                    updated += len(point_ids)
+
+            self._record_success()
+            logger.info(f"Updated cluster assignments for {updated} memories")
+            return updated
+
+        except Exception as e:
+            self._record_failure()
+            logger.error(f"Failed to bulk-update cluster assignments: {e}")
+            return updated
+
+    async def get_cluster_members(self, cluster_id: int, limit: int = 50) -> list[Memory]:
+        """
+        Fetch all memories belonging to a specific cluster.
+
+        Args:
+            cluster_id: The cluster to fetch members for
+            limit: Maximum number of members to return
+
+        Returns:
+            List of Memory objects in the cluster
+        """
+        self._check_circuit_breaker()
+
+        try:
+            loop = asyncio.get_event_loop()
+            cluster_filter = Filter(must=[FieldCondition(key="cluster_id", match=MatchValue(value=cluster_id))])
+            scroll_result = await loop.run_in_executor(
+                None,
+                lambda: self.client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=cluster_filter,
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False,
+                ),
+            )
+            points, _ = scroll_result
+            memories = []
+            for point in points:
+                if point.id == self.METADATA_POINT_ID:
+                    continue
+                payload = point.payload
+                # Merge cluster fields into metadata
+                base_metadata = payload.get("metadata", {})
+                cluster_meta = {k: payload[k] for k in ("cluster_id", "cluster_label") if k in payload}
+                merged_metadata = {**base_metadata, **cluster_meta} if cluster_meta else base_metadata
+                mem = Memory(
+                    content=payload.get("content", ""),
+                    content_hash=payload.get("content_hash", str(point.id)),
+                    tags=self._normalize_tags(payload.get("tags", [])),
+                    memory_type=payload.get("memory_type"),
+                    metadata=merged_metadata,
+                    created_at=payload.get("created_at"),
+                    updated_at=payload.get("updated_at"),
+                    emotional_valence=payload.get("emotional_valence"),
+                    salience_score=float(payload.get("salience_score", 0.0)),
+                    access_count=int(payload.get("access_count", 0)),
+                    access_timestamps=payload.get("access_timestamps", []),
+                    summary=payload.get("summary"),
+                )
+                memories.append(mem)
+
+            self._record_success()
+            return memories
+
+        except Exception as e:
+            self._record_failure()
+            logger.error(f"Failed to get cluster members for cluster {cluster_id}: {e}")
+            return []
 
     async def close(self) -> None:
         """

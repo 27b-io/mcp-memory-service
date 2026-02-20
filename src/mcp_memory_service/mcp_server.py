@@ -274,6 +274,7 @@ async def search(
     output: str = "full",
     memory_type: str | None = None,
     encoding_context: dict[str, Any] | None = None,
+    expand_clusters: bool = False,
 ) -> str | dict[str, Any]:
     """Search and retrieve memories. Consolidates all retrieval modes into one tool.
 
@@ -294,6 +295,8 @@ async def search(
         output: "full" (default), "summary" (token-efficient ~50-token summaries), or "both". Applies to scan mode.
         memory_type: Filter by type for "recent" mode (note/decision/task/reference)
         encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
+        expand_clusters: If True, include cluster neighbours for each result that has a cluster assignment.
+            Requires memory_clusters("recluster") to have been run first. Applies to hybrid mode only.
 
     Returns:
         hybrid/tag/recent: TOON-formatted string (pipe-delimited, with pagination header).
@@ -355,6 +358,14 @@ async def search(
             encoding_context=encoding_context,
             tags=normalized_tags,
         )
+
+        # Cluster expansion: augment hybrid results with cluster neighbours
+        if expand_clusters and result.get("memories"):
+            expanded = await memory_service.expand_cluster_results(result["memories"])
+            if len(expanded) > len(result["memories"]):
+                result = dict(result)
+                result["memories"] = expanded
+                result["total"] = result.get("total", 0) + (len(expanded) - page_size)
 
     pagination = {
         "page": result.get("page", page),
@@ -476,6 +487,51 @@ async def relation(
         result = await memory_service.delete_relation(
             source_hash=content_hash, target_hash=target_hash, relation_type=relation_type
         )
+
+    return _inject_latency(result, _t0)
+
+
+# =============================================================================
+# CLUSTERING
+# =============================================================================
+
+
+@mcp.tool()
+async def memory_clusters(
+    ctx: Context,
+    action: str = "list",
+    min_cluster_size: int = 5,
+) -> dict[str, Any]:
+    """Cluster memories by semantic similarity and manage cluster assignments.
+
+    Args:
+        action: Operation to perform:
+            - "list": Return all current clusters (default). Run "recluster" first if empty.
+            - "recluster": Run HDBSCAN clustering on all memories and store assignments.
+        min_cluster_size: Minimum memories to form a cluster (recluster only, default 5).
+
+    Returns:
+        list: {success, clusters[{cluster_id, label, size, representative_hashes, summary}]}
+        recluster: {success, clusters_found, noise_count, total_clustered, memories_updated, clusters[]}
+
+    Use "recluster" to group related memories, then "list" to browse clusters.
+    After clustering, memory_search with expand_clusters=true returns cluster neighbours.
+    """
+    _t0 = time.perf_counter()
+    _VALID_ACTIONS = {"list", "recluster"}
+    if action not in _VALID_ACTIONS:
+        return _inject_latency(
+            {"success": False, "error": f"Unknown action: '{action}'. Valid: {', '.join(sorted(_VALID_ACTIONS))}"},
+            _t0,
+        )
+
+    memory_service = ctx.request_context.lifespan_context.memory_service
+
+    if action == "recluster":
+        min_cluster_size = max(2, min(min_cluster_size, 100))
+        result = await memory_service.run_clustering(min_cluster_size=min_cluster_size)
+    else:
+        result = await memory_service.get_clusters()
 
     return _inject_latency(result, _t0)
 
