@@ -43,11 +43,12 @@ class UnifiedServer:
         """Initialize unified server with configuration from environment."""
         import os
 
-        from mcp_memory_service.config import HTTP_ENABLED, HTTP_HOST, HTTP_PORT
+        from mcp_memory_service.config import HTTP_ENABLED, HTTP_HOST, HTTP_PORT, HTTP_WORKERS
 
         self.http_enabled = HTTP_ENABLED
         self.http_host = HTTP_HOST
         self.http_port = HTTP_PORT
+        self.http_workers = HTTP_WORKERS
 
         # MCP transport mode is read directly from environment (not in Settings)
         self.mcp_transport = os.getenv("MCP_TRANSPORT_MODE", "")
@@ -67,7 +68,8 @@ class UnifiedServer:
 
         logger.info("Configuration validated successfully")
         if self.http_enabled:
-            logger.info(f"  HTTP interface: {self.http_host}:{self.http_port}")
+            workers_info = f" ({self.http_workers} workers)" if self.http_workers > 1 else ""
+            logger.info(f"  HTTP interface: {self.http_host}:{self.http_port}{workers_info}")
         if self.mcp_enabled:
             logger.info(f"  MCP interface: {self.mcp_transport} transport")
 
@@ -88,6 +90,7 @@ class UnifiedServer:
                 app,
                 host=self.http_host,
                 port=self.http_port,
+                workers=self.http_workers if self.http_workers > 1 else None,
                 log_config=None,  # Use existing logging config
             )
             server = uvicorn.Server(config)
