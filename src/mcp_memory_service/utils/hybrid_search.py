@@ -308,6 +308,9 @@ def combine_results_rrf_multi(
     memories: dict[str, Memory] = {}
     debug: dict[str, dict] = {}
 
+    if len(result_sets) != len(weights):
+        raise ValueError(f"result_sets ({len(result_sets)}) and weights ({len(weights)}) must have same length")
+
     total_weight = sum(weights)
 
     for set_idx, (results, weight) in enumerate(zip(result_sets, weights)):

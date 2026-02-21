@@ -1408,43 +1408,65 @@ class MemoryService:
                     logger.warning(f"Intent analysis failed (non-fatal): {e}")
 
             if intent_result and len(intent_result.sub_queries) > 1:
-                # Multi-vector fan-out path
-                sub_queries = intent_result.sub_queries
+                # Multi-vector fan-out path (non-fatal: falls back to single-vector on error)
+                try:
+                    sub_queries = intent_result.sub_queries
 
-                # Stage 2: Batched embedding (single forward pass)
-                embeddings = await self.storage.generate_embeddings_batch(sub_queries)
+                    # Stage 2: Batched embedding (single forward pass)
+                    embeddings = await self.storage.generate_embeddings_batch(sub_queries)
+                    if len(embeddings) != len(sub_queries):
+                        raise ValueError(f"Embedding count mismatch: {len(embeddings)} != {len(sub_queries)}")
 
-                # Stage 3: Parallel fan-out (asyncio.gather)
-                search_tasks = [
-                    self.storage.search_by_vector(
-                        embedding=emb,
+                    # Stage 3: Parallel fan-out (asyncio.gather)
+                    search_tasks = [
+                        self.storage.search_by_vector(
+                            embedding=emb,
+                            n_results=fetch_size,
+                            memory_type=memory_type,
+                            min_similarity=0.0,
+                            offset=0,
+                        )
+                        for emb in embeddings
+                    ]
+                    tag_task = self.storage.search_by_tags(tags=keywords, match_all=False, limit=fetch_size)
+
+                    all_results = await asyncio.gather(*search_tasks, tag_task)
+                    vector_result_sets = list(all_results[:-1])
+                    tag_matches = all_results[-1]
+
+                    # Weights: original query gets 1.5x, concept sub-queries get 1.0x
+                    weights = []
+                    for sq in sub_queries:
+                        if sq == intent_result.original_query:
+                            weights.append(1.5)
+                        else:
+                            weights.append(1.0)
+
+                    combined = combine_results_rrf_multi(
+                        result_sets=vector_result_sets,
+                        weights=weights,
+                        tag_matches=tag_matches,
+                        k=60,
+                    )
+                except Exception as e:
+                    logger.warning(f"Fan-out search failed, falling back to single-vector: {e}")
+                    intent_result = None  # Reset so we don't log fan-out analytics
+
+                    vector_task = self.storage.retrieve(
+                        query=query,
                         n_results=fetch_size,
+                        tags=None,
                         memory_type=memory_type,
                         min_similarity=0.0,
                         offset=0,
                     )
-                    for emb in embeddings
-                ]
-                tag_task = self.storage.search_by_tags(tags=keywords, match_all=False, limit=fetch_size)
-
-                all_results = await asyncio.gather(*search_tasks, tag_task)
-                vector_result_sets = list(all_results[:-1])
-                tag_matches = all_results[-1]
-
-                # Weights: original query gets 1.5x, concept sub-queries get 1.0x
-                weights = []
-                for sq in sub_queries:
-                    if sq == intent_result.original_query:
-                        weights.append(1.5)
-                    else:
-                        weights.append(1.0)
-
-                combined = combine_results_rrf_multi(
-                    result_sets=vector_result_sets,
-                    weights=weights,
-                    tag_matches=tag_matches,
-                    k=60,
-                )
+                    tag_task = self.storage.search_by_tags(
+                        tags=keywords,
+                        match_all=False,
+                        limit=fetch_size,
+                    )
+                    vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+                    combined = combine_results_rrf(vector_results, tag_matches, alpha)
             else:
                 # Single-vector path (existing behavior)
                 # Bug #105: Use min_similarity=0.0 for pre-RRF fetch to avoid filtering

@@ -41,8 +41,8 @@ RUN uv venv && \
 COPY src/ ./src/
 RUN uv pip install --no-deps -e .
 
-# Pre-download embedding model + spaCy model and clean up in the same layer
-RUN .venv/bin/python -m spacy download en_core_web_sm && \
+# Pre-download spaCy model, embedding model, and clean up in the same layer
+RUN uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl && \
     .venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')" && \
     rm -rf /root/.cache/pip /root/.cache/uv && \
     find .venv -name "*.pyc" -delete 2>/dev/null || true && \

@@ -109,7 +109,8 @@ class QueryIntentResult:
 class QueryIntentAnalyzer(Protocol):
     """Protocol for pluggable query intent analyzers."""
 
-    def analyze(self, query: str) -> QueryIntentResult: ...
+    def analyze(self, query: str) -> QueryIntentResult:
+        """Analyze a query and return intent decomposition."""
 
 
 class SpaCyAnalyzer:
@@ -127,12 +128,18 @@ class SpaCyAnalyzer:
         self._max_sub_queries = max_sub_queries
         self._min_query_tokens = min_query_tokens
 
-    def _ensure_model(self):
+    def _ensure_model(self) -> bool:
+        """Lazy-load spaCy model. Returns False if model unavailable."""
         if SpaCyAnalyzer._nlp is None:
-            import spacy
+            try:
+                import spacy
 
-            SpaCyAnalyzer._nlp = spacy.load(self._model_name)
-            logger.info("Loaded spaCy model: %s", self._model_name)
+                SpaCyAnalyzer._nlp = spacy.load(self._model_name)
+                logger.info("Loaded spaCy model: %s", self._model_name)
+            except (ImportError, OSError) as e:
+                logger.warning("spaCy model '%s' unavailable: %s", self._model_name, e)
+                return False
+        return True
 
     def analyze(self, query: str) -> QueryIntentResult:
         query = query.strip()
@@ -143,7 +150,9 @@ class SpaCyAnalyzer:
         if len(tokens) < self._min_query_tokens:
             return QueryIntentResult(original_query=query, sub_queries=[query], concepts=[])
 
-        self._ensure_model()
+        if not self._ensure_model():
+            # Model unavailable — fall back to no fan-out
+            return QueryIntentResult(original_query=query, sub_queries=[query], concepts=[])
         doc = SpaCyAnalyzer._nlp(query)
 
         concepts: list[str] = []

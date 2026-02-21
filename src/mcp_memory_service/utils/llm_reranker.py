@@ -9,6 +9,7 @@ Non-fatal: all errors return empty results, letting the existing ranking pass th
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Protocol, runtime_checkable
@@ -18,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class LLMReranker(Protocol):
-    async def rerank(self, query: str, candidates: list[dict[str, Any]]) -> list[tuple[str, float]]: ...
+    """Protocol for pluggable LLM re-rankers."""
+
+    async def rerank(self, query: str, candidates: list[dict[str, Any]]) -> list[tuple[str, float]]:
+        """Re-rank candidates by inferred relevance to the query."""
 
 
 class AnthropicReranker:
@@ -45,10 +49,13 @@ class AnthropicReranker:
                 f'[{{"hash": "abc123", "score": 0.8}}]'
             )
 
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}],
+            response = await asyncio.wait_for(
+                self._client.messages.create(
+                    model=self._model,
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout=self._timeout_ms / 1000.0,
             )
 
             text = response.content[0].text.strip()
