@@ -826,3 +826,78 @@ class TestSimilaritySearch:
         result = await memory_service.find_similar_memories(query="test query", k=5)
 
         assert result["distance_metric"] == "cosine"
+
+
+# =============================================================================
+# Filtered Below Threshold Hint (#115)
+# =============================================================================
+
+
+class TestFilteredBelowThreshold:
+    """Verify that filtered_below_threshold is reported when results are dropped."""
+
+    @pytest.fixture
+    def memory_service(self, mock_storage):
+        return MemoryService(storage=mock_storage)
+
+    @pytest.mark.asyncio
+    async def test_vector_only_reports_filtered_count(self, memory_service, mock_storage):
+        """When min_similarity filters out results, response includes filtered_below_threshold."""
+        # Two results: one above threshold (0.8), one below (0.2)
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(
+                memory=Memory(
+                    content="high score",
+                    content_hash="hash_high",
+                    tags=["test"],
+                    memory_type="note",
+                    created_at=1.0,
+                    updated_at=1.0,
+                ),
+                relevance_score=0.8,
+            ),
+            MemoryQueryResult(
+                memory=Memory(
+                    content="low score",
+                    content_hash="hash_low",
+                    tags=["test"],
+                    memory_type="note",
+                    created_at=1.0,
+                    updated_at=1.0,
+                ),
+                relevance_score=0.2,
+            ),
+        ]
+        mock_storage.count_semantic_search = AsyncMock(return_value=2)
+
+        result = await memory_service._retrieve_vector_only(
+            query="test", page=1, page_size=10, tags=None, memory_type=None, min_similarity=0.5
+        )
+
+        assert len(result["memories"]) == 1
+        assert result["filtered_below_threshold"] == 1
+
+    @pytest.mark.asyncio
+    async def test_vector_only_omits_key_when_nothing_filtered(self, memory_service, mock_storage):
+        """When nothing is filtered, filtered_below_threshold should be absent."""
+        mock_storage.retrieve.return_value = [
+            MemoryQueryResult(
+                memory=Memory(
+                    content="high score",
+                    content_hash="hash_high",
+                    tags=["test"],
+                    memory_type="note",
+                    created_at=1.0,
+                    updated_at=1.0,
+                ),
+                relevance_score=0.8,
+            ),
+        ]
+        mock_storage.count_semantic_search = AsyncMock(return_value=1)
+
+        result = await memory_service._retrieve_vector_only(
+            query="test", page=1, page_size=10, tags=None, memory_type=None, min_similarity=0.5
+        )
+
+        assert len(result["memories"]) == 1
+        assert "filtered_below_threshold" not in result

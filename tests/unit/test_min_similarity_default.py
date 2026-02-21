@@ -1,12 +1,13 @@
-"""Verify default min_similarity is 0.5 after v11.10.0 cosine score fix."""
+"""Verify default min_similarity is 0.3 after #115 threshold reduction."""
 
 import ast
 from pathlib import Path
 
 
-def test_default_min_similarity_is_0_5():
-    """Default min_similarity should be 0.5, not 0.6.
+def test_default_min_similarity_is_0_3():
+    """Default min_similarity should be 0.3 (lowered from 0.5 in #115).
 
+    0.5 was too strict — silently dropped relevant results for short/fuzzy queries.
     Parses the AST to check the default value directly, avoiding
     FastMCP tool wrapper complexity.
     """
@@ -21,7 +22,7 @@ def test_default_min_similarity_is_0_5():
             ):
                 if arg.arg == "min_similarity":
                     assert isinstance(default, ast.Constant)
-                    assert default.value == 0.5, f"Expected 0.5, got {default.value}"
+                    assert default.value == 0.3, f"Expected 0.3, got {default.value}"
                     return
 
     raise AssertionError("Could not find min_similarity parameter in search function")
