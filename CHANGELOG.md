@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.12.1](https://github.com/27b-io/mcp-memory-service/compare/v11.12.0...v11.12.1) (2026-02-21)
+
+
+### Bug Fixes
+
+* lower default min_similarity to 0.3 and add filtered_below_threshold hint ([#116](https://github.com/27b-io/mcp-memory-service/issues/116)) ([6be77ea](https://github.com/27b-io/mcp-memory-service/commit/6be77ea19b13c2303c114714f52ecb59459cd9d9)), closes [#115](https://github.com/27b-io/mcp-memory-service/issues/115)
+
 ## [11.12.0](https://github.com/27b-io/mcp-memory-service/compare/v11.11.0...v11.12.0) (2026-02-21)
 
 
