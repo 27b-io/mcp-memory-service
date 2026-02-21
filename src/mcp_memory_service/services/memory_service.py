@@ -8,13 +8,11 @@ all memory operations, eliminating the DRY violation and ensuring consistent beh
 
 import asyncio
 import logging
+import os
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, TypedDict
-
-if TYPE_CHECKING:
-    from ..utils.tag_embeddings import TagEmbeddingIndex
+from typing import Any, TypedDict
 
 from ..config import (
     CONTENT_PRESERVE_BOUNDARIES,
@@ -55,6 +53,39 @@ from ..utils.summariser import summarise
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
+# The module-level _storage ref is set by MemoryService.__init__ and used
+# by the cached functions.  This is safe because MemoryService is a singleton.
+# ---------------------------------------------------------------------------
+_storage_ref: Any = None
+
+try:
+    from cachekit import cache as _cachekit_cache
+
+    # Use Redis if REDIS_URL is set, otherwise L1-only
+    _ck_kwargs: dict[str, Any] = {"serializer": "auto"}
+    if not os.environ.get("REDIS_URL") and not os.environ.get("CACHEKIT_REDIS_URL"):
+        _ck_kwargs["backend"] = None
+
+    @_cachekit_cache(ttl=60, namespace="mcp_memory_tags", **_ck_kwargs)
+    async def _cached_fetch_all_tags() -> set[str]:
+        """Fetch all tags from storage, cached 60s."""
+        return set(await _storage_ref.get_all_tags())
+
+    @_cachekit_cache(ttl=3600, namespace="mcp_memory_tag_embeddings", **_ck_kwargs)
+    async def _cached_get_tag_embeddings() -> dict:
+        """Cache raw tag+embedding data; numpy index rebuilt on retrieval."""
+        tags = list(await _cached_fetch_all_tags())
+        if not tags:
+            return {"tags": [], "embeddings": []}
+        embeddings = await _storage_ref.generate_embeddings_batch(tags)
+        return {"tags": tags, "embeddings": [list(e) for e in embeddings]}
+
+    _CACHEKIT_AVAILABLE = True
+except ImportError:
+    _CACHEKIT_AVAILABLE = False
+
 
 class MemoryResult(TypedDict):
     """Type definition for memory operation results."""
@@ -81,8 +112,6 @@ class MemoryService:
     code duplication and potential inconsistencies.
     """
 
-    # Tag cache TTL in seconds
-    _TAG_CACHE_TTL = 60
     # Maximum search logs to keep in memory (circular buffer)
     _MAX_SEARCH_LOGS = 10000
     # Maximum audit logs to keep in memory (circular buffer)
@@ -97,12 +126,14 @@ class MemoryService:
         self.storage = storage
         self._graph = graph_client
         self._write_queue = write_queue
-        self._tag_cache: tuple[float, set[str]] | None = None
-        self._tag_embedding_cache: tuple[float, TagEmbeddingIndex] | None = None
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
         self._init_three_tier()
+
+        # Set module-level storage ref for CacheKit-cached functions
+        global _storage_ref  # noqa: PLW0603
+        _storage_ref = storage
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -238,25 +269,21 @@ class MemoryService:
             return []
 
     async def _get_tag_embedding_index(self) -> dict:
-        """Get or build the tag embedding index, cached in-memory with TTL."""
+        """Get or build the tag embedding index, cached via CacheKit."""
         from ..utils.tag_embeddings import build_tag_embedding_index
 
-        now = time.time()
-        if self._tag_embedding_cache is not None:
-            cache_time, cached_index = self._tag_embedding_cache
-            if now - cache_time < settings.semantic_tag.cache_ttl:
-                return cached_index
+        if _CACHEKIT_AVAILABLE:
+            try:
+                raw = await _cached_get_tag_embeddings()
+                return build_tag_embedding_index(raw["tags"], raw["embeddings"])
+            except Exception:
+                pass
 
         tags = list(await self._get_cached_tags())
         if not tags:
-            empty = build_tag_embedding_index([], [])
-            self._tag_embedding_cache = (now, empty)
-            return empty
-
+            return build_tag_embedding_index([], [])
         embeddings = await self.storage.generate_embeddings_batch(tags)
-        index = build_tag_embedding_index(tags, embeddings)
-        self._tag_embedding_cache = (now, index)
-        return index
+        return build_tag_embedding_index(tags, embeddings)
 
     async def _single_vector_search(
         self,
@@ -950,17 +977,13 @@ class MemoryService:
         }
 
     async def _get_cached_tags(self) -> set[str]:
-        """Get all tags with 60-second TTL caching for performance."""
-        now = time.time()
-        if self._tag_cache is not None:
-            cache_time, cached_tags = self._tag_cache
-            if now - cache_time < self._TAG_CACHE_TTL:
-                return cached_tags
-
-        # Cache miss - fetch from storage
-        all_tags = await self.storage.get_all_tags()
-        self._tag_cache = (now, set(all_tags))
-        return self._tag_cache[1]
+        """Get all tags, cached via CacheKit (60s TTL, L1+L2)."""
+        if _CACHEKIT_AVAILABLE:
+            try:
+                return await _cached_fetch_all_tags()
+            except Exception:
+                pass
+        return set(await self.storage.get_all_tags())
 
     async def _retrieve_vector_only(
         self,

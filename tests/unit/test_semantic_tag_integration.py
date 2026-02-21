@@ -9,6 +9,26 @@ from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.storage.base import MemoryStorage
 
 
+@pytest.fixture(autouse=True)
+async def _clear_cachekit_caches():
+    """Clear CacheKit L1 caches before and after tests."""
+    try:
+        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_get_tag_embeddings
+
+        await _cached_fetch_all_tags.ainvalidate_cache()
+        await _cached_get_tag_embeddings.ainvalidate_cache()
+    except (ImportError, AttributeError):
+        pass
+    yield
+    try:
+        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_get_tag_embeddings
+
+        await _cached_fetch_all_tags.ainvalidate_cache()
+        await _cached_get_tag_embeddings.ainvalidate_cache()
+    except (ImportError, AttributeError):
+        pass
+
+
 @pytest.fixture
 def mock_storage():
     storage = AsyncMock(spec=MemoryStorage)
@@ -65,7 +85,6 @@ class TestSearchSemanticTags:
     async def test_search_semantic_tags_non_fatal(self, service, mock_storage):
         """Errors should be caught and return empty list."""
         mock_storage.generate_embeddings_batch.side_effect = RuntimeError("model error")
-        service._tag_embedding_cache = None
         result = await service._search_semantic_tags("test", fetch_size=10)
         assert result == []
 
