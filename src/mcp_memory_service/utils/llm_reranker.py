@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ class AnthropicReranker:
 
         try:
             candidate_text = "\n".join(
-                f"- [{c['content_hash'][:12]}]: {c.get('summary', c.get('content', '')[:100])}" for c in candidates
+                f"- [{c['content_hash'][:16]}]: {c.get('summary', c.get('content', '')[:100])}" for c in candidates
             )
 
             prompt = (
@@ -59,13 +60,13 @@ class AnthropicReranker:
             )
 
             text = response.content[0].text.strip()
-            if "```" in text:
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
+            # Extract JSON from markdown fences or raw text
+            json_match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+            if json_match:
+                text = json_match.group(1).strip()
 
             scores_data = json.loads(text)
-            hash_map = {c["content_hash"][:12]: c["content_hash"] for c in candidates}
+            hash_map = {c["content_hash"][:16]: c["content_hash"] for c in candidates}
 
             results = []
             for item in scores_data:

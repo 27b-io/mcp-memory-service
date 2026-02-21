@@ -36,6 +36,7 @@ from ..utils.encoding_context import (
 )
 from ..utils.hashing import generate_content_hash
 from ..utils.hybrid_search import (
+    TAG_ONLY_BASE_SCORE,
     apply_recency_decay,
     combine_results_rrf,
     combine_results_rrf_multi,
@@ -195,6 +196,31 @@ class MemoryService:
             logger.warning(f"Hebbian boost query failed (non-fatal): {e}")
             return {}
 
+    async def _single_vector_search(
+        self,
+        query: str,
+        keywords: list[str],
+        fetch_size: int,
+        memory_type: str | None,
+        alpha: float,
+    ) -> list[tuple[Memory, float, dict]]:
+        """Single-vector search + tag RRF (shared by normal and fan-out fallback paths)."""
+        vector_task = self.storage.retrieve(
+            query=query,
+            n_results=fetch_size,
+            tags=None,
+            memory_type=memory_type,
+            min_similarity=0.0,
+            offset=0,
+        )
+        tag_task = self.storage.search_by_tags(
+            tags=keywords,
+            match_all=False,
+            limit=fetch_size,
+        )
+        vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+        return combine_results_rrf(vector_results, tag_matches, alpha)
+
     async def _inject_graph_neighbors(
         self,
         combined: list[tuple[Memory, float, dict]],
@@ -228,12 +254,17 @@ class MemoryService:
                 return combined
 
             neighbors = await self.storage.get_memories_batch(neighbor_hashes)
+            # Use minimum cosine score from existing results as display score floor,
+            # so graph-injected entries don't get filtered by min_similarity thresholds.
+            existing_scores = [s for _, s, _ in combined if s > 0]
+            min_existing = min(existing_scores) if existing_scores else TAG_ONLY_BASE_SCORE
             for memory in neighbors:
                 activation = graph_activation.get(memory.content_hash, 0.0)
+                display_score = max(min_existing, activation)
                 combined.append(
                     (
                         memory,
-                        activation,
+                        display_score,
                         {"source": "graph_injection", "activation": activation},
                     )
                 )
@@ -1451,41 +1482,10 @@ class MemoryService:
                 except Exception as e:
                     logger.warning(f"Fan-out search failed, falling back to single-vector: {e}")
                     intent_result = None  # Reset so we don't log fan-out analytics
-
-                    vector_task = self.storage.retrieve(
-                        query=query,
-                        n_results=fetch_size,
-                        tags=None,
-                        memory_type=memory_type,
-                        min_similarity=0.0,
-                        offset=0,
-                    )
-                    tag_task = self.storage.search_by_tags(
-                        tags=keywords,
-                        match_all=False,
-                        limit=fetch_size,
-                    )
-                    vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
-                    combined = combine_results_rrf(vector_results, tag_matches, alpha)
+                    combined = await self._single_vector_search(query, keywords, fetch_size, memory_type, alpha)
             else:
                 # Single-vector path (existing behavior)
-                # Bug #105: Use min_similarity=0.0 for pre-RRF fetch to avoid filtering
-                # relevant candidates before fusion. The user's threshold is applied post-fusion.
-                vector_task = self.storage.retrieve(
-                    query=query,
-                    n_results=fetch_size,
-                    tags=None,
-                    memory_type=memory_type,
-                    min_similarity=0.0,
-                    offset=0,
-                )
-                tag_task = self.storage.search_by_tags(
-                    tags=keywords,
-                    match_all=False,  # ANY tag matches
-                    limit=fetch_size,
-                )
-                vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
-                combined = combine_results_rrf(vector_results, tag_matches, alpha)
+                combined = await self._single_vector_search(query, keywords, fetch_size, memory_type, alpha)
 
             # ── Graph injection: add associatively-connected neighbors ──
             if settings.intent.graph_inject and self._graph is not None:

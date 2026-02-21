@@ -312,6 +312,8 @@ def combine_results_rrf_multi(
         raise ValueError(f"result_sets ({len(result_sets)}) and weights ({len(weights)}) must have same length")
 
     total_weight = sum(weights)
+    if total_weight == 0:
+        raise ValueError("weights must not all be zero")
 
     for set_idx, (results, weight) in enumerate(zip(result_sets, weights)):
         for rank, result in enumerate(results, start=1):
@@ -326,9 +328,9 @@ def combine_results_rrf_multi(
                 debug[ch] = {"set_contributions": [], "tag_boost": 0.0, "tag_matches": []}
             debug[ch]["set_contributions"].append({"set": set_idx, "rank": rank, "weight": weight, "contribution": contribution})
 
-    # Tag matches: flat RRF contribution scaled to half the total weight
+    # Tag matches: flat RRF contribution at half the total weight
     tag_rrf = rrf_score(1, k)
-    tag_contribution = (1.0 - (sum(weights) / max(total_weight * 2, 1.0))) * tag_rrf if tag_matches else 0.0
+    tag_contribution = 0.5 * tag_rrf if tag_matches else 0.0
 
     for memory in tag_matches:
         ch = memory.content_hash

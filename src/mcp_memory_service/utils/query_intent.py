@@ -144,7 +144,7 @@ class SpaCyAnalyzer:
     def analyze(self, query: str) -> QueryIntentResult:
         query = query.strip()
         if not query:
-            return QueryIntentResult(original_query=query, sub_queries=[query])
+            return QueryIntentResult(original_query=query, sub_queries=[], concepts=[])
 
         tokens = [t for t in _TOKEN_PATTERN.split(query.lower()) if t and t not in _FALLBACK_STOP_WORDS and len(t) > 1]
         if len(tokens) < self._min_query_tokens:
@@ -219,7 +219,7 @@ class FallbackAnalyzer:
     def analyze(self, query: str) -> QueryIntentResult:
         query = query.strip()
         if not query:
-            return QueryIntentResult(original_query=query, sub_queries=[query])
+            return QueryIntentResult(original_query=query, sub_queries=[], concepts=[])
 
         tokens = [t for t in _TOKEN_PATTERN.split(query.lower()) if t and t not in _FALLBACK_STOP_WORDS and len(t) > 1]
         if len(tokens) < self._min_query_tokens:
@@ -241,7 +241,11 @@ def get_analyzer(
     max_sub_queries: int = 4,
     min_query_tokens: int = 3,
 ) -> QueryIntentAnalyzer:
-    """Get or create the query intent analyzer singleton."""
+    """Get or create the query intent analyzer singleton.
+
+    Note: Returns the cached singleton after first call. Parameters are only
+    used during initial creation and are ignored on subsequent calls.
+    """
     global _analyzer
     if _analyzer is not None:
         return _analyzer
