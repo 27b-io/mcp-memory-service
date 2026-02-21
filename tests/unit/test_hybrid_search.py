@@ -90,6 +90,20 @@ class TestExtractQueryKeywords:
         result = extract_query_keywords("python python python api")
         assert result.count("python") == 1
 
+    def test_hyphenated_compound_tags(self):
+        """Should match hyphenated tags from adjacent query tokens."""
+        existing_tags = {"proton-bridge", "imap", "email"}
+        result = extract_query_keywords("proton bridge", existing_tags=existing_tags)
+        assert "proton-bridge" in result
+
+    def test_compound_tags_with_mixed_matches(self):
+        """Compounds and individual tokens should both match when valid."""
+        existing_tags = {"mcp-memory", "mcp", "service"}
+        result = extract_query_keywords("mcp memory service", existing_tags=existing_tags)
+        assert "mcp" in result
+        assert "service" in result
+        assert "mcp-memory" in result
+
 
 # =============================================================================
 # RRF Score Tests
