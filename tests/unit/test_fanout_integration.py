@@ -71,6 +71,7 @@ async def test_fanout_calls_batch_embed_and_search_by_vector():
         mock_settings.salience.enabled = False
         mock_settings.spaced_repetition.enabled = False
         mock_settings.encoding_context.enabled = False
+        mock_settings.semantic_tag.enabled = False
 
         await service.retrieve_memories(
             query="dream cycle OpenClaw consolidation",
@@ -140,6 +141,7 @@ async def test_fanout_fallback_to_single_vector_on_error():
         mock_settings.salience.enabled = False
         mock_settings.spaced_repetition.enabled = False
         mock_settings.encoding_context.enabled = False
+        mock_settings.semantic_tag.enabled = False
 
         result = await service.retrieve_memories(
             query="full query about concept one and concept two",
