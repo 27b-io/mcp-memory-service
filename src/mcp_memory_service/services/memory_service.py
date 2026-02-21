@@ -95,6 +95,7 @@ class MemoryService:
         self._graph = graph_client
         self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
+        self._tag_embedding_cache: tuple[float, dict] | None = None
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
@@ -196,6 +197,67 @@ class MemoryService:
             logger.warning(f"Hebbian boost query failed (non-fatal): {e}")
             return {}
 
+    async def _search_semantic_tags(self, query: str, fetch_size: int) -> list[Memory]:
+        """Find memories via semantically similar tags (k-NN on tag embeddings).
+
+        Non-fatal: returns empty list on any error.
+        """
+        if not settings.semantic_tag.enabled:
+            return []
+
+        try:
+            from ..utils.tag_embeddings import find_semantic_tags
+
+            # Get tag embeddings (cached in-memory with TTL)
+            index = await self._get_tag_embedding_index()
+            if not index["tags"]:
+                return []
+
+            # Get query embedding (reuse storage's embedding method)
+            loop = asyncio.get_event_loop()
+            query_embedding = await loop.run_in_executor(
+                None, lambda: self.storage._generate_embedding(query, prompt_name="query")
+            )
+
+            # k-NN match
+            matched_tags = find_semantic_tags(
+                query_embedding,
+                index,
+                threshold=settings.semantic_tag.similarity_threshold,
+                max_tags=settings.semantic_tag.max_tags,
+            )
+
+            if not matched_tags:
+                return []
+
+            logger.debug(f"Semantic tag matches: {matched_tags}")
+            return await self.storage.search_by_tags(tags=matched_tags, match_all=False, limit=fetch_size)
+
+        except Exception as e:
+            logger.warning(f"Semantic tag matching failed (non-fatal): {e}")
+            return []
+
+    async def _get_tag_embedding_index(self) -> dict:
+        """Get or build the tag embedding index, cached in-memory with TTL."""
+        from ..utils.tag_embeddings import build_tag_embedding_index
+
+        now = time.time()
+        if self._tag_embedding_cache is not None:
+            cache_time, cached_index = self._tag_embedding_cache
+            if now - cache_time < settings.semantic_tag.cache_ttl:
+                return cached_index
+
+        tags = list(await self._get_cached_tags())
+        if not tags:
+            empty = build_tag_embedding_index([], [])
+            self._tag_embedding_cache = (now, empty)
+            return empty
+
+        embeddings = await self.storage.generate_embeddings_batch(tags)
+        index = build_tag_embedding_index(tags, embeddings)
+        self._tag_embedding_cache = (now, index)
+        return index
+
     async def _single_vector_search(
         self,
         query: str,
@@ -218,7 +280,18 @@ class MemoryService:
             match_all=False,
             limit=fetch_size,
         )
-        vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+        semantic_tag_task = self._search_semantic_tags(query, fetch_size)
+
+        vector_results, tag_matches, semantic_tag_matches = await asyncio.gather(vector_task, tag_task, semantic_tag_task)
+
+        # Merge exact + semantic tag matches (deduplicate by content_hash)
+        if semantic_tag_matches:
+            seen = {m.content_hash for m in tag_matches}
+            for m in semantic_tag_matches:
+                if m.content_hash not in seen:
+                    tag_matches.append(m)
+                    seen.add(m.content_hash)
+
         return combine_results_rrf(vector_results, tag_matches, alpha)
 
     async def _inject_graph_neighbors(
@@ -1465,10 +1538,20 @@ class MemoryService:
                         for emb in embeddings
                     ]
                     tag_task = self.storage.search_by_tags(tags=keywords, match_all=False, limit=fetch_size)
+                    semantic_tag_task = self._search_semantic_tags(query, fetch_size)
 
-                    all_results = await asyncio.gather(*search_tasks, tag_task)
-                    vector_result_sets = list(all_results[:-1])
-                    tag_matches = all_results[-1]
+                    all_results = await asyncio.gather(*search_tasks, tag_task, semantic_tag_task)
+                    vector_result_sets = list(all_results[:-2])
+                    tag_matches = all_results[-2]
+                    semantic_tag_matches = all_results[-1]
+
+                    # Merge exact + semantic tag matches
+                    if semantic_tag_matches:
+                        seen = {m.content_hash for m in tag_matches}
+                        for m in semantic_tag_matches:
+                            if m.content_hash not in seen:
+                                tag_matches.append(m)
+                                seen.add(m.content_hash)
 
                     # Weights: original query gets 1.5x, concept sub-queries get 1.0x
                     weights = []
