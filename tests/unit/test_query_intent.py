@@ -12,7 +12,7 @@ try:
     spacy.load("en_core_web_sm")
     _spacy_model_available = True
 except (ImportError, OSError):
-    pass
+    pass  # Model not installed — tests requiring it will be skipped
 
 needs_spacy_model = pytest.mark.skipif(not _spacy_model_available, reason="en_core_web_sm not installed")
 
@@ -121,10 +121,9 @@ def test_fallback_analyzer_empty_query_returns_empty_sub_queries():
 def test_get_analyzer_returns_instance():
     """get_analyzer() returns a working analyzer (spaCy or fallback)."""
     import mcp_memory_service.utils.query_intent as mod
-    from mcp_memory_service.utils.query_intent import get_analyzer
 
     mod._analyzer = None
 
-    analyzer = get_analyzer()
+    analyzer = mod.get_analyzer()
     result = analyzer.analyze("test query for analysis")
     assert result.original_query == "test query for analysis"
