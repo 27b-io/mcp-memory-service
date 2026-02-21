@@ -36,13 +36,16 @@ from ..utils.encoding_context import (
 )
 from ..utils.hashing import generate_content_hash
 from ..utils.hybrid_search import (
+    TAG_ONLY_BASE_SCORE,
     apply_recency_decay,
     combine_results_rrf,
+    combine_results_rrf_multi,
     extract_query_keywords,
     get_adaptive_alpha,
     temporal_decay_factor,
 )
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
+from ..utils.query_intent import get_analyzer
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
 from ..utils.summariser import summarise
@@ -192,6 +195,86 @@ class MemoryService:
         except Exception as e:
             logger.warning(f"Hebbian boost query failed (non-fatal): {e}")
             return {}
+
+    async def _single_vector_search(
+        self,
+        query: str,
+        keywords: list[str],
+        fetch_size: int,
+        memory_type: str | None,
+        alpha: float,
+    ) -> list[tuple[Memory, float, dict]]:
+        """Single-vector search + tag RRF (shared by normal and fan-out fallback paths)."""
+        vector_task = self.storage.retrieve(
+            query=query,
+            n_results=fetch_size,
+            tags=None,
+            memory_type=memory_type,
+            min_similarity=0.0,
+            offset=0,
+        )
+        tag_task = self.storage.search_by_tags(
+            tags=keywords,
+            match_all=False,
+            limit=fetch_size,
+        )
+        vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+        return combine_results_rrf(vector_results, tag_matches, alpha)
+
+    async def _inject_graph_neighbors(
+        self,
+        combined: list[tuple[Memory, float, dict]],
+        seed_hashes: list[str],
+        inject_limit: int = 10,
+        min_activation: float = 0.05,
+    ) -> list[tuple[Memory, float, dict]]:
+        """Inject graph-activated neighbors as new candidates."""
+        if self._graph is None or not seed_hashes:
+            return combined
+
+        try:
+            graph_activation = await self._graph.spreading_activation(
+                seed_hashes=seed_hashes[:5],
+                max_hops=2,
+                decay_factor=0.5,
+                min_activation=min_activation,
+            )
+
+            if not graph_activation:
+                return combined
+
+            result_hashes = {m.content_hash for m, _, _ in combined}
+            neighbor_hashes = [
+                h
+                for h, score in sorted(graph_activation.items(), key=lambda x: x[1], reverse=True)
+                if h not in result_hashes and score >= min_activation
+            ][:inject_limit]
+
+            if not neighbor_hashes:
+                return combined
+
+            neighbors = await self.storage.get_memories_batch(neighbor_hashes)
+            # Use minimum cosine score from existing results as display score floor,
+            # so graph-injected entries don't get filtered by min_similarity thresholds.
+            existing_scores = [s for _, s, _ in combined if s > 0]
+            min_existing = min(existing_scores) if existing_scores else TAG_ONLY_BASE_SCORE
+            for memory in neighbors:
+                activation = graph_activation.get(memory.content_hash, 0.0)
+                display_score = max(min_existing, activation)
+                combined.append(
+                    (
+                        memory,
+                        display_score,
+                        {"source": "graph_injection", "activation": activation},
+                    )
+                )
+
+            logger.debug(f"Graph injection: added {len(neighbors)} neighbors from {len(seed_hashes)} seeds")
+
+        except Exception as e:
+            logger.warning(f"Graph injection failed (non-fatal): {e}")
+
+        return combined
 
     async def _fire_hebbian_co_access(self, content_hashes: list[str], spacing_qualities: list[float] | None = None) -> None:
         """
@@ -549,6 +632,9 @@ class MemoryService:
         hybrid_enabled: bool = True,
         keywords_extracted: list[str] | None = None,
         error: str | None = None,
+        intent_enabled: bool = False,
+        concepts_extracted: list[str] | None = None,
+        sub_queries_count: int = 1,
     ) -> None:
         """
         Log a search query for analytics tracking.
@@ -568,6 +654,11 @@ class MemoryService:
             hybrid_enabled=hybrid_enabled,
             keywords_extracted=keywords_extracted or [],
             error=error,
+            metadata={
+                "intent_enabled": intent_enabled,
+                "concepts_extracted": concepts_extracted or [],
+                "sub_queries_count": sub_queries_count,
+            },
         )
         self._search_logs.append(log_entry)
 
@@ -1334,27 +1425,77 @@ class MemoryService:
             offset = (page - 1) * page_size
             fetch_size = min(max(page_size * 3, offset + page_size), 100)
 
-            # Parallel fetch: vector results + tag-matching memories
-            # Bug #105: Use min_similarity=0.0 for pre-RRF fetch to avoid filtering
-            # relevant candidates before fusion. The user's threshold is applied post-fusion.
-            vector_task = self.storage.retrieve(
-                query=query,
-                n_results=fetch_size,
-                tags=None,
-                memory_type=memory_type,
-                min_similarity=0.0,
-                offset=0,
-            )
-            tag_task = self.storage.search_by_tags(
-                tags=keywords,
-                match_all=False,  # ANY tag matches
-                limit=fetch_size,
-            )
+            # ── Fan-out: concept extraction + parallel search ──────────────
+            intent_result = None
+            if settings.intent.enabled:
+                try:
+                    analyzer = get_analyzer(
+                        model_name=settings.intent.spacy_model,
+                        max_sub_queries=settings.intent.max_sub_queries,
+                        min_query_tokens=settings.intent.min_query_tokens,
+                    )
+                    intent_result = analyzer.analyze(query)
+                except Exception as e:
+                    logger.warning(f"Intent analysis failed (non-fatal): {e}")
 
-            vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+            if intent_result and len(intent_result.sub_queries) > 1:
+                # Multi-vector fan-out path (non-fatal: falls back to single-vector on error)
+                try:
+                    sub_queries = intent_result.sub_queries
 
-            # Combine using RRF
-            combined = combine_results_rrf(vector_results, tag_matches, alpha)
+                    # Stage 2: Batched embedding (single forward pass)
+                    embeddings = await self.storage.generate_embeddings_batch(sub_queries)
+                    if len(embeddings) != len(sub_queries):
+                        raise ValueError(f"Embedding count mismatch: {len(embeddings)} != {len(sub_queries)}")
+
+                    # Stage 3: Parallel fan-out (asyncio.gather)
+                    search_tasks = [
+                        self.storage.search_by_vector(
+                            embedding=emb,
+                            n_results=fetch_size,
+                            memory_type=memory_type,
+                            min_similarity=0.0,
+                            offset=0,
+                        )
+                        for emb in embeddings
+                    ]
+                    tag_task = self.storage.search_by_tags(tags=keywords, match_all=False, limit=fetch_size)
+
+                    all_results = await asyncio.gather(*search_tasks, tag_task)
+                    vector_result_sets = list(all_results[:-1])
+                    tag_matches = all_results[-1]
+
+                    # Weights: original query gets 1.5x, concept sub-queries get 1.0x
+                    weights = []
+                    for sq in sub_queries:
+                        if sq == intent_result.original_query:
+                            weights.append(1.5)
+                        else:
+                            weights.append(1.0)
+
+                    combined = combine_results_rrf_multi(
+                        result_sets=vector_result_sets,
+                        weights=weights,
+                        tag_matches=tag_matches,
+                        k=60,
+                    )
+                except Exception as e:
+                    logger.warning(f"Fan-out search failed, falling back to single-vector: {e}")
+                    intent_result = None  # Reset so we don't log fan-out analytics
+                    combined = await self._single_vector_search(query, keywords, fetch_size, memory_type, alpha)
+            else:
+                # Single-vector path (existing behavior)
+                combined = await self._single_vector_search(query, keywords, fetch_size, memory_type, alpha)
+
+            # ── Graph injection: add associatively-connected neighbors ──
+            if settings.intent.graph_inject and self._graph is not None:
+                top_hashes = [m.content_hash for m, _, _ in combined[:5]]
+                combined = await self._inject_graph_neighbors(
+                    combined=combined,
+                    seed_hashes=top_hashes,
+                    inject_limit=settings.intent.graph_inject_limit,
+                    min_activation=settings.intent.graph_inject_min_activation,
+                )
 
             # Boost stages below operate on and re-sort by cosine display scores,
             # not RRF rank. RRF determines initial ordering; boosts refine from there.
@@ -1487,6 +1628,9 @@ class MemoryService:
                 min_similarity=min_similarity,
                 hybrid_enabled=True,
                 keywords_extracted=keywords,
+                intent_enabled=bool(intent_result and len(intent_result.sub_queries) > 1),
+                concepts_extracted=intent_result.concepts if intent_result else [],
+                sub_queries_count=len(intent_result.sub_queries) if intent_result else 1,
             )
 
             return {

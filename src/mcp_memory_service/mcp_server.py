@@ -270,7 +270,7 @@ async def search(
     k: int = 10,
     page: int = 1,
     page_size: int = 10,
-    min_similarity: float = 0.6,
+    min_similarity: float = 0.5,
     output: str = "full",
     memory_type: str | None = None,
     encoding_context: dict[str, Any] | None = None,
@@ -291,7 +291,7 @@ async def search(
         k: Max results for "scan" and "similar" modes (default: 10)
         page: Page number, 1-indexed (default: 1)
         page_size: Results per page (default: 10, max: 100)
-        min_similarity: Similarity threshold 0.0-1.0 (default: 0.6). Higher=stricter.
+        min_similarity: Similarity threshold 0.0-1.0 (default: 0.5). Higher=stricter.
         output: "full" (default), "summary" (token-efficient ~50-token summaries), or "both". Applies to scan mode.
         memory_type: Filter by type for "recent" mode (note/decision/task/reference)
         encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
