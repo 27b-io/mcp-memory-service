@@ -281,6 +281,80 @@ def combine_results_rrf(
     return results
 
 
+def combine_results_rrf_multi(
+    result_sets: list[list[MemoryQueryResult]],
+    weights: list[float],
+    tag_matches: list[Memory],
+    k: int = 60,
+) -> list[tuple[Memory, float, dict]]:
+    """
+    Combine N result sets using weighted RRF, then fold in tag matches.
+
+    Generalises combine_results_rrf to accept an arbitrary number of ranked
+    lists with per-list weights.  The **display score** returned is the max
+    cosine similarity observed across all sets (not the RRF score).
+
+    Args:
+        result_sets: N ranked lists of MemoryQueryResult
+        weights: Per-list RRF weight (len must equal len(result_sets))
+        tag_matches: Memories matching extracted tags
+        k: RRF smoothing constant
+
+    Returns:
+        List of (memory, max_cosine_score, debug_info) sorted by RRF rank desc
+    """
+    rrf_scores: dict[str, float] = {}
+    cosine_scores: dict[str, float] = {}
+    memories: dict[str, Memory] = {}
+    debug: dict[str, dict] = {}
+
+    total_weight = sum(weights)
+
+    for set_idx, (results, weight) in enumerate(zip(result_sets, weights)):
+        for rank, result in enumerate(results, start=1):
+            ch = result.memory.content_hash
+            contribution = weight * rrf_score(rank, k)
+
+            memories.setdefault(ch, result.memory)
+            rrf_scores[ch] = rrf_scores.get(ch, 0.0) + contribution
+            cosine_scores[ch] = max(cosine_scores.get(ch, 0.0), result.similarity_score)
+
+            if ch not in debug:
+                debug[ch] = {"set_contributions": [], "tag_boost": 0.0, "tag_matches": []}
+            debug[ch]["set_contributions"].append({"set": set_idx, "rank": rank, "weight": weight, "contribution": contribution})
+
+    # Tag matches: flat RRF contribution scaled to half the total weight
+    tag_rrf = rrf_score(1, k)
+    tag_contribution = (1.0 - (sum(weights) / max(total_weight * 2, 1.0))) * tag_rrf if tag_matches else 0.0
+
+    for memory in tag_matches:
+        ch = memory.content_hash
+        if ch in rrf_scores:
+            rrf_scores[ch] += tag_contribution
+            debug[ch]["tag_boost"] = tag_contribution
+            debug[ch]["tag_matches"].append("matched")
+        else:
+            memories[ch] = memory
+            rrf_scores[ch] = tag_contribution
+            cosine_scores[ch] = TAG_ONLY_BASE_SCORE
+            debug[ch] = {
+                "set_contributions": [],
+                "tag_boost": tag_contribution,
+                "tag_matches": ["matched"],
+            }
+
+    results_out: list[tuple[Memory, float, dict]] = []
+    for ch in rrf_scores:
+        info = debug[ch]
+        display_score = cosine_scores[ch]
+        info["final_score"] = display_score
+        info["rrf_score"] = rrf_scores[ch]
+        results_out.append((memories[ch], display_score, info))
+
+    results_out.sort(key=lambda x: x[2]["rrf_score"], reverse=True)
+    return results_out
+
+
 def get_adaptive_alpha(
     corpus_size: int,
     matching_tag_count: int,
