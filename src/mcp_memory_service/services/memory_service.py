@@ -11,7 +11,10 @@ import logging
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from ..utils.tag_embeddings import TagEmbeddingIndex
 
 from ..config import (
     CONTENT_PRESERVE_BOUNDARIES,
@@ -95,7 +98,7 @@ class MemoryService:
         self._graph = graph_client
         self._write_queue = write_queue
         self._tag_cache: tuple[float, set[str]] | None = None
-        self._tag_embedding_cache: tuple[float, dict] | None = None
+        self._tag_embedding_cache: tuple[float, TagEmbeddingIndex] | None = None
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)

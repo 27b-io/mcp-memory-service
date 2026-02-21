@@ -25,6 +25,9 @@ def build_tag_embedding_index(
     if not tags:
         return {"tags": [], "matrix": np.empty((0, 0))}
 
+    if len(tags) != len(embeddings):
+        raise ValueError(f"tags ({len(tags)}) and embeddings ({len(embeddings)}) must have same length")
+
     matrix = np.array(embeddings, dtype=np.float32)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms = np.where(norms == 0, 1.0, norms)
