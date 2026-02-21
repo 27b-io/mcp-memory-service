@@ -8,6 +8,18 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.12.0](https://github.com/27b-io/mcp-memory-service/compare/v11.11.0...v11.12.0) (2026-02-21)
+
+
+### Features
+
+* query intent inference and search fan-out ([#112](https://github.com/27b-io/mcp-memory-service/issues/112)) ([96206f7](https://github.com/27b-io/mcp-memory-service/commit/96206f7cc21a38a69acdd666f0f052ac28a6883f))
+
+
+### Bug Fixes
+
+* clean up test import nits in test_query_intent.py ([#114](https://github.com/27b-io/mcp-memory-service/issues/114)) ([f816251](https://github.com/27b-io/mcp-memory-service/commit/f81625138fd5589aabed0ce05ec320d2839543e7))
+
 ## [11.11.0](https://github.com/27b-io/mcp-memory-service/compare/v11.10.0...v11.11.0) (2026-02-20)
 
 
