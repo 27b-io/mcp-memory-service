@@ -736,7 +736,6 @@ class SemanticTagSettings(BaseSettings):
         default=0.5, ge=0.0, le=1.0, description="Minimum cosine similarity to consider a tag match"
     )
     max_tags: int = Field(default=10, ge=1, le=50, description="Maximum semantically matched tags to fan out")
-    rrf_weight: float = Field(default=0.5, ge=0.0, le=5.0, description="RRF weight for semantic tag results")
     cache_ttl: int = Field(default=3600, ge=60, description="Tag embedding cache TTL in seconds")
 
 

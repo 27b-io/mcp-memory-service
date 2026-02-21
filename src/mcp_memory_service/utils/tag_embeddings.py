@@ -6,14 +6,21 @@ similar tags for a given query embedding using cosine similarity.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import numpy as np
 from numpy.typing import NDArray
+
+
+class TagEmbeddingIndex(TypedDict):
+    tags: list[str]
+    matrix: NDArray[np.float32]
 
 
 def build_tag_embedding_index(
     tags: list[str],
     embeddings: list[list[float]],
-) -> dict:
+) -> TagEmbeddingIndex:
     """Build a normalised tag embedding index for k-NN search."""
     if not tags:
         return {"tags": [], "matrix": np.empty((0, 0))}
@@ -28,7 +35,7 @@ def build_tag_embedding_index(
 
 def find_semantic_tags(
     query_embedding: list[float] | NDArray,
-    index: dict,
+    index: TagEmbeddingIndex,
     threshold: float = 0.5,
     max_tags: int = 10,
 ) -> list[str]:

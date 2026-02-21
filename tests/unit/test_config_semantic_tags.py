@@ -10,7 +10,6 @@ class TestSemanticTagSettings:
         assert s.enabled is True
         assert s.similarity_threshold == 0.5
         assert s.max_tags == 10
-        assert s.rrf_weight == 0.5
         assert s.cache_ttl == 3600
 
     def test_env_override(self, monkeypatch):

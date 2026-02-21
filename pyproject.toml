@@ -62,7 +62,6 @@ dependencies = [
     "platformdirs>=4.0.0",
     "vadersentiment>=3.3.2",
     "spacy>=3.8.11",
-    "cachekit>=0.3.0",
 ]
 
 [project.optional-dependencies]

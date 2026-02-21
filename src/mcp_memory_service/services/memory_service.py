@@ -213,11 +213,8 @@ class MemoryService:
             if not index["tags"]:
                 return []
 
-            # Get query embedding (reuse storage's embedding method)
-            loop = asyncio.get_event_loop()
-            query_embedding = await loop.run_in_executor(
-                None, lambda: self.storage._generate_embedding(query, prompt_name="query")
-            )
+            # Get query embedding via public batch API
+            query_embedding = (await self.storage.generate_embeddings_batch([query]))[0]
 
             # k-NN match
             matched_tags = find_semantic_tags(
@@ -234,7 +231,7 @@ class MemoryService:
             return await self.storage.search_by_tags(tags=matched_tags, match_all=False, limit=fetch_size)
 
         except Exception as e:
-            logger.warning(f"Semantic tag matching failed (non-fatal): {e}")
+            logger.warning("Semantic tag matching failed (non-fatal): %s", e, exc_info=True)
             return []
 
     async def _get_tag_embedding_index(self) -> dict:

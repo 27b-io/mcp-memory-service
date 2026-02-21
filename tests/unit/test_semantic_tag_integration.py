@@ -1,6 +1,6 @@
 """Tests for semantic tag matching integration in search pipeline."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -27,11 +27,14 @@ def mock_storage():
             "imap": [0.0, 1.0, 0.0],
             "email": [0.0, 0.0, 1.0],
         }
-        return [tag_vectors.get(t, [0.0, 0.0, 0.0]) for t in tags]
+        # Also handle query strings (for generate_embeddings_batch([query]))
+        query_vectors = {
+            "proton bridge": [0.95, 0.05, 0.0],
+            "test": [0.5, 0.5, 0.0],
+        }
+        return [tag_vectors.get(t, query_vectors.get(t, [0.0, 0.0, 0.0])) for t in tags]
 
     storage.generate_embeddings_batch = AsyncMock(side_effect=_make_embeddings)
-    # Query embedding close to "proton-bridge" [1.0, 0.0, 0.0]
-    storage._generate_embedding = MagicMock(return_value=[0.95, 0.05, 0.0])
     return storage
 
 
@@ -46,9 +49,9 @@ class TestSearchSemanticTags:
         """Semantic tag search should find tags similar to query embedding."""
         await service._search_semantic_tags("proton bridge", fetch_size=10)
         # Query embedding [0.95, 0.05, 0.0] is close to "proton-bridge" [1.0, 0.0, 0.0]
-        if mock_storage.search_by_tags.called:
-            call_tags = mock_storage.search_by_tags.call_args.kwargs.get("tags", [])
-            assert "proton-bridge" in call_tags
+        mock_storage.search_by_tags.assert_called_once()
+        call_tags = mock_storage.search_by_tags.call_args.kwargs.get("tags", [])
+        assert "proton-bridge" in call_tags
 
     @pytest.mark.asyncio
     async def test_search_semantic_tags_disabled(self, service):
