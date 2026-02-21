@@ -67,3 +67,30 @@ def test_weights_affect_rrf_ordering():
     combined = combine_results_rrf_multi(result_sets=[set_a, set_b], weights=[0.1, 2.0], tag_matches=[])
     hashes = [m.content_hash for m, _, _ in combined]
     assert hashes[0] == "hash_b"
+
+
+def test_combine_results_rrf_multi_rejects_zero_weights():
+    """All-zero weights must raise ValueError, not silently divide by zero."""
+    import pytest
+
+    from mcp_memory_service.utils.hybrid_search import combine_results_rrf_multi
+
+    with pytest.raises(ValueError, match="zero"):
+        combine_results_rrf_multi(result_sets=[[], []], weights=[0.0, 0.0], tag_matches=[])
+
+
+def test_combine_results_rrf_multi_tag_contribution():
+    """Tag-only results get 0.5 * rrf_score(1, 60) contribution."""
+    from mcp_memory_service.utils.hybrid_search import combine_results_rrf_multi, rrf_score
+
+    tag_memory = _make_memory("tag_only_hash")
+    results = combine_results_rrf_multi(
+        result_sets=[[]],
+        weights=[1.0],
+        tag_matches=[tag_memory],
+    )
+    assert len(results) == 1
+    _, _, debug = results[0]
+    expected_tag_boost = 0.5 * rrf_score(1, 60)
+    assert abs(debug["tag_boost"] - expected_tag_boost) < 1e-9
+    assert abs(debug["rrf_score"] - expected_tag_boost) < 1e-9

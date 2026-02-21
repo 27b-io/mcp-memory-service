@@ -68,6 +68,41 @@ async def test_graph_injection_skips_existing_results():
 
 
 @pytest.mark.asyncio
+async def test_graph_injection_normalizes_display_scores():
+    """Graph-injected entries use max(min_existing_cosine, activation) as display score."""
+    from mcp_memory_service.services.memory_service import MemoryService
+
+    mock_storage = AsyncMock()
+    mock_graph = AsyncMock()
+    mock_graph.spreading_activation = AsyncMock(return_value={"neighbor_hash": 0.02})
+
+    neighbor = _make_memory("neighbor_hash", "neighbor content")
+    mock_storage.get_memories_batch = AsyncMock(return_value=[neighbor])
+
+    service = MemoryService(storage=mock_storage, graph_client=mock_graph)
+
+    existing_mem1 = _make_memory("existing_1")
+    existing_mem2 = _make_memory("existing_2")
+    combined = [
+        (existing_mem1, 0.8, {"source": "vector"}),
+        (existing_mem2, 0.6, {"source": "vector"}),
+    ]
+
+    result = await service._inject_graph_neighbors(
+        combined=combined,
+        seed_hashes=["existing_1"],
+        inject_limit=10,
+        min_activation=0.01,
+    )
+
+    injected = [r for r in result if r[0].content_hash == "neighbor_hash"]
+    assert len(injected) == 1
+    display_score = injected[0][1]
+    # min existing cosine is 0.6, activation is 0.02 -> max(0.6, 0.02) = 0.6
+    assert display_score == 0.6, f"Expected normalized score 0.6, got {display_score}"
+
+
+@pytest.mark.asyncio
 async def test_graph_injection_noop_when_no_graph():
     """Graph injection is a no-op when graph layer is disabled."""
     from mcp_memory_service.services.memory_service import MemoryService

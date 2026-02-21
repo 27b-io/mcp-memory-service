@@ -100,6 +100,24 @@ def test_fallback_analyzer_when_spacy_unavailable():
     assert result.original_query in result.sub_queries
 
 
+def test_spacy_analyzer_empty_query_returns_empty_sub_queries():
+    """Empty query yields empty sub_queries and concepts, not a single-element list."""
+    analyzer = SpaCyAnalyzer()
+    result = analyzer.analyze("")
+    assert result.sub_queries == []
+    assert result.concepts == []
+
+
+def test_fallback_analyzer_empty_query_returns_empty_sub_queries():
+    """FallbackAnalyzer also returns empty lists for empty query."""
+    from mcp_memory_service.utils.query_intent import FallbackAnalyzer
+
+    analyzer = FallbackAnalyzer()
+    result = analyzer.analyze("")
+    assert result.sub_queries == []
+    assert result.concepts == []
+
+
 def test_get_analyzer_returns_instance():
     """get_analyzer() returns a working analyzer (spaCy or fallback)."""
     import mcp_memory_service.utils.query_intent as mod
