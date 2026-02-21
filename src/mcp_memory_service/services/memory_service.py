@@ -1026,8 +1026,10 @@ class MemoryService:
             result["similarity_score"] = min(1.0, result.get("similarity_score", 0.0))
 
         # Re-filter by min_similarity after boosts (scores may have shifted)
+        pre_filter_count = len(results)
         if min_similarity is not None and min_similarity > 0:
             results = [r for r in results if r.get("similarity_score", 0.0) >= min_similarity]
+        filtered_below_threshold = pre_filter_count - len(results)
 
         # Filter out superseded memories unless explicitly requested
         if not include_superseded:
@@ -1047,12 +1049,15 @@ class MemoryService:
         # Track access counts (fire-and-forget)
         self._fire_access_count_updates(result_hashes)
 
-        return {
+        response: dict[str, Any] = {
             "memories": results,
             "query": query,
             "hybrid_enabled": False,
             **self._build_pagination_metadata(total, page, page_size),
         }
+        if filtered_below_threshold > 0:
+            response["filtered_below_threshold"] = filtered_below_threshold
+        return response
 
     def _build_pagination_metadata(self, total: int, page: int, page_size: int) -> dict[str, Any]:
         """
@@ -1578,8 +1583,10 @@ class MemoryService:
             combined = [(m, min(1.0, s), {**d, "final_score": min(1.0, s)}) for m, s, d in combined]
 
             # Post-fusion threshold: apply min_similarity filter on final cosine-based scores
+            pre_filter_count = len(combined)
             if min_similarity is not None and min_similarity > 0:
                 combined = [(m, s, d) for m, s, d in combined if s >= min_similarity]
+            filtered_below_threshold = pre_filter_count - len(combined)
 
             # Apply pagination to combined results (offset calculated above for fetch_size)
             total = len(combined)
@@ -1633,7 +1640,7 @@ class MemoryService:
                 sub_queries_count=len(intent_result.sub_queries) if intent_result else 1,
             )
 
-            return {
+            response: dict[str, Any] = {
                 "memories": results,
                 "query": query,
                 "hybrid_enabled": True,
@@ -1641,6 +1648,9 @@ class MemoryService:
                 "keywords_extracted": keywords,
                 **self._build_pagination_metadata(total, page, page_size),
             }
+            if filtered_below_threshold > 0:
+                response["filtered_below_threshold"] = filtered_below_threshold
+            return response
 
         except Exception as e:
             error_msg = f"Failed to retrieve memories: {str(e)}"
