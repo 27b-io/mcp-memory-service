@@ -8,6 +8,26 @@ import pytest
 from mcp_memory_service.models.memory import Memory, MemoryQueryResult
 
 
+@pytest.fixture(autouse=True)
+async def _clear_cachekit_caches():
+    """Clear CacheKit L1 caches before and after tests."""
+    try:
+        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_get_tag_embeddings
+
+        await _cached_fetch_all_tags.ainvalidate_cache()
+        await _cached_get_tag_embeddings.ainvalidate_cache()
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort: cache functions may not exist or Redis may be unavailable
+    yield
+    try:
+        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_get_tag_embeddings
+
+        await _cached_fetch_all_tags.ainvalidate_cache()
+        await _cached_get_tag_embeddings.ainvalidate_cache()
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort: cache functions may not exist or Redis may be unavailable
+
+
 def _make_result(content_hash: str, score: float) -> MemoryQueryResult:
     return MemoryQueryResult(
         memory=Memory(
@@ -71,6 +91,7 @@ async def test_fanout_calls_batch_embed_and_search_by_vector():
         mock_settings.salience.enabled = False
         mock_settings.spaced_repetition.enabled = False
         mock_settings.encoding_context.enabled = False
+        mock_settings.semantic_tag.enabled = False
 
         await service.retrieve_memories(
             query="dream cycle OpenClaw consolidation",
@@ -140,6 +161,7 @@ async def test_fanout_fallback_to_single_vector_on_error():
         mock_settings.salience.enabled = False
         mock_settings.spaced_repetition.enabled = False
         mock_settings.encoding_context.enabled = False
+        mock_settings.semantic_tag.enabled = False
 
         result = await service.retrieve_memories(
             query="full query about concept one and concept two",

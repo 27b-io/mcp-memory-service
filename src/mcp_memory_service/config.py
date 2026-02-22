@@ -720,6 +720,25 @@ class QueryIntentSettings(BaseSettings):
     llm_timeout_ms: int = Field(default=2000, ge=500, le=10000, description="LLM re-ranking timeout in milliseconds")
 
 
+class SemanticTagSettings(BaseSettings):
+    """Semantic tag matching configuration for k-NN tag embedding search."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_SEMANTIC_TAG_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable semantic tag matching via embedding k-NN")
+    similarity_threshold: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="Minimum cosine similarity to consider a tag match"
+    )
+    max_tags: int = Field(default=10, ge=1, le=50, description="Maximum semantically matched tags to fan out")
+    cache_ttl: int = Field(default=3600, ge=60, description="Tag embedding cache TTL in seconds")
+
+
 class SummarySettings(BaseSettings):
     """Summary generation configuration for memory_scan and store operations."""
 
@@ -845,6 +864,7 @@ class Settings(BaseSettings):
     debug: DebugSettings = Field(default_factory=DebugSettings)
     hybrid_search: HybridSearchSettings = Field(default_factory=HybridSearchSettings)
     intent: QueryIntentSettings = Field(default_factory=QueryIntentSettings)
+    semantic_tag: SemanticTagSettings = Field(default_factory=SemanticTagSettings)
     summary: SummarySettings = Field(default_factory=SummarySettings)
 
     @model_validator(mode="after")

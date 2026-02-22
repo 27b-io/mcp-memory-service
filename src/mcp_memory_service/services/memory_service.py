@@ -8,6 +8,7 @@ all memory operations, eliminating the DRY violation and ensuring consistent beh
 
 import asyncio
 import logging
+import os
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -52,6 +53,41 @@ from ..utils.summariser import summarise
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
+# ---------------------------------------------------------------------------
+_storage_ref: Any = None
+
+try:
+    from cachekit import cache as _cachekit_cache
+
+    from ..config import SemanticTagSettings as _SemanticTagSettings
+
+    _tag_embedding_ttl = _SemanticTagSettings().cache_ttl
+
+    # Use Redis if REDIS_URL is set, otherwise L1-only
+    _ck_kwargs: dict[str, Any] = {"serializer": "auto"}
+    if not os.environ.get("REDIS_URL") and not os.environ.get("CACHEKIT_REDIS_URL"):
+        _ck_kwargs["backend"] = None
+
+    @_cachekit_cache(ttl=60, namespace="mcp_memory_tags", **_ck_kwargs)
+    async def _cached_fetch_all_tags() -> set[str]:
+        """Fetch all tags from storage, cached 60s."""
+        return set(await _storage_ref.get_all_tags())
+
+    @_cachekit_cache(ttl=_tag_embedding_ttl, namespace="mcp_memory_tag_embeddings", **_ck_kwargs)
+    async def _cached_get_tag_embeddings() -> dict:
+        """Cache raw tag+embedding data; numpy index rebuilt on retrieval."""
+        tags = list(await _cached_fetch_all_tags())
+        if not tags:
+            return {"tags": [], "embeddings": []}
+        embeddings = await _storage_ref.generate_embeddings_batch(tags)
+        return {"tags": tags, "embeddings": [list(e) for e in embeddings]}
+
+    _CACHEKIT_AVAILABLE = True
+except ImportError:
+    _CACHEKIT_AVAILABLE = False
+
 
 class MemoryResult(TypedDict):
     """Type definition for memory operation results."""
@@ -78,8 +114,6 @@ class MemoryService:
     code duplication and potential inconsistencies.
     """
 
-    # Tag cache TTL in seconds
-    _TAG_CACHE_TTL = 60
     # Maximum search logs to keep in memory (circular buffer)
     _MAX_SEARCH_LOGS = 10000
     # Maximum audit logs to keep in memory (circular buffer)
@@ -94,11 +128,18 @@ class MemoryService:
         self.storage = storage
         self._graph = graph_client
         self._write_queue = write_queue
-        self._tag_cache: tuple[float, set[str]] | None = None
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
         self._init_three_tier()
+
+        # Set module-level storage ref for CacheKit-cached functions
+        global _storage_ref  # noqa: PLW0603
+        if _storage_ref is not None and _storage_ref is not storage:
+            logger.warning(
+                "MemoryService re-instantiated with a different storage backend; CacheKit caches will use the new storage."
+            )
+        _storage_ref = storage
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -196,6 +237,72 @@ class MemoryService:
             logger.warning(f"Hebbian boost query failed (non-fatal): {e}")
             return {}
 
+    @staticmethod
+    def _merge_tag_matches(exact: list[Memory], semantic: list[Memory]) -> list[Memory]:
+        """Merge exact and semantic tag matches, deduplicating by content_hash."""
+        if not semantic:
+            return exact
+        seen = {m.content_hash for m in exact}
+        for m in semantic:
+            if m.content_hash not in seen:
+                exact.append(m)
+                seen.add(m.content_hash)
+        return exact
+
+    async def _search_semantic_tags(self, query: str, fetch_size: int) -> list[Memory]:
+        """Find memories via semantically similar tags (k-NN on tag embeddings).
+
+        Non-fatal: returns empty list on any error.
+        """
+        if not settings.semantic_tag.enabled:
+            return []
+
+        try:
+            from ..utils.tag_embeddings import find_semantic_tags
+
+            # Get tag embeddings (cached in-memory with TTL)
+            index = await self._get_tag_embedding_index()
+            if not index["tags"]:
+                return []
+
+            # Get query embedding via public batch API
+            query_embedding = (await self.storage.generate_embeddings_batch([query]))[0]
+
+            # k-NN match
+            matched_tags = find_semantic_tags(
+                query_embedding,
+                index,
+                threshold=settings.semantic_tag.similarity_threshold,
+                max_tags=settings.semantic_tag.max_tags,
+            )
+
+            if not matched_tags:
+                return []
+
+            logger.debug(f"Semantic tag matches: {matched_tags}")
+            return await self.storage.search_by_tags(tags=matched_tags, match_all=False, limit=fetch_size)
+
+        except Exception as e:
+            logger.warning("Semantic tag matching failed (non-fatal): %s", e, exc_info=True)
+            return []
+
+    async def _get_tag_embedding_index(self) -> dict:
+        """Get or build the tag embedding index, cached via CacheKit."""
+        from ..utils.tag_embeddings import build_tag_embedding_index
+
+        if _CACHEKIT_AVAILABLE:
+            try:
+                raw = await _cached_get_tag_embeddings()
+                return build_tag_embedding_index(raw["tags"], raw["embeddings"])
+            except Exception:
+                logger.debug("CacheKit tag embedding cache miss/error, falling back to direct computation", exc_info=True)
+
+        tags = sorted(await self._get_cached_tags())
+        if not tags:
+            return build_tag_embedding_index([], [])
+        embeddings = await self.storage.generate_embeddings_batch(tags)
+        return build_tag_embedding_index(tags, embeddings)
+
     async def _single_vector_search(
         self,
         query: str,
@@ -218,7 +325,13 @@ class MemoryService:
             match_all=False,
             limit=fetch_size,
         )
-        vector_results, tag_matches = await asyncio.gather(vector_task, tag_task)
+        semantic_tag_task = self._search_semantic_tags(query, fetch_size)
+
+        vector_results, tag_matches, semantic_tag_matches = await asyncio.gather(vector_task, tag_task, semantic_tag_task)
+
+        # Merge exact + semantic tag matches (deduplicate by content_hash)
+        tag_matches = self._merge_tag_matches(tag_matches, semantic_tag_matches)
+
         return combine_results_rrf(vector_results, tag_matches, alpha)
 
     async def _inject_graph_neighbors(
@@ -877,17 +990,13 @@ class MemoryService:
         }
 
     async def _get_cached_tags(self) -> set[str]:
-        """Get all tags with 60-second TTL caching for performance."""
-        now = time.time()
-        if self._tag_cache is not None:
-            cache_time, cached_tags = self._tag_cache
-            if now - cache_time < self._TAG_CACHE_TTL:
-                return cached_tags
-
-        # Cache miss - fetch from storage
-        all_tags = await self.storage.get_all_tags()
-        self._tag_cache = (now, set(all_tags))
-        return self._tag_cache[1]
+        """Get all tags, cached via CacheKit (60s TTL, L1+L2)."""
+        if _CACHEKIT_AVAILABLE:
+            try:
+                return await _cached_fetch_all_tags()
+            except Exception:
+                pass
+        return set(await self.storage.get_all_tags())
 
     async def _retrieve_vector_only(
         self,
@@ -1465,10 +1574,15 @@ class MemoryService:
                         for emb in embeddings
                     ]
                     tag_task = self.storage.search_by_tags(tags=keywords, match_all=False, limit=fetch_size)
+                    semantic_tag_task = self._search_semantic_tags(query, fetch_size)
 
-                    all_results = await asyncio.gather(*search_tasks, tag_task)
-                    vector_result_sets = list(all_results[:-1])
-                    tag_matches = all_results[-1]
+                    all_results = await asyncio.gather(*search_tasks, tag_task, semantic_tag_task)
+                    vector_result_sets = list(all_results[:-2])
+                    tag_matches = all_results[-2]
+                    semantic_tag_matches = all_results[-1]
+
+                    # Merge exact + semantic tag matches
+                    tag_matches = self._merge_tag_matches(tag_matches, semantic_tag_matches)
 
                     # Weights: original query gets 1.5x, concept sub-queries get 1.0x
                     weights = []

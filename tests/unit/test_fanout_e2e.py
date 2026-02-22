@@ -78,6 +78,7 @@ async def test_full_pipeline_returns_wider_results():
         mock_settings.salience.enabled = False
         mock_settings.spaced_repetition.enabled = False
         mock_settings.encoding_context.enabled = False
+        mock_settings.semantic_tag.enabled = False
 
         result = await service.retrieve_memories(
             query="dream cycle OpenClaw consolidation",
