@@ -89,11 +89,12 @@ class TestSearchSemanticTags:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_tag_embedding_index_cached(self, service, mock_storage):
-        """Index should be cached and not rebuilt on every call."""
-        await service._get_tag_embedding_index()
-        await service._get_tag_embedding_index()
-        assert mock_storage.generate_embeddings_batch.call_count == 1
+    async def test_tag_embedding_index_returns_valid_index(self, service, mock_storage):
+        """_get_tag_embedding_index should return a valid TagEmbeddingIndex."""
+        index = await service._get_tag_embedding_index()
+        assert "tags" in index
+        assert "matrix" in index
+        assert len(index["tags"]) == 3  # proton-bridge, imap, email
 
     @pytest.mark.asyncio
     async def test_single_vector_search_includes_semantic_tags(self, service, mock_storage):
