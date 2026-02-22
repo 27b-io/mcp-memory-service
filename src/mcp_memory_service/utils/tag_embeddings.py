@@ -23,7 +23,7 @@ def build_tag_embedding_index(
 ) -> TagEmbeddingIndex:
     """Build a normalised tag embedding index for k-NN search."""
     if not tags:
-        return {"tags": [], "matrix": np.empty((0, 0))}
+        return {"tags": [], "matrix": np.empty((0, 0), dtype=np.float32)}
 
     if len(tags) != len(embeddings):
         raise ValueError(f"tags ({len(tags)}) and embeddings ({len(embeddings)}) must have same length")
