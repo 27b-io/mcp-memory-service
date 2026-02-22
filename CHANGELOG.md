@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.13.0](https://github.com/27b-io/mcp-memory-service/compare/v11.12.1...v11.13.0) (2026-02-22)
+
+
+### Features
+
+* semantic tag matching via embedding k-NN ([#119](https://github.com/27b-io/mcp-memory-service/issues/119)) ([1f9b865](https://github.com/27b-io/mcp-memory-service/commit/1f9b865af2e5ed9dda47d37a6c0dd514809e32f9))
+
 ## [11.12.1](https://github.com/27b-io/mcp-memory-service/compare/v11.12.0...v11.12.1) (2026-02-21)
 
 
