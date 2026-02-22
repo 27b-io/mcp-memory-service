@@ -237,6 +237,18 @@ class MemoryService:
             logger.warning(f"Hebbian boost query failed (non-fatal): {e}")
             return {}
 
+    @staticmethod
+    def _merge_tag_matches(exact: list[Memory], semantic: list[Memory]) -> list[Memory]:
+        """Merge exact and semantic tag matches, deduplicating by content_hash."""
+        if not semantic:
+            return exact
+        seen = {m.content_hash for m in exact}
+        for m in semantic:
+            if m.content_hash not in seen:
+                exact.append(m)
+                seen.add(m.content_hash)
+        return exact
+
     async def _search_semantic_tags(self, query: str, fetch_size: int) -> list[Memory]:
         """Find memories via semantically similar tags (k-NN on tag embeddings).
 
@@ -283,7 +295,7 @@ class MemoryService:
                 raw = await _cached_get_tag_embeddings()
                 return build_tag_embedding_index(raw["tags"], raw["embeddings"])
             except Exception:
-                pass
+                logger.debug("CacheKit tag embedding cache miss/error, falling back to direct computation", exc_info=True)
 
         tags = sorted(await self._get_cached_tags())
         if not tags:
@@ -318,12 +330,7 @@ class MemoryService:
         vector_results, tag_matches, semantic_tag_matches = await asyncio.gather(vector_task, tag_task, semantic_tag_task)
 
         # Merge exact + semantic tag matches (deduplicate by content_hash)
-        if semantic_tag_matches:
-            seen = {m.content_hash for m in tag_matches}
-            for m in semantic_tag_matches:
-                if m.content_hash not in seen:
-                    tag_matches.append(m)
-                    seen.add(m.content_hash)
+        tag_matches = self._merge_tag_matches(tag_matches, semantic_tag_matches)
 
         return combine_results_rrf(vector_results, tag_matches, alpha)
 
@@ -1575,12 +1582,7 @@ class MemoryService:
                     semantic_tag_matches = all_results[-1]
 
                     # Merge exact + semantic tag matches
-                    if semantic_tag_matches:
-                        seen = {m.content_hash for m in tag_matches}
-                        for m in semantic_tag_matches:
-                            if m.content_hash not in seen:
-                                tag_matches.append(m)
-                                seen.add(m.content_hash)
+                    tag_matches = self._merge_tag_matches(tag_matches, semantic_tag_matches)
 
                     # Weights: original query gets 1.5x, concept sub-queries get 1.0x
                     weights = []
