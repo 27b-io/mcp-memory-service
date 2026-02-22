@@ -55,13 +55,16 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
-# The module-level _storage ref is set by MemoryService.__init__ and used
-# by the cached functions.  This is safe because MemoryService is a singleton.
 # ---------------------------------------------------------------------------
 _storage_ref: Any = None
+_service_instance_id: int | None = None  # singleton guard
 
 try:
     from cachekit import cache as _cachekit_cache
+
+    from ..config import SemanticTagSettings as _SemanticTagSettings
+
+    _tag_embedding_ttl = _SemanticTagSettings().cache_ttl
 
     # Use Redis if REDIS_URL is set, otherwise L1-only
     _ck_kwargs: dict[str, Any] = {"serializer": "auto"}
@@ -73,7 +76,7 @@ try:
         """Fetch all tags from storage, cached 60s."""
         return set(await _storage_ref.get_all_tags())
 
-    @_cachekit_cache(ttl=3600, namespace="mcp_memory_tag_embeddings", **_ck_kwargs)
+    @_cachekit_cache(ttl=_tag_embedding_ttl, namespace="mcp_memory_tag_embeddings", **_ck_kwargs)
     async def _cached_get_tag_embeddings() -> dict:
         """Cache raw tag+embedding data; numpy index rebuilt on retrieval."""
         tags = list(await _cached_fetch_all_tags())
@@ -131,9 +134,15 @@ class MemoryService:
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
         self._init_three_tier()
 
-        # Set module-level storage ref for CacheKit-cached functions
-        global _storage_ref  # noqa: PLW0603
+        # Set module-level storage ref for CacheKit-cached functions (singleton guard)
+        global _storage_ref, _service_instance_id  # noqa: PLW0603
+        if _service_instance_id is not None and _service_instance_id != id(self):
+            logger.warning(
+                "Multiple MemoryService instances detected; CacheKit caches will use the latest storage. "
+                "MemoryService is designed as a singleton."
+            )
         _storage_ref = storage
+        _service_instance_id = id(self)
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
