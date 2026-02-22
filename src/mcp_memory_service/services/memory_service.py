@@ -57,7 +57,6 @@ logger = logging.getLogger(__name__)
 # CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
 # ---------------------------------------------------------------------------
 _storage_ref: Any = None
-_service_instance_id: int | None = None  # singleton guard
 
 try:
     from cachekit import cache as _cachekit_cache
@@ -134,15 +133,13 @@ class MemoryService:
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
         self._init_three_tier()
 
-        # Set module-level storage ref for CacheKit-cached functions (singleton guard)
-        global _storage_ref, _service_instance_id  # noqa: PLW0603
-        if _service_instance_id is not None and _service_instance_id != id(self):
+        # Set module-level storage ref for CacheKit-cached functions
+        global _storage_ref  # noqa: PLW0603
+        if _storage_ref is not None and _storage_ref is not storage:
             logger.warning(
-                "Multiple MemoryService instances detected; CacheKit caches will use the latest storage. "
-                "MemoryService is designed as a singleton."
+                "MemoryService re-instantiated with a different storage backend; CacheKit caches will use the new storage."
             )
         _storage_ref = storage
-        _service_instance_id = id(self)
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -288,7 +285,7 @@ class MemoryService:
             except Exception:
                 pass
 
-        tags = list(await self._get_cached_tags())
+        tags = sorted(await self._get_cached_tags())
         if not tags:
             return build_tag_embedding_index([], [])
         embeddings = await self.storage.generate_embeddings_batch(tags)

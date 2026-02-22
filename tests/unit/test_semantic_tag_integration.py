@@ -17,16 +17,16 @@ async def _clear_cachekit_caches():
 
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_get_tag_embeddings.ainvalidate_cache()
-    except (ImportError, AttributeError):
-        pass
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort: cache functions may not exist or Redis may be unavailable
     yield
     try:
         from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_get_tag_embeddings
 
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_get_tag_embeddings.ainvalidate_cache()
-    except (ImportError, AttributeError):
-        pass
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort: cache functions may not exist or Redis may be unavailable
 
 
 @pytest.fixture
