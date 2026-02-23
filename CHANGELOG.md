@@ -8,6 +8,17 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.14.1](https://github.com/27b-io/mcp-memory-service/compare/v11.14.0...v11.14.1) (2026-02-23)
+
+
+### Bug Fixes
+
+* _ensure_payload_indexes() called on every startup (idempotent) + fallback to unordered scroll + Python sort when order_by returns empty. ([30cdd31](https://github.com/27b-io/mcp-memory-service/commit/30cdd317d9d93f5c97ade82e65828cc8e41502e3))
+* match hyphenated tags from adjacent query tokens ([f4957be](https://github.com/27b-io/mcp-memory-service/commit/f4957be47713343a0dd73209c2938ef2a9774255))
+* match hyphenated tags from adjacent query tokens ([#118](https://github.com/27b-io/mcp-memory-service/issues/118)) ([f4957be](https://github.com/27b-io/mcp-memory-service/commit/f4957be47713343a0dd73209c2938ef2a9774255))
+* recent mode returns zero results on existing Qdrant collections ([30cdd31](https://github.com/27b-io/mcp-memory-service/commit/30cdd317d9d93f5c97ade82e65828cc8e41502e3))
+* recent mode returns zero results on existing Qdrant collections ([#124](https://github.com/27b-io/mcp-memory-service/issues/124)) ([30cdd31](https://github.com/27b-io/mcp-memory-service/commit/30cdd317d9d93f5c97ade82e65828cc8e41502e3))
+
 ## [11.14.0](https://github.com/27b-io/mcp-memory-service/compare/v11.13.0...v11.14.0) (2026-02-23)
 
 
