@@ -33,6 +33,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    HasIdCondition,
     HnswConfigDiff,
     MatchAny,
     MatchValue,
@@ -242,6 +243,9 @@ class QdrantStorage(MemoryStorage):
             # Create new collection with model metadata
             await self._create_collection_with_metadata()
 
+        # Ensure payload indexes exist (idempotent — safe for both new and existing collections)
+        await self._ensure_payload_indexes()
+
         self._initialized = True
         logger.info("QdrantStorage initialization complete")
 
@@ -401,7 +405,18 @@ class QdrantStorage(MemoryStorage):
 
         logger.info("Stored model metadata in __metadata__ point")
 
-        # Create payload index on created_at for efficient server-side sorting
+    async def _ensure_payload_indexes(self) -> None:
+        """
+        Ensure required payload indexes exist on the collection.
+
+        Idempotent — Qdrant silently ignores create_payload_index if the
+        index already exists with the same schema.  Called on every startup
+        so that collections created before these indexes were introduced
+        get them retroactively.
+        """
+        loop = asyncio.get_running_loop()
+
+        # created_at FLOAT index — required for order_by in scroll (recent mode)
         await loop.run_in_executor(
             None,
             lambda: self.client.create_payload_index(
@@ -410,7 +425,7 @@ class QdrantStorage(MemoryStorage):
                 field_schema=PayloadSchemaType.FLOAT,
             ),
         )
-        logger.info("Created payload index on 'created_at' for server-side sorting")
+        logger.info("Ensured payload index on 'created_at' (FLOAT)")
 
     async def _collection_exists(self) -> bool:
         """
@@ -1629,7 +1644,8 @@ class QdrantStorage(MemoryStorage):
         """
         Get n most recent memories.
 
-        Uses server-side sorting via Qdrant's order_by for efficiency.
+        Uses server-side sorting via Qdrant's order_by with a fallback to
+        unordered scroll + Python sort when the payload index is missing.
 
         Args:
             n: Number of recent memories to retrieve
@@ -1640,15 +1656,14 @@ class QdrantStorage(MemoryStorage):
         self._check_circuit_breaker()
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
-            # Use server-side sorting - requires payload index on created_at
-            # Request n+1 to account for potential metadata point
+            # Try server-side sorted scroll
             scroll_result = await loop.run_in_executor(
                 None,
                 lambda: self.client.scroll(
                     collection_name=self.collection_name,
-                    limit=n + 1,
+                    limit=n + 1,  # +1 for potential metadata point
                     with_payload=True,
                     with_vectors=False,
                     order_by=OrderBy(key="created_at", direction="desc"),
@@ -1661,26 +1676,20 @@ class QdrantStorage(MemoryStorage):
             for point in points:
                 if point.id == self.METADATA_POINT_ID:
                     continue
-
-                payload = point.payload
-                memory = Memory(
-                    content=payload.get("content", ""),
-                    content_hash=payload.get("content_hash", str(point.id)),
-                    tags=self._normalize_tags(payload.get("tags", [])),
-                    memory_type=payload.get("memory_type"),
-                    metadata=payload.get("metadata", {}),
-                    created_at=payload.get("created_at"),
-                    updated_at=payload.get("updated_at"),
-                    emotional_valence=payload.get("emotional_valence"),
-                    salience_score=float(payload.get("salience_score", 0.0)),
-                    access_count=int(payload.get("access_count", 0)),
-                    access_timestamps=payload.get("access_timestamps", []),
-                    summary=payload.get("summary"),
-                )
-                memories.append(memory)
-
+                memories.append(self._point_to_memory(point))
                 if len(memories) >= n:
                     break
+
+            # Fallback if order_by returned nothing
+            if not memories:
+                total = await self.count_all_memories()
+                if total > 0:
+                    logger.warning(
+                        "order_by scroll returned 0 results but %d memories exist; "
+                        "falling back to unordered scroll for get_recent_memories",
+                        total,
+                    )
+                    memories = await self._scroll_unordered(loop, None, n, 0)
 
             self._record_success()
             return memories
@@ -1720,7 +1729,9 @@ class QdrantStorage(MemoryStorage):
         """
         Get all memories in storage ordered by creation time (newest first).
 
-        Uses server-side sorting via Qdrant's order_by for efficiency.
+        Uses server-side sorting via Qdrant's order_by for efficiency, with a
+        fallback to unordered scroll + Python sort when order_by returns nothing
+        (e.g. missing payload index on legacy collections).
 
         Args:
             limit: Maximum number of memories to return (None for all)
@@ -1739,77 +1750,27 @@ class QdrantStorage(MemoryStorage):
             if memory_type:
                 conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=memory_type)))
             if tags:
-                # Add tag filter with OR logic (match ANY tag)
                 conditions.append(FieldCondition(key="tags", match=MatchAny(any=tags)))
 
             scroll_filter = Filter(must=conditions) if conditions else None
 
-            loop = asyncio.get_event_loop()
-            memories = []
-            skipped = 0
-            start_from = None
-            target_count = limit if limit else 10000  # Reasonable upper bound if no limit
+            loop = asyncio.get_running_loop()
 
-            # Server-side sorted scroll with pagination via start_from
-            while len(memories) < target_count:
-                batch_size = min(100, target_count - len(memories) + (offset - skipped if skipped < offset else 0) + 1)
+            # Try server-side sorted scroll first
+            memories = await self._scroll_ordered(loop, scroll_filter, limit, offset)
 
-                scroll_result = await loop.run_in_executor(
-                    None,
-                    lambda sf=start_from, bs=batch_size: self.client.scroll(
-                        collection_name=self.collection_name,
-                        scroll_filter=scroll_filter,
-                        limit=bs,
-                        with_payload=True,
-                        with_vectors=False,
-                        order_by=OrderBy(key="created_at", direction="desc", start_from=sf),
-                    ),
-                )
-
-                points, _ = scroll_result
-
-                if not points:
-                    break
-
-                for point in points:
-                    if point.id == self.METADATA_POINT_ID:
-                        continue
-
-                    # Handle offset by skipping
-                    if skipped < offset:
-                        skipped += 1
-                        continue
-
-                    payload = point.payload
-                    memory = Memory(
-                        content=payload.get("content", ""),
-                        content_hash=payload.get("content_hash", str(point.id)),
-                        tags=self._normalize_tags(payload.get("tags", [])),
-                        memory_type=payload.get("memory_type"),
-                        metadata=payload.get("metadata", {}),
-                        created_at=payload.get("created_at"),
-                        updated_at=payload.get("updated_at"),
-                        emotional_valence=payload.get("emotional_valence"),
-                        salience_score=float(payload.get("salience_score", 0.0)),
-                        access_count=int(payload.get("access_count", 0)),
-                        access_timestamps=payload.get("access_timestamps", []),
-                        summary=payload.get("summary"),
+            # Fallback: if order_by returned nothing, the payload index may be
+            # missing or created_at values may not be FLOAT.  Use unordered
+            # scroll + Python sort so the caller still gets results.
+            if not memories:
+                total = await self.count_all_memories(memory_type=memory_type, tags=tags)
+                if total > 0:
+                    logger.warning(
+                        "order_by scroll returned 0 results but %d memories exist; "
+                        "falling back to unordered scroll (created_at index may be missing)",
+                        total,
                     )
-                    memories.append(memory)
-
-                    if limit and len(memories) >= limit:
-                        break
-
-                # Get the last created_at for start_from pagination
-                if points:
-                    last_created_at = points[-1].payload.get("created_at")
-                    if last_created_at is not None:
-                        start_from = last_created_at
-                    else:
-                        break  # Can't paginate without timestamps
-
-                if limit and len(memories) >= limit:
-                    break
+                    memories = await self._scroll_unordered(loop, scroll_filter, limit, offset)
 
             self._record_success()
             return memories
@@ -1818,6 +1779,154 @@ class QdrantStorage(MemoryStorage):
             self._record_failure()
             logger.error(f"Failed to get all memories: {e}")
             return []
+
+    async def _scroll_ordered(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        scroll_filter: Filter | None,
+        limit: int | None,
+        offset: int,
+    ) -> list[Memory]:
+        """Scroll with server-side order_by on created_at DESC.
+
+        Uses start_from cursor pagination with must_not ID exclusion to
+        avoid duplicates when multiple points share the same created_at.
+        """
+        memories: list[Memory] = []
+        skipped = 0
+        start_from = None
+        target_count = limit if limit else 10000
+        boundary_ids: list[str | int] = []  # IDs at the cursor boundary
+
+        while len(memories) < target_count:
+            batch_size = min(100, target_count - len(memories) + (offset - skipped if skipped < offset else 0) + 1)
+
+            # Exclude boundary IDs from previous batch to avoid duplicates
+            # (start_from is inclusive per Qdrant docs)
+            effective_filter = scroll_filter
+            if boundary_ids:
+                must_not = [HasIdCondition(has_id=boundary_ids)]
+                if effective_filter is not None:
+                    effective_filter = Filter(
+                        must=effective_filter.must,
+                        must_not=(effective_filter.must_not or []) + must_not,
+                    )
+                else:
+                    effective_filter = Filter(must_not=must_not)
+
+            scroll_result = await loop.run_in_executor(
+                None,
+                lambda sf=start_from, bs=batch_size, ef=effective_filter: self.client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=ef,
+                    limit=bs,
+                    with_payload=True,
+                    with_vectors=False,
+                    order_by=OrderBy(key="created_at", direction="desc", start_from=sf),
+                ),
+            )
+
+            points, _ = scroll_result
+
+            if not points:
+                break
+
+            for point in points:
+                if point.id == self.METADATA_POINT_ID:
+                    continue
+
+                if skipped < offset:
+                    skipped += 1
+                    continue
+
+                memories.append(self._point_to_memory(point))
+
+                if limit and len(memories) >= limit:
+                    break
+
+            # Cursor pagination: track boundary IDs at the last created_at
+            last_created_at = points[-1].payload.get("created_at")
+            if last_created_at is not None:
+                start_from = last_created_at
+                boundary_ids = [p.id for p in points if p.payload.get("created_at") == last_created_at]
+            else:
+                break
+
+            if limit and len(memories) >= limit:
+                break
+
+        return memories
+
+    async def _scroll_unordered(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        scroll_filter: Filter | None,
+        limit: int | None,
+        offset: int,
+    ) -> list[Memory]:
+        """Scroll without order_by, then sort by created_at in Python.
+
+        This is a degraded fallback that only fires when the created_at payload
+        index is missing.  _ensure_payload_indexes fixes the root cause on
+        startup, so this path should only execute once per deployment.  We cap
+        the fetch to limit+offset (not the entire collection) to avoid
+        transferring all payloads over the wire for a one-time fallback.
+        """
+        all_memories: list[Memory] = []
+        next_offset = None
+        target_count = (limit or 10000) + offset  # fetch enough to cover offset
+
+        while len(all_memories) < target_count:
+            batch_size = min(100, target_count - len(all_memories))
+
+            scroll_result = await loop.run_in_executor(
+                None,
+                lambda noff=next_offset, bs=batch_size: self.client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=scroll_filter,
+                    limit=bs,
+                    with_payload=True,
+                    with_vectors=False,
+                    offset=noff,
+                ),
+            )
+
+            points, next_offset = scroll_result
+
+            if not points:
+                break
+
+            for point in points:
+                if point.id == self.METADATA_POINT_ID:
+                    continue
+                all_memories.append(self._point_to_memory(point))
+
+            if next_offset is None:
+                break
+
+        # Sort by created_at descending, normalising mixed timestamp formats
+        all_memories.sort(key=lambda m: self._normalize_timestamp(m.created_at), reverse=True)
+
+        # Apply offset and limit
+        return all_memories[offset : offset + (limit or len(all_memories))]
+
+    def _point_to_memory(self, point) -> Memory:
+        """Convert a Qdrant point to a Memory object."""
+        payload = point.payload
+        return Memory(
+            content=payload.get("content", ""),
+            content_hash=payload.get("content_hash", str(point.id)),
+            tags=self._normalize_tags(payload.get("tags", [])),
+            memory_type=payload.get("memory_type"),
+            metadata=payload.get("metadata", {}),
+            created_at=payload.get("created_at"),
+            updated_at=payload.get("updated_at"),
+            emotional_valence=payload.get("emotional_valence"),
+            salience_score=float(payload.get("salience_score", 0.0)),
+            access_count=int(payload.get("access_count", 0)),
+            access_timestamps=payload.get("access_timestamps", []),
+            summary=payload.get("summary"),
+        )
 
     async def get_by_hash(self, content_hash: str) -> Memory | None:
         """Get a memory by its content hash."""
@@ -1839,26 +1948,8 @@ class QdrantStorage(MemoryStorage):
             if not points:
                 return None
 
-            point = points[0]
-            payload = point.payload
-
-            memory = Memory(
-                content=payload.get("content", ""),
-                content_hash=payload.get("content_hash", content_hash),
-                tags=payload.get("tags", []),
-                memory_type=payload.get("memory_type"),
-                metadata=payload.get("metadata", {}),
-                created_at=payload.get("created_at"),
-                updated_at=payload.get("updated_at"),
-                emotional_valence=payload.get("emotional_valence"),
-                salience_score=float(payload.get("salience_score", 0.0)),
-                access_count=int(payload.get("access_count", 0)),
-                access_timestamps=payload.get("access_timestamps", []),
-                summary=payload.get("summary"),
-            )
-
             self._record_success()
-            return memory
+            return self._point_to_memory(points[0])
 
         except Exception as e:
             self._record_failure()
@@ -1868,6 +1959,8 @@ class QdrantStorage(MemoryStorage):
     async def count_all_memories(self, memory_type: str | None = None, tags: list[str] | None = None) -> int:
         """
         Get total count of memories in storage.
+
+        Uses Qdrant's server-side count API for efficiency.
 
         Args:
             memory_type: Optional filter by memory type
@@ -1879,19 +1972,33 @@ class QdrantStorage(MemoryStorage):
         self._check_circuit_breaker()
 
         try:
-            if not memory_type and not tags:
-                # Fast path: just get collection count
-                loop = asyncio.get_event_loop()
-                collection_info = await loop.run_in_executor(None, lambda: self.client.get_collection(self.collection_name))
-                # Exclude __metadata__ point
-                count = max(0, collection_info.points_count - 1)
-                self._record_success()
-                return count
+            loop = asyncio.get_running_loop()
 
-            # Slow path: filter required
-            memories = await self.get_all_memories(memory_type=memory_type, tags=tags)
+            # Build filter conditions
+            conditions = []
+            if memory_type:
+                conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=memory_type)))
+            if tags:
+                conditions.append(FieldCondition(key="tags", match=MatchAny(any=tags)))
+
+            if not conditions:
+                # Fast path: collection-level points_count (no filter scan)
+                collection_info = await loop.run_in_executor(None, lambda: self.client.get_collection(self.collection_name))
+                count = max(0, collection_info.points_count - 1)  # exclude __metadata__
+            else:
+                # Filtered count via server-side count API
+                count_result = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.count(
+                        collection_name=self.collection_name,
+                        count_filter=Filter(must=conditions),
+                        exact=True,
+                    ),
+                )
+                count = count_result.count
+
             self._record_success()
-            return len(memories)
+            return count
 
         except Exception as e:
             self._record_failure()
