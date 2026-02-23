@@ -144,8 +144,10 @@ def extract_query_keywords(query: str, existing_tags: set[str] | None = None) ->
     Algorithm:
         1. Lowercase and tokenize (split on whitespace/punctuation)
         2. Remove stop words
-        3. If existing_tags provided, filter to only matching tags
-        4. Return unique keywords
+        3. Generate compound candidates by joining adjacent tokens with hyphens
+           (e.g. ["proton", "bridge"] → "proton-bridge") to match hyphenated tags
+        4. If existing_tags provided, filter to only matching tags
+        5. Return unique keywords
 
     Args:
         query: User's search query
@@ -159,6 +161,11 @@ def extract_query_keywords(query: str, existing_tags: set[str] | None = None) ->
 
     # Filter: remove empty strings, stop words, and very short tokens
     keywords = [token for token in tokens if token and token not in STOP_WORDS and len(token) > 1]
+
+    # Generate hyphenated compounds from adjacent token pairs
+    # "proton bridge" → also try "proton-bridge"
+    compounds = [f"{keywords[i]}-{keywords[i + 1]}" for i in range(len(keywords) - 1)]
+    keywords.extend(compounds)
 
     # Deduplicate while preserving order
     seen: set[str] = set()
