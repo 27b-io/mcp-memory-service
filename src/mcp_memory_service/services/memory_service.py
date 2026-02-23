@@ -77,14 +77,12 @@ try:
 
     @_cachekit_cache(ttl=_tag_embedding_ttl, namespace="mcp_memory_tag_embeddings", **_ck_kwargs)
     async def _cached_get_tag_embeddings() -> dict:
-        """Cache the full tag embedding index (tags + normalised numpy matrix)."""
-        from ..utils.tag_embeddings import build_tag_embedding_index
-
-        tags = sorted(await _cached_fetch_all_tags())
+        """Cache raw tag+embedding data; numpy index rebuilt on retrieval."""
+        tags = list(await _cached_fetch_all_tags())
         if not tags:
-            return build_tag_embedding_index([], [])
+            return {"tags": [], "embeddings": []}
         embeddings = await _storage_ref.generate_embeddings_batch(tags)
-        return build_tag_embedding_index(tags, embeddings)
+        return {"tags": tags, "embeddings": [list(e) for e in embeddings]}
 
     _CACHEKIT_AVAILABLE = True
 except ImportError:
@@ -290,13 +288,14 @@ class MemoryService:
 
     async def _get_tag_embedding_index(self) -> dict:
         """Get or build the tag embedding index, cached via CacheKit."""
+        from ..utils.tag_embeddings import build_tag_embedding_index
+
         if _CACHEKIT_AVAILABLE:
             try:
-                return await _cached_get_tag_embeddings()
+                raw = await _cached_get_tag_embeddings()
+                return build_tag_embedding_index(raw["tags"], raw["embeddings"])
             except Exception:
                 logger.debug("CacheKit tag embedding cache miss/error, falling back to direct computation", exc_info=True)
-
-        from ..utils.tag_embeddings import build_tag_embedding_index
 
         tags = sorted(await self._get_cached_tags())
         if not tags:
