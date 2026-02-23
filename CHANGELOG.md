@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.14.0](https://github.com/27b-io/mcp-memory-service/compare/v11.13.0...v11.14.0) (2026-02-23)
+
+
+### Features
+
+* upgrade cachekit to 0.3.1, cache full TagEmbeddingIndex ([#121](https://github.com/27b-io/mcp-memory-service/issues/121)) ([ab26c9d](https://github.com/27b-io/mcp-memory-service/commit/ab26c9d1c23e63d3cb6fe614b9bdd0b9ddfb46cf))
+
 ## [11.13.0](https://github.com/27b-io/mcp-memory-service/compare/v11.12.1...v11.13.0) (2026-02-22)
 
 
