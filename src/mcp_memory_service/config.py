@@ -513,6 +513,39 @@ class InterferenceSettings(BaseSettings):
     )
 
 
+class CrossReferencingSettings(BaseSettings):
+    """Automatic cross-referencing configuration.
+
+    At store time, finds semantically related memories and creates RELATES_TO
+    edges between them. Complements interference detection: interference creates
+    CONTRADICTS edges for opposing memories; cross-referencing creates RELATES_TO
+    edges for related-but-not-contradictory ones.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_CROSS_REF_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable automatic RELATES_TO edge creation at store time")
+
+    similarity_threshold: float = Field(
+        default=0.5,
+        ge=0.3,
+        le=0.9,
+        description="Minimum cosine similarity to consider a memory as a cross-reference candidate",
+    )
+    max_candidates: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum similar memories to check for cross-references per store",
+    )
+
+
 class SalienceSettings(BaseSettings):
     """Salience scoring configuration for emotional tagging and retrieval boosting."""
 
@@ -856,6 +889,7 @@ class Settings(BaseSettings):
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
     interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
+    cross_referencing: CrossReferencingSettings = Field(default_factory=CrossReferencingSettings)
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
     spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)
     encoding_context: EncodingContextSettings = Field(default_factory=EncodingContextSettings)
