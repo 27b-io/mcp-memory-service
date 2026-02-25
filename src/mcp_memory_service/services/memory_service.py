@@ -530,6 +530,64 @@ class MemoryService:
             except Exception as e:
                 logger.warning(f"Failed to create contradiction edge (non-fatal): {e}")
 
+    async def _create_cross_references(
+        self,
+        new_hash: str,
+        content: str,
+        contradiction_hashes: set[str],
+    ) -> None:
+        """
+        Create RELATES_TO edges to similar non-contradicting memories (auto cross-referencing).
+
+        After a memory is stored, finds existing memories above the similarity
+        threshold and creates bidirectional RELATES_TO edges to improve navigation.
+        Skips memories already flagged as contradictions to avoid ambiguous edges.
+
+        Non-blocking, non-fatal — graph failures don't affect storage.
+        """
+        if self._graph is None:
+            return
+
+        config = settings.cross_reference
+        if not config.enabled:
+            return
+
+        try:
+            similar = await self.storage.retrieve(
+                query=content,
+                n_results=config.max_links,
+                min_similarity=config.similarity_threshold,
+            )
+
+            for match in similar:
+                existing_hash = match.memory.content_hash
+                if existing_hash == new_hash:
+                    continue
+                if existing_hash in contradiction_hashes:
+                    continue
+
+                try:
+                    await self._graph.create_typed_edge(
+                        source_hash=new_hash,
+                        target_hash=existing_hash,
+                        relation_type="RELATES_TO",
+                    )
+                    if config.bidirectional:
+                        await self._graph.create_typed_edge(
+                            source_hash=existing_hash,
+                            target_hash=new_hash,
+                            relation_type="RELATES_TO",
+                        )
+                    logger.debug(
+                        f"Cross-reference: {new_hash[:8]} <-> {existing_hash[:8]} "
+                        f"(similarity={match.similarity_score:.2f})"
+                    )
+                except Exception as e:
+                    logger.warning(f"Cross-reference edge creation failed (non-fatal): {e}")
+
+        except Exception as e:
+            logger.warning(f"Cross-reference detection failed (non-fatal): {e}")
+
     async def supersede_memory(
         self,
         old_hash: str,
@@ -1415,6 +1473,10 @@ class MemoryService:
                             interference.contradictions,
                         )
 
+                    # Auto cross-referencing: link similar non-contradicting memories
+                    contradiction_hashes = {c.existing_hash for c in interference.contradictions}
+                    await self._create_cross_references(content_hash, content, contradiction_hashes)
+
                     return result
                 else:
                     # Log failed create operation
@@ -2200,6 +2262,17 @@ class MemoryService:
                 relation_type=relation_type,
             )
             if created:
+                # For RELATES_TO, also create the reverse edge if bidirectional is enabled
+                if relation_type.upper() == "RELATES_TO" and settings.cross_reference.bidirectional:
+                    try:
+                        await self._graph.create_typed_edge(
+                            source_hash=target_hash,
+                            target_hash=source_hash,
+                            relation_type="RELATES_TO",
+                        )
+                    except Exception as e:
+                        logger.debug(f"Reverse RELATES_TO edge creation failed (non-fatal): {e}")
+
                 return {
                     "success": True,
                     "source": source_hash,

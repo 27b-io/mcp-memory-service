@@ -513,6 +513,36 @@ class InterferenceSettings(BaseSettings):
     )
 
 
+class CrossReferenceSettings(BaseSettings):
+    """Automatic cross-reference linking between similar memories at store time."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_CROSS_REFERENCE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable automatic RELATES_TO edge creation at store time")
+    similarity_threshold: float = Field(
+        default=0.85,
+        ge=0.5,
+        le=0.99,
+        description="Minimum cosine similarity to create a RELATES_TO link",
+    )
+    max_links: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum RELATES_TO links to create per memory store",
+    )
+    bidirectional: bool = Field(
+        default=True,
+        description="Also create the reverse RELATES_TO edge (B→A) automatically",
+    )
+
+
 class SalienceSettings(BaseSettings):
     """Salience scoring configuration for emotional tagging and retrieval boosting."""
 
@@ -856,6 +886,7 @@ class Settings(BaseSettings):
     oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
     interference: InterferenceSettings = Field(default_factory=InterferenceSettings)
+    cross_reference: CrossReferenceSettings = Field(default_factory=CrossReferenceSettings)
     salience: SalienceSettings = Field(default_factory=SalienceSettings)
     spaced_repetition: SpacedRepetitionSettings = Field(default_factory=SpacedRepetitionSettings)
     encoding_context: EncodingContextSettings = Field(default_factory=EncodingContextSettings)

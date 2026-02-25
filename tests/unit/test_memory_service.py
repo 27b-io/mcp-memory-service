@@ -490,9 +490,10 @@ class TestRelationOperations:
         assert result["source"] == "hash_a"
         assert result["target"] == "hash_b"
         assert result["relation_type"] == "RELATES_TO"
-        mock_graph_client.create_typed_edge.assert_called_once_with(
-            source_hash="hash_a", target_hash="hash_b", relation_type="RELATES_TO"
-        )
+        # RELATES_TO creates both directions (bidirectional by default)
+        calls = [c.kwargs for c in mock_graph_client.create_typed_edge.call_args_list]
+        assert {"source_hash": "hash_a", "target_hash": "hash_b", "relation_type": "RELATES_TO"} in calls
+        assert {"source_hash": "hash_b", "target_hash": "hash_a", "relation_type": "RELATES_TO"} in calls
 
     @pytest.mark.asyncio
     async def test_create_relation_nodes_missing(self, service_with_graph, mock_graph_client):
