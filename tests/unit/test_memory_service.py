@@ -901,3 +901,236 @@ class TestFilteredBelowThreshold:
 
         assert len(result["memories"]) == 1
         assert "filtered_below_threshold" not in result
+
+
+# =============================================================================
+# Batch Operations Tests
+# =============================================================================
+
+
+class TestBatchStoreMemory:
+    """Tests for MemoryService.batch_store_memory."""
+
+    @pytest.mark.asyncio
+    async def test_empty_batch_returns_success(self, memory_service):
+        result = await memory_service.batch_store_memory([])
+        assert result["success"] is True
+        assert result["created"] == 0
+        assert result["failed"] == 0
+        assert result["results"] == []
+        assert result["rolled_back"] is False
+
+    @pytest.mark.asyncio
+    async def test_successful_batch_stores_all(self, memory_service, mock_storage):
+        mock_storage.store.return_value = (True, "Stored")
+        mock_storage.retrieve.return_value = []
+        mock_storage.get_by_hash = AsyncMock(return_value=None)
+
+        memories = [{"content": f"Memory {i}", "tags": ["batch"], "memory_type": "note", "metadata": {}} for i in range(3)]
+
+        # Patch store_memory to return a predictable result
+        from unittest.mock import patch
+
+        store_results = [
+            {
+                "success": True,
+                "memory": {"content_hash": f"hash_{i}", "content": f"Memory {i}", "tags": ["batch"], "memory_type": "note"},
+            }
+            for i in range(3)
+        ]
+        with patch.object(memory_service, "store_memory", side_effect=store_results):
+            result = await memory_service.batch_store_memory(memories)
+
+        assert result["success"] is True
+        assert result["created"] == 3
+        assert result["failed"] == 0
+        assert result["rolled_back"] is False
+        assert len(result["results"]) == 3
+        assert all(r["success"] for r in result["results"])
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_triggers_rollback(self, memory_service, mock_storage):
+        store_results = [
+            {"success": True, "memory": {"content_hash": "hash_0", "content": "Memory 0", "tags": [], "memory_type": None}},
+            {"success": False, "error": "Storage error"},
+        ]
+        mock_storage.delete.return_value = (True, "Deleted")
+
+        from unittest.mock import patch
+
+        with patch.object(memory_service, "store_memory", side_effect=store_results):
+            result = await memory_service.batch_store_memory(
+                [
+                    {"content": "Memory 0", "tags": [], "memory_type": None, "metadata": {}},
+                    {"content": "Memory 1", "tags": [], "memory_type": None, "metadata": {}},
+                ]
+            )
+
+        assert result["success"] is False
+        assert result["created"] == 0
+        assert result["failed"] == 2
+        assert result["rolled_back"] is True
+        # hash_0 should have been rolled back
+        mock_storage.delete.assert_called_once_with("hash_0")
+
+    @pytest.mark.asyncio
+    async def test_exception_during_store_triggers_rollback(self, memory_service, mock_storage):
+        mock_storage.delete.return_value = (True, "Deleted")
+
+        from unittest.mock import patch
+
+        async def failing_store(**kwargs):
+            if kwargs["content"] == "Memory 1":
+                raise RuntimeError("Unexpected error")
+            return {
+                "success": True,
+                "memory": {"content_hash": "hash_0", "content": "Memory 0", "tags": [], "memory_type": None},
+            }
+
+        with patch.object(memory_service, "store_memory", side_effect=failing_store):
+            result = await memory_service.batch_store_memory(
+                [
+                    {"content": "Memory 0", "tags": [], "memory_type": None, "metadata": {}},
+                    {"content": "Memory 1", "tags": [], "memory_type": None, "metadata": {}},
+                ]
+            )
+
+        assert result["success"] is False
+        assert result["rolled_back"] is True
+        mock_storage.delete.assert_called_once_with("hash_0")
+
+
+class TestBatchDeleteMemory:
+    """Tests for MemoryService.batch_delete_memory."""
+
+    @pytest.mark.asyncio
+    async def test_all_deletions_succeed(self, memory_service, mock_storage):
+        mock_storage.delete.return_value = (True, "Deleted")
+
+        result = await memory_service.batch_delete_memory(["hash_1", "hash_2", "hash_3"])
+
+        assert result["success"] is True
+        assert result["deleted"] == 3
+        assert result["failed"] == 0
+        assert all(r["success"] for r in result["results"])
+
+    @pytest.mark.asyncio
+    async def test_partial_deletion_failure_reported(self, memory_service, mock_storage):
+        # First delete succeeds, second fails
+        mock_storage.delete.side_effect = [
+            (True, "Deleted"),
+            (False, "Not found"),
+        ]
+
+        result = await memory_service.batch_delete_memory(["hash_1", "hash_2"])
+
+        assert result["success"] is False
+        assert result["deleted"] == 1
+        assert result["failed"] == 1
+        assert result["results"][0]["success"] is True
+        assert result["results"][1]["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_empty_list_returns_success(self, memory_service):
+        result = await memory_service.batch_delete_memory([])
+        assert result["success"] is True
+        assert result["deleted"] == 0
+        assert result["failed"] == 0
+
+
+class TestBatchUpdateMemory:
+    """Tests for MemoryService.batch_update_memory."""
+
+    @pytest.mark.asyncio
+    async def test_all_updates_succeed(self, memory_service, mock_storage):
+        mock_storage.update_memory_metadata = AsyncMock(return_value=(True, "Updated"))
+
+        updates = [
+            {"content_hash": "hash_1", "tags": ["new_tag"]},
+            {"content_hash": "hash_2", "memory_type": "reference"},
+        ]
+        result = await memory_service.batch_update_memory(updates)
+
+        assert result["success"] is True
+        assert result["updated"] == 2
+        assert result["failed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_no_op_item_counts_as_success(self, memory_service):
+        # Item with no fields to update is a no-op success
+        result = await memory_service.batch_update_memory(
+            [
+                {"content_hash": "hash_1"},
+            ]
+        )
+        assert result["success"] is True
+        assert result["updated"] == 1
+        assert result["failed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_partial_update_failure_reported(self, memory_service, mock_storage):
+        mock_storage.update_memory_metadata = AsyncMock(
+            side_effect=[
+                (True, "Updated"),
+                (False, "Not found"),
+            ]
+        )
+
+        updates = [
+            {"content_hash": "hash_1", "tags": ["a"]},
+            {"content_hash": "hash_2", "tags": ["b"]},
+        ]
+        result = await memory_service.batch_update_memory(updates)
+
+        assert result["success"] is False
+        assert result["updated"] == 1
+        assert result["failed"] == 1
+
+
+class TestBatchTagOperation:
+    """Tests for MemoryService.batch_tag_operation."""
+
+    @pytest.mark.asyncio
+    async def test_add_tags_to_memories(self, memory_service, mock_storage, sample_memory):
+        mock_storage.get_by_hash = AsyncMock(return_value=sample_memory)
+        mock_storage.update_memory_metadata = AsyncMock(return_value=(True, "Updated"))
+
+        result = await memory_service.batch_tag_operation(
+            content_hashes=["test_hash_123"],
+            add_tags=["new_tag"],
+        )
+
+        assert result["success"] is True
+        assert result["updated"] == 1
+        # Verify the update included the new tag
+        call_args = mock_storage.update_memory_metadata.call_args
+        assert "new_tag" in call_args.kwargs["updates"]["tags"]
+
+    @pytest.mark.asyncio
+    async def test_remove_tags_from_memories(self, memory_service, mock_storage, sample_memory):
+        mock_storage.get_by_hash = AsyncMock(return_value=sample_memory)
+        mock_storage.update_memory_metadata = AsyncMock(return_value=(True, "Updated"))
+
+        # sample_memory has tags ["test", "sample"]
+        result = await memory_service.batch_tag_operation(
+            content_hashes=["test_hash_123"],
+            remove_tags=["test"],
+        )
+
+        assert result["success"] is True
+        call_args = mock_storage.update_memory_metadata.call_args
+        assert "test" not in call_args.kwargs["updates"]["tags"]
+        assert "sample" in call_args.kwargs["updates"]["tags"]
+
+    @pytest.mark.asyncio
+    async def test_memory_not_found_reported_as_failure(self, memory_service, mock_storage):
+        mock_storage.get_by_hash = AsyncMock(return_value=None)
+
+        result = await memory_service.batch_tag_operation(
+            content_hashes=["missing_hash"],
+            add_tags=["tag"],
+        )
+
+        assert result["success"] is False
+        assert result["failed"] == 1
+        assert result["results"][0]["error"] == "Memory not found"
