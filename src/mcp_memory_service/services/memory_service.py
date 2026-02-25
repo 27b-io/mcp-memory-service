@@ -2461,6 +2461,238 @@ class MemoryService:
                 "error": f"Failed to find similar memories: {str(e)}",
             }
 
+    # ---------------------------------------------------------------------------
+    # Batch Operations
+    # ---------------------------------------------------------------------------
+
+    async def _rollback_batch_stores(self, content_hashes: list[str]) -> None:
+        """Delete successfully-stored memories to rollback a failed batch create."""
+        for hash_ in content_hashes:
+            try:
+                await self.storage.delete(hash_)
+                logger.debug(f"Rolled back stored memory: {hash_}")
+            except Exception as e:
+                logger.warning(f"Rollback failed for {hash_}: {e}")
+
+    async def batch_store_memory(
+        self,
+        memories: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Store multiple memories transactionally.
+
+        If any memory fails to store, all previously stored memories in the batch
+        are deleted (rolled back). Max 100 memories per batch.
+
+        Args:
+            memories: List of memory dicts with keys: content, tags, memory_type,
+                      metadata, client_hostname, summary
+
+        Returns:
+            Dict with success, created, failed, results (per-item), rolled_back
+        """
+        if not memories:
+            return {"success": True, "created": 0, "failed": 0, "results": [], "rolled_back": False}
+
+        results: list[dict[str, Any]] = []
+        stored_hashes: list[str] = []
+
+        for i, mem in enumerate(memories):
+            try:
+                result = await self.store_memory(
+                    content=mem["content"],
+                    tags=mem.get("tags", []),
+                    memory_type=mem.get("memory_type"),
+                    metadata=mem.get("metadata", {}),
+                    client_hostname=mem.get("client_hostname"),
+                    summary=mem.get("summary"),
+                )
+                if result["success"]:
+                    # Extract content_hash from either single or chunked response
+                    if "memory" in result:
+                        hash_ = result["memory"]["content_hash"]
+                    else:
+                        hash_ = result["memories"][0]["content_hash"]
+                    stored_hashes.append(hash_)
+                    results.append({"index": i, "success": True, "content_hash": hash_})
+                else:
+                    # Failure: rollback all previously stored
+                    await self._rollback_batch_stores(stored_hashes)
+                    results.append({"index": i, "success": False, "error": result.get("error", "Store failed")})
+                    for j in range(i + 1, len(memories)):
+                        results.append({"index": j, "success": False, "error": "Not attempted — batch rolled back"})
+                    return {
+                        "success": False,
+                        "created": 0,
+                        "failed": len(memories),
+                        "results": results,
+                        "rolled_back": True,
+                    }
+            except Exception as e:
+                await self._rollback_batch_stores(stored_hashes)
+                results.append({"index": i, "success": False, "error": str(e)})
+                for j in range(i + 1, len(memories)):
+                    results.append({"index": j, "success": False, "error": "Not attempted — batch rolled back"})
+                return {
+                    "success": False,
+                    "created": 0,
+                    "failed": len(memories),
+                    "results": results,
+                    "rolled_back": True,
+                }
+
+        return {
+            "success": True,
+            "created": len(stored_hashes),
+            "failed": 0,
+            "results": results,
+            "rolled_back": False,
+        }
+
+    async def batch_delete_memory(
+        self,
+        content_hashes: list[str],
+    ) -> dict[str, Any]:
+        """
+        Delete multiple memories. Best-effort: continues on individual failures.
+
+        Args:
+            content_hashes: List of content hashes to delete (max 100)
+
+        Returns:
+            Dict with success (True only if all deleted), deleted, failed, results
+        """
+        results: list[dict[str, Any]] = []
+        deleted_count = 0
+
+        for i, hash_ in enumerate(content_hashes):
+            result = await self.delete_memory(hash_)
+            if result["success"]:
+                deleted_count += 1
+                results.append({"index": i, "success": True, "content_hash": hash_})
+            else:
+                results.append(
+                    {
+                        "index": i,
+                        "success": False,
+                        "content_hash": hash_,
+                        "error": result.get("error", "Delete failed"),
+                    }
+                )
+
+        return {
+            "success": deleted_count == len(content_hashes),
+            "deleted": deleted_count,
+            "failed": len(content_hashes) - deleted_count,
+            "results": results,
+        }
+
+    async def batch_update_memory(
+        self,
+        updates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Update metadata for multiple memories. Best-effort: continues on individual failures.
+
+        Args:
+            updates: List of dicts with content_hash plus optional tags, memory_type, metadata
+
+        Returns:
+            Dict with success (True only if all updated), updated, failed, results
+        """
+        results: list[dict[str, Any]] = []
+        updated_count = 0
+
+        for i, item in enumerate(updates):
+            hash_ = item["content_hash"]
+            update_fields: dict[str, Any] = {}
+            if "tags" in item and item["tags"] is not None:
+                update_fields["tags"] = item["tags"]
+            if "memory_type" in item and item["memory_type"] is not None:
+                update_fields["memory_type"] = item["memory_type"]
+            if "metadata" in item and item["metadata"] is not None:
+                update_fields["metadata"] = item["metadata"]
+
+            if not update_fields:
+                # No-op: nothing to update
+                updated_count += 1
+                results.append({"index": i, "success": True, "content_hash": hash_})
+                continue
+
+            try:
+                success, message = await self.storage.update_memory_metadata(
+                    content_hash=hash_,
+                    updates=update_fields,
+                    preserve_timestamps=True,
+                )
+                if success:
+                    updated_count += 1
+                    results.append({"index": i, "success": True, "content_hash": hash_})
+                else:
+                    results.append({"index": i, "success": False, "content_hash": hash_, "error": message})
+            except Exception as e:
+                results.append({"index": i, "success": False, "content_hash": hash_, "error": str(e)})
+
+        return {
+            "success": updated_count == len(updates),
+            "updated": updated_count,
+            "failed": len(updates) - updated_count,
+            "results": results,
+        }
+
+    async def batch_tag_operation(
+        self,
+        content_hashes: list[str],
+        add_tags: list[str] | None = None,
+        remove_tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add and/or remove tags from multiple memories. Best-effort.
+
+        Args:
+            content_hashes: Memories to update (max 100)
+            add_tags: Tags to add to each memory
+            remove_tags: Tags to remove from each memory
+
+        Returns:
+            Dict with success, updated, failed, results
+        """
+        results: list[dict[str, Any]] = []
+        updated_count = 0
+
+        for i, hash_ in enumerate(content_hashes):
+            try:
+                memory = await self.storage.get_by_hash(hash_)
+                if not memory:
+                    results.append({"index": i, "success": False, "content_hash": hash_, "error": "Memory not found"})
+                    continue
+
+                current_tags = set(memory.tags)
+                if add_tags:
+                    current_tags.update(add_tags)
+                if remove_tags:
+                    current_tags -= set(remove_tags)
+
+                success, message = await self.storage.update_memory_metadata(
+                    content_hash=hash_,
+                    updates={"tags": list(current_tags)},
+                    preserve_timestamps=True,
+                )
+                if success:
+                    updated_count += 1
+                    results.append({"index": i, "success": True, "content_hash": hash_})
+                else:
+                    results.append({"index": i, "success": False, "content_hash": hash_, "error": message})
+            except Exception as e:
+                results.append({"index": i, "success": False, "content_hash": hash_, "error": str(e)})
+
+        return {
+            "success": updated_count == len(content_hashes),
+            "updated": updated_count,
+            "failed": len(content_hashes) - updated_count,
+            "results": results,
+        }
+
     def _format_memory_response(self, memory: Memory) -> MemoryResult:
         """
         Format a memory object for API response.
