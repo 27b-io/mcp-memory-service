@@ -28,6 +28,7 @@ from ..models.memory import Memory
 from ..models.search_log import SearchLog
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
+from ..utils.cross_references import filter_cross_reference_candidates
 from ..utils.emotional_analysis import analyze_emotion
 from ..utils.encoding_context import (
     EncodingContext,
@@ -529,6 +530,66 @@ class MemoryService:
                 )
             except Exception as e:
                 logger.warning(f"Failed to create contradiction edge (non-fatal): {e}")
+
+    async def _detect_cross_references(
+        self,
+        content: str,
+        exclude_hashes: set[str] | None = None,
+    ) -> list[str]:
+        """
+        Find existing memories that should receive RELATES_TO edges from new content.
+
+        Searches for semantically similar memories at a lower threshold than
+        contradiction detection, then delegates filtering to
+        filter_cross_reference_candidates (which excludes self-reference and
+        already-detected contradictions).
+
+        Non-blocking to store: cross-reference failures are logged and ignored.
+
+        Args:
+            content: The new memory content to check
+            exclude_hashes: Content hashes to skip (e.g., known contradictions)
+
+        Returns:
+            List of content hashes to create RELATES_TO edges to
+        """
+        config = settings.cross_referencing
+        if not config.enabled or self._graph is None:
+            return []
+
+        content_hash = generate_content_hash(content)
+        try:
+            similar = await self.storage.retrieve(
+                query=content,
+                n_results=config.max_candidates,
+                min_similarity=config.similarity_threshold,
+            )
+            return filter_cross_reference_candidates(content_hash, similar, exclude_hashes=exclude_hashes)
+        except Exception as e:
+            logger.warning(f"Cross-reference detection failed (non-fatal): {e}")
+            return []
+
+    async def _create_relates_to_edges(self, new_hash: str, related_hashes: list[str]) -> None:
+        """
+        Create RELATES_TO edges from new_hash to each related_hash.
+
+        Non-blocking, non-fatal — graph failures don't affect storage.
+        A single directed edge is created per pair; get_typed_edges(direction="both")
+        traverses it from either end, providing bidirectional navigation.
+        """
+        if self._graph is None or not related_hashes:
+            return
+
+        for related_hash in related_hashes:
+            try:
+                await self._graph.create_typed_edge(
+                    source_hash=new_hash,
+                    target_hash=related_hash,
+                    relation_type="RELATES_TO",
+                )
+                logger.info(f"Cross-reference edge: {new_hash[:8]} -> {related_hash[:8]}")
+            except Exception as e:
+                logger.warning(f"Failed to create cross-reference edge (non-fatal): {e}")
 
     async def supersede_memory(
         self,
@@ -1369,6 +1430,14 @@ class MemoryService:
                             interference.contradictions,
                         )
 
+                # Detect cross-references against the full content
+                contradiction_hashes = {c.existing_hash for c in interference.contradictions}
+                cross_refs = await self._detect_cross_references(content, exclude_hashes=contradiction_hashes)
+                if cross_refs:
+                    result["cross_references"] = cross_refs
+                    for mem_dict in stored_memories:
+                        await self._create_relates_to_edges(mem_dict["content_hash"], cross_refs)
+
                 return result
             else:
                 # Store as single memory
@@ -1414,6 +1483,13 @@ class MemoryService:
                             content_hash,
                             interference.contradictions,
                         )
+
+                    # Detect cross-references with existing memories
+                    contradiction_hashes = {c.existing_hash for c in interference.contradictions}
+                    cross_refs = await self._detect_cross_references(content, exclude_hashes=contradiction_hashes)
+                    if cross_refs:
+                        result["cross_references"] = cross_refs
+                        await self._create_relates_to_edges(content_hash, cross_refs)
 
                     return result
                 else:
