@@ -1724,7 +1724,13 @@ class QdrantStorage(MemoryStorage):
         return [r.memory for r in results]
 
     async def get_all_memories(
-        self, limit: int = None, offset: int = 0, memory_type: str | None = None, tags: list[str] | None = None
+        self,
+        limit: int = None,
+        offset: int = 0,
+        memory_type: str | None = None,
+        tags: list[str] | None = None,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> list[Memory]:
         """
         Get all memories in storage ordered by creation time (newest first).
@@ -1738,6 +1744,8 @@ class QdrantStorage(MemoryStorage):
             offset: Number of memories to skip (for pagination)
             memory_type: Optional filter by memory type
             tags: Optional filter by tags (matches ANY of the provided tags)
+            start_timestamp: Filter memories created at or after this timestamp
+            end_timestamp: Filter memories created at or before this timestamp
 
         Returns:
             List of Memory objects ordered by created_at DESC
@@ -1751,6 +1759,10 @@ class QdrantStorage(MemoryStorage):
                 conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=memory_type)))
             if tags:
                 conditions.append(FieldCondition(key="tags", match=MatchAny(any=tags)))
+            if start_timestamp is not None:
+                conditions.append(FieldCondition(key="created_at", range=Range(gte=start_timestamp)))
+            if end_timestamp is not None:
+                conditions.append(FieldCondition(key="created_at", range=Range(lte=end_timestamp)))
 
             scroll_filter = Filter(must=conditions) if conditions else None
 
@@ -1956,7 +1968,13 @@ class QdrantStorage(MemoryStorage):
             logger.error(f"Failed to get memory by hash {content_hash}: {e}")
             return None
 
-    async def count_all_memories(self, memory_type: str | None = None, tags: list[str] | None = None) -> int:
+    async def count_all_memories(
+        self,
+        memory_type: str | None = None,
+        tags: list[str] | None = None,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
+    ) -> int:
         """
         Get total count of memories in storage.
 
@@ -1965,6 +1983,8 @@ class QdrantStorage(MemoryStorage):
         Args:
             memory_type: Optional filter by memory type
             tags: Optional filter by tags (memories matching ANY of the tags)
+            start_timestamp: Filter memories created at or after this timestamp
+            end_timestamp: Filter memories created at or before this timestamp
 
         Returns:
             Total number of memories
@@ -1980,6 +2000,10 @@ class QdrantStorage(MemoryStorage):
                 conditions.append(FieldCondition(key="memory_type", match=MatchValue(value=memory_type)))
             if tags:
                 conditions.append(FieldCondition(key="tags", match=MatchAny(any=tags)))
+            if start_timestamp is not None:
+                conditions.append(FieldCondition(key="created_at", range=Range(gte=start_timestamp)))
+            if end_timestamp is not None:
+                conditions.append(FieldCondition(key="created_at", range=Range(lte=end_timestamp)))
 
             if not conditions:
                 # Fast path: collection-level points_count (no filter scan)

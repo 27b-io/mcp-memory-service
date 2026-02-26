@@ -342,7 +342,13 @@ class MemoryStorage(ABC):
         return await self.retrieve(query, n_results, tags, memory_type, min_similarity, offset)
 
     async def get_all_memories(
-        self, limit: int = None, offset: int = 0, memory_type: str | None = None, tags: list[str] | None = None
+        self,
+        limit: int = None,
+        offset: int = 0,
+        memory_type: str | None = None,
+        tags: list[str] | None = None,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> list[Memory]:
         """
         Get all memories in storage ordered by creation time (newest first).
@@ -352,6 +358,8 @@ class MemoryStorage(ABC):
             offset: Number of memories to skip (for pagination)
             memory_type: Optional filter by memory type
             tags: Optional filter by tags (matches ANY of the provided tags)
+            start_timestamp: Filter memories created at or after this timestamp
+            end_timestamp: Filter memories created at or before this timestamp
 
         Returns:
             List of Memory objects ordered by created_at DESC, optionally filtered by type and tags
@@ -394,13 +402,21 @@ class MemoryStorage(ABC):
         """
         return await self.search_by_tag(tags=tags, match_all=match_all, limit=limit, offset=offset)
 
-    async def count_all_memories(self, memory_type: str | None = None, tags: list[str] | None = None) -> int:
+    async def count_all_memories(
+        self,
+        memory_type: str | None = None,
+        tags: list[str] | None = None,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
+    ) -> int:
         """
         Get total count of memories in storage.
 
         Args:
             memory_type: Optional filter by memory type
             tags: Optional filter by tags (memories matching ANY of the tags)
+            start_timestamp: Filter memories created at or after this timestamp
+            end_timestamp: Filter memories created at or before this timestamp
 
         Returns:
             Total number of memories, optionally filtered by type and/or tags

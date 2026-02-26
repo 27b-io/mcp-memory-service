@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
 from ..config import (
@@ -1300,6 +1300,188 @@ class MemoryService:
                 "page": page,
                 "page_size": page_size,
             }
+
+    async def query_time_range(
+        self,
+        time_expr: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Retrieve memories within a date/time range, with optional NL expression support.
+
+        Accepts either a natural language time expression ("last week", "3 days ago")
+        or explicit ISO-format start/end dates. Returns paginated, chronologically
+        sorted memories with the resolved time range in the response.
+
+        Args:
+            time_expr: Natural language time expression (parsed via time_parser)
+            start_date: Explicit start date in YYYY-MM-DD or ISO format
+            end_date: Explicit end date in YYYY-MM-DD or ISO format
+            tags: Optional tag filter (matches ANY of the provided tags)
+            memory_type: Optional memory type filter
+            page: Page number (1-indexed)
+            page_size: Number of results per page
+
+        Returns:
+            Dictionary with memories, pagination metadata, and resolved time_range
+        """
+        from ..utils.time_parser import parse_time_expression
+
+        try:
+            start_timestamp: float | None = None
+            end_timestamp: float | None = None
+
+            # Resolve time bounds — NL expression takes precedence over explicit dates
+            if time_expr:
+                start_timestamp, end_timestamp = parse_time_expression(time_expr)
+            else:
+                if start_date:
+                    dt = datetime.fromisoformat(start_date)
+                    start_timestamp = datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc).timestamp()
+                if end_date:
+                    dt = datetime.fromisoformat(end_date)
+                    end_timestamp = datetime(dt.year, dt.month, dt.day, 23, 59, 59, tzinfo=timezone.utc).timestamp()
+
+            # Require at least one bound
+            if start_timestamp is None and end_timestamp is None:
+                return {
+                    "error": "At least one time bound is required: provide time_expr, start_date, or end_date.",
+                    "memories": [],
+                    "page": page,
+                    "page_size": page_size,
+                }
+
+            offset = (page - 1) * page_size
+
+            memories = await self.storage.get_all_memories(
+                limit=page_size,
+                offset=offset,
+                memory_type=memory_type,
+                tags=tags,
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
+            )
+
+            total = await self.storage.count_all_memories(
+                memory_type=memory_type,
+                tags=tags,
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
+            )
+
+            results = [self._format_memory_response(m) for m in memories]
+
+            # Build human-readable time range summary
+            time_range: dict[str, Any] = {}
+            if start_timestamp is not None:
+                time_range["start"] = datetime.fromtimestamp(start_timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
+            if end_timestamp is not None:
+                time_range["end"] = datetime.fromtimestamp(end_timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
+
+            return {
+                "memories": results,
+                "time_range": time_range,
+                **self._build_pagination_metadata(total, page, page_size),
+            }
+
+        except Exception as e:
+            logger.exception("Unexpected error in query_time_range: %s", e)
+            return {
+                "error": f"Failed to query time range: {str(e)}",
+                "memories": [],
+                "page": page,
+                "page_size": page_size,
+            }
+
+    async def temporal_analysis(
+        self,
+        bucket: str = "day",
+        lookback_days: int = 30,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Analyse the temporal distribution of memories over a lookback window.
+
+        Groups memories into time buckets (day/week/month/year) and returns
+        counts per bucket plus summary statistics. Useful for understanding
+        when memories are typically created and detecting activity patterns.
+
+        Args:
+            bucket: Bucket granularity — "day", "week", "month", or "year"
+            lookback_days: How many days to look back from now (default: 30)
+            tags: Optional tag filter
+            memory_type: Optional memory type filter
+
+        Returns:
+            Dictionary with buckets list (sorted oldest-first), total count, and metadata
+        """
+        _VALID_BUCKETS = {"day", "week", "month", "year"}
+        if bucket not in _VALID_BUCKETS:
+            return {"error": f"Invalid bucket '{bucket}'. Valid: {', '.join(sorted(_VALID_BUCKETS))}"}
+
+        try:
+            now = datetime.now(timezone.utc)
+            start_ts = (now - timedelta(days=lookback_days)).timestamp()
+            end_ts = now.timestamp()
+
+            # Fetch all memories in the window (no pagination — analysis needs full set)
+            memories = await self.storage.get_all_memories(
+                limit=None,
+                offset=0,
+                memory_type=memory_type,
+                tags=tags,
+                start_timestamp=start_ts,
+                end_timestamp=end_ts,
+            )
+
+            # Group memories into buckets
+            bucket_counts: dict[str, int] = {}
+            for memory in memories:
+                ts = memory.created_at
+                if ts is None:
+                    continue
+                dt = datetime.fromtimestamp(ts, timezone.utc)
+                key = self._bucket_key(dt, bucket)
+                bucket_counts[key] = bucket_counts.get(key, 0) + 1
+
+            # Sort buckets chronologically
+            sorted_buckets = [{"date": k, "count": v} for k, v in sorted(bucket_counts.items())]
+
+            return {
+                "buckets": sorted_buckets,
+                "total": len(memories),
+                "bucket": bucket,
+                "lookback_days": lookback_days,
+            }
+
+        except Exception as e:
+            logger.exception("Unexpected error in temporal_analysis: %s", e)
+            return {
+                "error": f"Failed to analyse temporal distribution: {str(e)}",
+                "buckets": [],
+                "total": 0,
+                "bucket": bucket,
+                "lookback_days": lookback_days,
+            }
+
+    @staticmethod
+    def _bucket_key(dt: datetime, bucket: str) -> str:
+        """Return a sortable string key for a datetime and bucket granularity."""
+        if bucket == "day":
+            return dt.strftime("%Y-%m-%d")
+        elif bucket == "week":
+            # ISO week: YYYY-WXX
+            return dt.strftime("%G-W%V")
+        elif bucket == "month":
+            return dt.strftime("%Y-%m")
+        else:  # year
+            return dt.strftime("%Y")
 
     async def store_memory(
         self,

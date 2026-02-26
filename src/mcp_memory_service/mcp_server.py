@@ -625,6 +625,129 @@ async def merge_duplicates(
     return _inject_latency(result, _t0)
 
 
+@mcp.tool()
+async def memory_timeline(
+    ctx: Context,
+    time_expr: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    tags: str | list[str] | None = None,
+    memory_type: str | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> str | dict[str, Any]:
+    """Retrieve memories within a date/time range, sorted chronologically.
+
+    Accepts either a natural language time expression or explicit ISO date bounds.
+    Returns memories in TOON format with the resolved time window.
+
+    Args:
+        time_expr: Natural language time expression, e.g. "last week", "3 days ago",
+            "this month", "between 2026-01-01 and 2026-01-31"
+        start_date: Explicit start date in YYYY-MM-DD or ISO format (e.g. "2026-01-01")
+        end_date: Explicit end date in YYYY-MM-DD or ISO format (e.g. "2026-01-31")
+        tags: Optional tag filter — accepts ["tag1","tag2"] or "tag1,tag2"
+        memory_type: Optional memory type filter (note/decision/task/reference)
+        page: Page number (1-indexed, default: 1)
+        page_size: Results per page (default: 10, max: 100)
+
+    Returns:
+        TOON-formatted string with matching memories, or error dict if no time bounds given.
+    """
+    _t0 = time.perf_counter()
+
+    # M3: clamp pagination params
+    page = max(1, page)
+    page_size = max(1, min(page_size, 100))
+
+    if not time_expr and not start_date and not end_date:
+        return _inject_latency(
+            {"error": "Provide time_expr (e.g. 'last week') or start_date/end_date to bound the query."},
+            _t0,
+        )
+
+    normalized_tags = _normalize_tags(tags) or None
+    memory_service = ctx.request_context.lifespan_context.memory_service
+
+    result = await memory_service.query_time_range(
+        time_expr=time_expr,
+        start_date=start_date,
+        end_date=end_date,
+        tags=normalized_tags,
+        memory_type=memory_type,
+        page=page,
+        page_size=page_size,
+    )
+
+    if "error" in result:
+        return _inject_latency({"error": result["error"]}, _t0)
+
+    pagination = {
+        "page": result.get("page", page),
+        "total": result.get("total", 0),
+        "page_size": result.get("page_size", page_size),
+        "has_more": result.get("has_more", False),
+        "total_pages": result.get("total_pages", 0),
+    }
+    toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
+
+    # Prepend resolved time range as a comment for transparency
+    time_range = result.get("time_range", {})
+    if time_range:
+        start_str = time_range.get("start", "")
+        end_str = time_range.get("end", "")
+        header = f"# time_range={start_str}/{end_str}\n" if start_str or end_str else ""
+        toon_output = header + toon_output
+
+    return _inject_latency(toon_output, _t0)
+
+
+@mcp.tool()
+async def temporal_analysis(
+    ctx: Context,
+    bucket: str = "week",
+    lookback_days: int = 30,
+    tags: str | list[str] | None = None,
+    memory_type: str | None = None,
+) -> dict[str, Any]:
+    """Analyse when memories were created over a lookback window.
+
+    Groups memories into time buckets and returns a distribution showing
+    activity patterns. Useful for understanding memory density over time,
+    identifying quiet periods, or discovering when most work happened.
+
+    Args:
+        bucket: Bucket granularity — "day", "week", "month", or "year" (default: "week")
+        lookback_days: How many days back to scan (default: 30, max: 365)
+        tags: Optional tag filter — accepts ["tag1","tag2"] or "tag1,tag2"
+        memory_type: Optional memory type filter (note/decision/task/reference)
+
+    Returns:
+        {buckets: [{date, count}, ...], total, bucket, lookback_days}
+        Buckets are sorted chronologically (oldest first).
+    """
+    _t0 = time.perf_counter()
+
+    _VALID_BUCKETS = {"day", "week", "month", "year"}
+    if bucket not in _VALID_BUCKETS:
+        return _inject_latency(
+            {"error": f"Invalid bucket '{bucket}'. Valid: {', '.join(sorted(_VALID_BUCKETS))}"},
+            _t0,
+        )
+
+    lookback_days = max(1, min(lookback_days, 365))
+    normalized_tags = _normalize_tags(tags) or None
+    memory_service = ctx.request_context.lifespan_context.memory_service
+
+    result = await memory_service.temporal_analysis(
+        bucket=bucket,
+        lookback_days=lookback_days,
+        tags=normalized_tags,
+        memory_type=memory_type,
+    )
+    return _inject_latency(result, _t0)
+
+
 # =============================================================================
 # THREE-TIER MEMORY (server-side automation, not exposed as tools by default)
 # =============================================================================
