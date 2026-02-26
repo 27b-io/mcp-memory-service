@@ -8,6 +8,22 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.15.0](https://github.com/27b-io/mcp-memory-service/compare/v11.14.1...v11.15.0) (2026-02-26)
+
+
+### Features
+
+* add batch memory operations API (mm-7cd9y) ([#126](https://github.com/27b-io/mcp-memory-service/issues/126)) ([b8f5270](https://github.com/27b-io/mcp-memory-service/commit/b8f5270eca7f493b633203730643437494bfbdf1))
+* automatic memory cross-referencing via RELATES_TO edges ([#128](https://github.com/27b-io/mcp-memory-service/issues/128)) ([7545f19](https://github.com/27b-io/mcp-memory-service/commit/7545f19b30f1f66c5b15370fc4daee8effdeeacd))
+* memory deduplication engine with fuzzy matching and merge strategies (mm-qweac) ([#130](https://github.com/27b-io/mcp-memory-service/issues/130)) ([d37c6eb](https://github.com/27b-io/mcp-memory-service/commit/d37c6eb326c3050a6bdc3645426b60effaf4d7d9))
+* persistent tag embeddings via dedicated Qdrant collection ([5623816](https://github.com/27b-io/mcp-memory-service/commit/562381686344e6918ad35b4296f23527e254b7b5))
+* persistent tag embeddings via dedicated Qdrant collection ([#132](https://github.com/27b-io/mcp-memory-service/issues/132)) ([5623816](https://github.com/27b-io/mcp-memory-service/commit/562381686344e6918ad35b4296f23527e254b7b5))
+
+
+### Bug Fixes
+
+* recent mode returns zero results on existing Qdrant collections ([#129](https://github.com/27b-io/mcp-memory-service/issues/129)) ([2312048](https://github.com/27b-io/mcp-memory-service/commit/231204866fd2568f4b6c7f2d016fb1bd4b66474f)), closes [#123](https://github.com/27b-io/mcp-memory-service/issues/123)
+
 ## [11.14.1](https://github.com/27b-io/mcp-memory-service/compare/v11.14.0...v11.14.1) (2026-02-23)
 
 
