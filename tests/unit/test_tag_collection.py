@@ -170,3 +170,141 @@ class TestUpsertTagEmbeddings:
         """Should not call anything for empty tag list."""
         await qdrant_storage._upsert_tag_embeddings([])
         qdrant_storage.client.upsert.assert_not_called()
+
+
+class TestCleanupOrphanedTags:
+    @pytest.mark.asyncio
+    async def test_removes_tag_with_zero_references(self, qdrant_storage):
+        """Should delete tag embedding and evict from _known_tags when no memories use it."""
+        qdrant_storage._known_tags = {"python", "docker"}
+
+        # "python" has 0 remaining memories, "docker" still has 1
+        count_python = MagicMock()
+        count_python.count = 0
+        count_docker = MagicMock()
+        count_docker.count = 1
+        qdrant_storage.client.count.side_effect = [count_python, count_docker]
+
+        await qdrant_storage._cleanup_orphaned_tags(["python", "docker"])
+
+        qdrant_storage.client.delete.assert_called_once()
+        call_kwargs = qdrant_storage.client.delete.call_args.kwargs
+        assert call_kwargs["collection_name"] == "memories_tags"
+        assert call_kwargs["points_selector"] == [_tag_to_uuid("python")]
+        assert qdrant_storage._known_tags == {"docker"}
+
+    @pytest.mark.asyncio
+    async def test_noop_when_all_tags_still_referenced(self, qdrant_storage):
+        """Should not delete anything when every tag is still used by at least one memory."""
+        qdrant_storage._known_tags = {"python", "docker"}
+
+        count_ok = MagicMock()
+        count_ok.count = 2
+        qdrant_storage.client.count.side_effect = [count_ok, count_ok]
+
+        await qdrant_storage._cleanup_orphaned_tags(["python", "docker"])
+
+        qdrant_storage.client.delete.assert_not_called()
+        assert qdrant_storage._known_tags == {"python", "docker"}
+
+    @pytest.mark.asyncio
+    async def test_noop_for_empty_tag_list(self, qdrant_storage):
+        """Should short-circuit immediately for empty input."""
+        await qdrant_storage._cleanup_orphaned_tags([])
+        qdrant_storage.client.count.assert_not_called()
+        qdrant_storage.client.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_removes_all_when_all_orphaned(self, qdrant_storage):
+        """Should delete all provided tags when all have zero references."""
+        qdrant_storage._known_tags = {"python", "docker"}
+
+        count_zero = MagicMock()
+        count_zero.count = 0
+        qdrant_storage.client.count.side_effect = [count_zero, count_zero]
+
+        await qdrant_storage._cleanup_orphaned_tags(["python", "docker"])
+
+        qdrant_storage.client.delete.assert_called_once()
+        call_kwargs = qdrant_storage.client.delete.call_args.kwargs
+        assert call_kwargs["collection_name"] == "memories_tags"
+        deleted_ids = set(call_kwargs["points_selector"])
+        assert deleted_ids == {_tag_to_uuid("python"), _tag_to_uuid("docker")}
+        assert qdrant_storage._known_tags == set()
+
+
+class TestDeleteWithTagCleanup:
+    @pytest.mark.asyncio
+    async def test_delete_cleans_up_orphaned_tags(self, qdrant_storage):
+        """delete() should remove orphaned tag embeddings after successful deletion."""
+        content_hash = "a" * 64
+
+        # Memory point with tags
+        point_mock = MagicMock()
+        point_mock.payload = {"tags": ["python", "docker"]}
+        qdrant_storage.client.retrieve.return_value = [point_mock]
+
+        with patch.object(qdrant_storage, "_cleanup_orphaned_tags", new_callable=AsyncMock) as mock_cleanup:
+            success, _ = await qdrant_storage.delete(content_hash)
+
+        assert success is True
+        mock_cleanup.assert_called_once_with(["python", "docker"])
+
+    @pytest.mark.asyncio
+    async def test_delete_no_cleanup_when_no_tags(self, qdrant_storage):
+        """delete() should not call cleanup when the deleted memory had no tags."""
+        content_hash = "b" * 64
+
+        point_mock = MagicMock()
+        point_mock.payload = {"tags": []}
+        qdrant_storage.client.retrieve.return_value = [point_mock]
+
+        with patch.object(qdrant_storage, "_cleanup_orphaned_tags", new_callable=AsyncMock) as mock_cleanup:
+            success, _ = await qdrant_storage.delete(content_hash)
+
+        assert success is True
+        mock_cleanup.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_cleanup_failure_is_nonfatal(self, qdrant_storage):
+        """delete() should succeed even when tag cleanup raises an exception."""
+        content_hash = "c" * 64
+
+        point_mock = MagicMock()
+        point_mock.payload = {"tags": ["python"]}
+        qdrant_storage.client.retrieve.return_value = [point_mock]
+
+        with patch.object(qdrant_storage, "_cleanup_orphaned_tags", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+            success, _ = await qdrant_storage.delete(content_hash)
+
+        assert success is True
+
+
+class TestDeleteByTagWithTagCleanup:
+    @pytest.mark.asyncio
+    async def test_delete_by_tag_cleans_up_all_collected_tags(self, qdrant_storage):
+        """delete_by_tag() should collect all unique tags from deleted points and clean up."""
+        p1 = MagicMock()
+        p1.payload = {"tags": ["python", "docker"]}
+        p2 = MagicMock()
+        p2.payload = {"tags": ["python", "redis"]}
+        qdrant_storage.client.scroll.return_value = ([p1, p2], None)
+
+        with patch.object(qdrant_storage, "_cleanup_orphaned_tags", new_callable=AsyncMock) as mock_cleanup:
+            count, _ = await qdrant_storage.delete_by_tag("python")
+
+        assert count == 2
+        called_tags = set(mock_cleanup.call_args[0][0])
+        assert called_tags == {"python", "docker", "redis"}
+
+    @pytest.mark.asyncio
+    async def test_delete_by_tag_cleanup_nonfatal(self, qdrant_storage):
+        """delete_by_tag() should succeed even when tag cleanup fails."""
+        p1 = MagicMock()
+        p1.payload = {"tags": ["python"]}
+        qdrant_storage.client.scroll.return_value = ([p1], None)
+
+        with patch.object(qdrant_storage, "_cleanup_orphaned_tags", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+            count, _ = await qdrant_storage.delete_by_tag("python")
+
+        assert count == 1
