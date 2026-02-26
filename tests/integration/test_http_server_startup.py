@@ -25,8 +25,8 @@ def test_http_server_starts():
     """
     from mcp_memory_service.web.app import app
 
-    client = TestClient(app)
-    response = client.get("/api/health")
+    with TestClient(app) as client:
+        response = client.get("/api/health")
 
     assert response.status_code == 200
     data = response.json()
@@ -86,8 +86,8 @@ def test_health_endpoint_responds():
     """
     from mcp_memory_service.web.app import app
 
-    client = TestClient(app)
-    response = client.get("/api/health")
+    with TestClient(app) as client:
+        response = client.get("/api/health")
 
     assert response.status_code == 200
     data = response.json()
@@ -111,10 +111,9 @@ def test_cors_middleware_configured():
     """
     from mcp_memory_service.web.app import app
 
-    client = TestClient(app)
-
-    # Test CORS with actual GET request (OPTIONS may not be supported on all endpoints)
-    response = client.get("/api/health", headers={"Origin": "http://localhost:3000"})
+    with TestClient(app) as client:
+        # Test CORS with actual GET request (OPTIONS may not be supported on all endpoints)
+        response = client.get("/api/health", headers={"Origin": "http://localhost:3000"})
 
     # Should have CORS headers (FastAPI's CORSMiddleware adds these)
     assert response.status_code == 200
