@@ -149,6 +149,7 @@ class QdrantStorage(MemoryStorage):
         self.storage_path = storage_path
         self.embedding_model = embedding_model
         self.collection_name = collection_name
+        self.tag_collection_name = f"{collection_name}_tags"
         self.quantization_enabled = quantization_enabled
         self.distance_metric = distance_metric
 
@@ -160,6 +161,9 @@ class QdrantStorage(MemoryStorage):
 
         # Model tracking
         self._vector_size: int | None = None  # Detected from embedding model
+
+        # In-memory set of tags already persisted in the tag collection
+        self._known_tags: set[str] = set()
 
         # Qdrant client (initialized in initialize())
         self.client = None
@@ -245,6 +249,9 @@ class QdrantStorage(MemoryStorage):
 
         # Ensure payload indexes exist (idempotent — safe for both new and existing collections)
         await self._ensure_payload_indexes()
+
+        # Ensure the tag embedding collection exists and is populated
+        await self._ensure_tag_collection()
 
         self._initialized = True
         logger.info("QdrantStorage initialization complete")
@@ -426,6 +433,143 @@ class QdrantStorage(MemoryStorage):
             ),
         )
         logger.info("Ensured payload index on 'created_at' (FLOAT)")
+
+    # ------------------------------------------------------------------
+    # Tag embedding collection — persistent, incremental tag index
+    # ------------------------------------------------------------------
+
+    def _tag_to_uuid(self, tag: str) -> str:
+        """Deterministic UUID for a tag string."""
+        hex_digest = hashlib.sha256(tag.encode("utf-8")).hexdigest()[:32]
+        return str(uuid.UUID(hex_digest))
+
+    async def _ensure_tag_collection(self) -> None:
+        """Create the tag embedding collection if it doesn't exist, and populate _known_tags.
+
+        On first run against an existing memories collection, performs a one-time
+        migration: reads all unique tags from memories, encodes them, and upserts
+        into the tag collection.
+        """
+        loop = asyncio.get_running_loop()
+
+        collections = await loop.run_in_executor(None, self.client.get_collections)
+        existing = {col.name for col in collections.collections}
+
+        if self.tag_collection_name not in existing:
+            await loop.run_in_executor(
+                None,
+                lambda: self.client.create_collection(
+                    collection_name=self.tag_collection_name,
+                    vectors_config=VectorParams(size=self._vector_size, distance=Distance.COSINE),
+                ),
+            )
+            logger.info(
+                "Created tag embedding collection '%s' (vector_size=%d)",
+                self.tag_collection_name,
+                self._vector_size,
+            )
+
+            # One-time migration: populate from existing memories
+            all_tags = await self.get_all_tags()
+            if all_tags:
+                logger.info("Migrating %d existing tags to tag collection", len(all_tags))
+                await self._upsert_tag_embeddings(all_tags)
+        else:
+            # Collection exists — load known tags from it
+            await self._load_known_tags(loop)
+
+    async def _load_known_tags(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Populate _known_tags from the existing tag collection."""
+        offset = None
+        while True:
+            points, next_offset = await loop.run_in_executor(
+                None,
+                lambda off=offset: self.client.scroll(
+                    collection_name=self.tag_collection_name,
+                    limit=100,
+                    offset=off,
+                    with_payload=True,
+                    with_vectors=False,
+                ),
+            )
+            for point in points:
+                tag = point.payload.get("tag")
+                if tag:
+                    self._known_tags.add(tag)
+            if next_offset is None:
+                break
+            offset = next_offset
+        logger.info("Loaded %d known tags from tag collection", len(self._known_tags))
+
+    async def _upsert_tag_embeddings(self, tags: list[str]) -> None:
+        """Encode tags with 'passage' prompt and upsert into the tag collection."""
+        if not tags:
+            return
+
+        embeddings = await self.generate_embeddings_batch(tags, prompt_name="passage")
+        if len(embeddings) != len(tags):
+            raise ValueError(f"Embedding batch returned {len(embeddings)} vectors for {len(tags)} tags")
+
+        now = datetime.now().timestamp()
+        points = [
+            PointStruct(
+                id=self._tag_to_uuid(tag),
+                vector=emb,
+                payload={"tag": tag, "created_at": now},
+            )
+            for tag, emb in zip(tags, embeddings)
+        ]
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: self.client.upsert(collection_name=self.tag_collection_name, points=points),
+        )
+        self._known_tags.update(tags)
+        logger.debug("Upserted %d tag embeddings", len(tags))
+
+    async def index_new_tags(self, tags: list[str]) -> None:
+        """Index only tags not already in the tag collection.
+
+        Called by MemoryService after storing a memory. Fast no-op when
+        all tags are already known.
+        """
+        new_tags = [t for t in tags if t not in self._known_tags]
+        if new_tags:
+            await self._upsert_tag_embeddings(new_tags)
+
+    async def search_similar_tags(
+        self,
+        query_embedding: list[float],
+        threshold: float = 0.5,
+        max_tags: int = 10,
+    ) -> list[str]:
+        """Find semantically similar tags via native Qdrant k-NN search.
+
+        Args:
+            query_embedding: Pre-computed query embedding (with 'query' prompt)
+            threshold: Minimum cosine similarity
+            max_tags: Maximum tags to return
+
+        Returns:
+            List of tag strings sorted by descending similarity
+        """
+        if not self._known_tags:
+            return []
+
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: self.client.search(
+                collection_name=self.tag_collection_name,
+                query_vector=query_embedding,
+                limit=max_tags,
+                score_threshold=threshold,
+                with_payload=True,
+            ),
+        )
+
+        return [hit.payload["tag"] for hit in results if "tag" in hit.payload]
 
     async def _collection_exists(self) -> bool:
         """
@@ -721,6 +865,17 @@ class QdrantStorage(MemoryStorage):
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, lambda: self.client.upsert(collection_name=self.collection_name, points=[point]))
 
+            # Index any new tags into the tag embedding collection (non-fatal)
+            if memory.tags:
+                try:
+                    await self.index_new_tags(memory.tags)
+                except Exception as tag_err:
+                    logger.warning(
+                        "Tag indexing failed for memory %s (non-fatal): %s",
+                        memory.content_hash[:8],
+                        tag_err,
+                    )
+
             # Record success for circuit breaker
             self._record_success()
 
@@ -882,11 +1037,13 @@ class QdrantStorage(MemoryStorage):
             logger.error(f"Failed to retrieve memories from Qdrant: {e}")
             return []
 
-    async def generate_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+    async def generate_embeddings_batch(self, texts: list[str], prompt_name: str = "query") -> list[list[float]]:
         """Generate embeddings for multiple texts in a single batched forward pass.
 
         Args:
             texts: List of texts to embed
+            prompt_name: Prompt prefix for instruction-tuned models
+                         ("query" for search queries, "passage" for documents)
 
         Returns:
             List of embedding vectors
@@ -911,12 +1068,12 @@ class QdrantStorage(MemoryStorage):
         prompts = getattr(model, "prompts", None) or {}
 
         def _encode_batch():
-            if "query" in prompts:
+            if prompt_name in prompts:
                 try:
-                    return model.encode(texts, prompt_name="query", convert_to_tensor=False)
+                    return model.encode(texts, prompt_name=prompt_name, convert_to_tensor=False)
                 except TypeError as exc:
                     if "unexpected keyword argument" in str(exc) and "prompt_name" in str(exc):
-                        prefix = prompts["query"]
+                        prefix = prompts[prompt_name]
                         prefixed = [f"{prefix}{t}" for t in texts]
                         return model.encode(prefixed, convert_to_tensor=False)
                     raise
@@ -1792,14 +1949,23 @@ class QdrantStorage(MemoryStorage):
         Uses start_from cursor pagination with must_not ID exclusion to
         avoid duplicates when multiple points share the same created_at.
         """
+        if limit is not None and limit <= 0:
+            return []
+
         memories: list[Memory] = []
         skipped = 0
         start_from = None
-        target_count = limit if limit else 10000
         boundary_ids: list[str | int] = []  # IDs at the cursor boundary
+        page_size = 100
 
-        while len(memories) < target_count:
-            batch_size = min(100, target_count - len(memories) + (offset - skipped if skipped < offset else 0) + 1)
+        while limit is None or len(memories) < limit:
+            # When limit is set, only request as many as we still need
+            # (plus offset slack for points we haven't skipped past yet).
+            if limit is not None:
+                remaining = limit - len(memories) + max(0, offset - skipped) + 1
+                batch_size = min(page_size, remaining)
+            else:
+                batch_size = page_size
 
             # Exclude boundary IDs from previous batch to avoid duplicates
             # (start_from is inclusive per Qdrant docs)
@@ -1841,7 +2007,7 @@ class QdrantStorage(MemoryStorage):
 
                 memories.append(self._point_to_memory(point))
 
-                if limit and len(memories) >= limit:
+                if limit is not None and len(memories) >= limit:
                     break
 
             # Cursor pagination: track boundary IDs at the last created_at
@@ -1850,9 +2016,6 @@ class QdrantStorage(MemoryStorage):
                 start_from = last_created_at
                 boundary_ids = [p.id for p in points if p.payload.get("created_at") == last_created_at]
             else:
-                break
-
-            if limit and len(memories) >= limit:
                 break
 
         return memories
@@ -1872,9 +2035,13 @@ class QdrantStorage(MemoryStorage):
         the fetch to limit+offset (not the entire collection) to avoid
         transferring all payloads over the wire for a one-time fallback.
         """
+        if limit is not None and limit <= 0:
+            return []
+
         all_memories: list[Memory] = []
         next_offset = None
-        target_count = (limit or 10000) + offset  # fetch enough to cover offset
+        # Cap total fetch: limit+offset when bounded, 10000 as a safety net otherwise
+        target_count = (limit + offset) if limit is not None else (10000 + offset)
 
         while len(all_memories) < target_count:
             batch_size = min(100, target_count - len(all_memories))
@@ -1908,7 +2075,8 @@ class QdrantStorage(MemoryStorage):
         all_memories.sort(key=lambda m: self._normalize_timestamp(m.created_at), reverse=True)
 
         # Apply offset and limit
-        return all_memories[offset : offset + (limit or len(all_memories))]
+        end = offset + limit if limit is not None else len(all_memories)
+        return all_memories[offset:end]
 
     def _point_to_memory(self, point) -> Memory:
         """Convert a Qdrant point to a Memory object."""

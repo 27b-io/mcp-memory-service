@@ -63,10 +63,6 @@ _storage_ref: Any = None
 try:
     from cachekit import cache as _cachekit_cache
 
-    from ..config import SemanticTagSettings as _SemanticTagSettings
-
-    _tag_embedding_ttl = _SemanticTagSettings().cache_ttl
-
     # Use Redis if REDIS_URL is set, otherwise L1-only
     _ck_kwargs: dict[str, Any] = {"serializer": "auto"}
     if not os.environ.get("REDIS_URL") and not os.environ.get("CACHEKIT_REDIS_URL"):
@@ -76,17 +72,6 @@ try:
     async def _cached_fetch_all_tags() -> set[str]:
         """Fetch all tags from storage, cached 60s."""
         return set(await _storage_ref.get_all_tags())
-
-    @_cachekit_cache(ttl=_tag_embedding_ttl, namespace="mcp_memory_tag_embeddings", **_ck_kwargs)
-    async def _cached_get_tag_embeddings() -> dict:
-        """Cache the full tag embedding index (tags + normalised numpy matrix)."""
-        from ..utils.tag_embeddings import build_tag_embedding_index
-
-        tags = sorted(await _cached_fetch_all_tags())
-        if not tags:
-            return build_tag_embedding_index([], [])
-        embeddings = await _storage_ref.generate_embeddings_batch(tags)
-        return build_tag_embedding_index(tags, embeddings)
 
     _CACHEKIT_AVAILABLE = True
 except ImportError:
@@ -254,7 +239,7 @@ class MemoryService:
         return exact
 
     async def _search_semantic_tags(self, query: str, fetch_size: int) -> list[Memory]:
-        """Find memories via semantically similar tags (k-NN on tag embeddings).
+        """Find memories via semantically similar tags (Qdrant k-NN on tag collection).
 
         Non-fatal: returns empty list on any error.
         """
@@ -262,20 +247,12 @@ class MemoryService:
             return []
 
         try:
-            from ..utils.tag_embeddings import find_semantic_tags
-
-            # Get tag embeddings (cached in-memory with TTL)
-            index = await self._get_tag_embedding_index()
-            if not index["tags"]:
-                return []
-
-            # Get query embedding via public batch API
+            # Generate query embedding (uses 'query' prompt)
             query_embedding = (await self.storage.generate_embeddings_batch([query]))[0]
 
-            # k-NN match
-            matched_tags = find_semantic_tags(
+            # Native Qdrant k-NN search on the tag collection
+            matched_tags = await self.storage.search_similar_tags(
                 query_embedding,
-                index,
                 threshold=settings.semantic_tag.similarity_threshold,
                 max_tags=settings.semantic_tag.max_tags,
             )
@@ -289,22 +266,6 @@ class MemoryService:
         except Exception as e:
             logger.warning("Semantic tag matching failed (non-fatal): %s", e, exc_info=True)
             return []
-
-    async def _get_tag_embedding_index(self) -> dict:
-        """Get or build the tag embedding index, cached via CacheKit."""
-        if _CACHEKIT_AVAILABLE:
-            try:
-                return await _cached_get_tag_embeddings()
-            except Exception:
-                logger.debug("CacheKit tag embedding cache miss/error, falling back to direct computation", exc_info=True)
-
-        from ..utils.tag_embeddings import build_tag_embedding_index
-
-        tags = sorted(await self._get_cached_tags())
-        if not tags:
-            return build_tag_embedding_index([], [])
-        embeddings = await self.storage.generate_embeddings_batch(tags)
-        return build_tag_embedding_index(tags, embeddings)
 
     async def _single_vector_search(
         self,
