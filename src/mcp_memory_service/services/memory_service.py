@@ -29,6 +29,7 @@ from ..models.search_log import SearchLog
 from ..storage.base import MemoryStorage
 from ..utils.content_splitter import split_content
 from ..utils.cross_references import filter_cross_reference_candidates
+from ..utils.deduplication import build_duplicate_groups
 from ..utils.emotional_analysis import analyze_emotion
 from ..utils.encoding_context import (
     EncodingContext,
@@ -2792,4 +2793,154 @@ class MemoryService:
             "emotional_valence": memory.emotional_valence,
             "salience_score": memory.salience_score,
             "encoding_context": memory.encoding_context,
+        }
+
+    # -------------------------------------------------------------------------
+    # Deduplication
+    # -------------------------------------------------------------------------
+
+    async def find_duplicates(
+        self,
+        similarity_threshold: float = 0.95,
+        limit: int = 500,
+        fuzzy_threshold: float | None = None,
+        strategy: str = "keep_newest",
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Scan memories for near-duplicates using embedding cosine similarity.
+
+        Loads up to *limit* memories, generates embeddings in a single batch
+        pass, then uses the deduplication engine to cluster similar memories.
+
+        Args:
+            similarity_threshold: Cosine similarity threshold (default 0.95).
+                Memories above this threshold are considered duplicates.
+            limit: Maximum number of memories to scan (default 500).
+                Higher values are slower but more thorough.
+            fuzzy_threshold: Optional fuzzy text similarity gate (0.0–1.0).
+                When set, both embedding AND text similarity must meet their
+                respective thresholds to flag a pair as duplicate.
+            strategy: Canonical selection strategy for groups.
+                One of "keep_newest", "keep_oldest", "keep_most_accessed".
+            include_superseded: Whether to include already-superseded memories
+                in the scan (default False).
+
+        Returns:
+            Dict with:
+                success: bool
+                groups: list of duplicate group dicts
+                total_memories_scanned: int
+                total_duplicates_found: int
+        """
+        try:
+            # Load memories — newest first, capped at limit
+            memories = await self.storage.get_all_memories(limit=limit)
+
+            if not include_superseded:
+                memories = [m for m in memories if not (m.metadata or {}).get("superseded_by")]
+
+            if len(memories) < 2:
+                return {
+                    "success": True,
+                    "groups": [],
+                    "total_memories_scanned": len(memories),
+                    "total_duplicates_found": 0,
+                }
+
+            # Batch-embed all content in a single model forward pass
+            contents = [m.content for m in memories]
+            embeddings = await self.storage.generate_embeddings_batch(contents)
+
+            # Run the deduplication pipeline
+            groups = build_duplicate_groups(
+                memories=memories,
+                embeddings=embeddings,
+                similarity_threshold=similarity_threshold,
+                fuzzy_threshold=fuzzy_threshold,
+                strategy=strategy,
+            )
+
+            total_dupes = sum(len(g.hashes) - 1 for g in groups)  # non-canonical count
+
+            return {
+                "success": True,
+                "groups": [g.to_dict() for g in groups],
+                "total_memories_scanned": len(memories),
+                "total_duplicates_found": total_dupes,
+            }
+
+        except Exception as e:
+            logger.error(f"find_duplicates failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def merge_duplicate_group(
+        self,
+        canonical_hash: str,
+        duplicate_hashes: list[str],
+        reason: str = "Merged by deduplication engine",
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Supersede all duplicate memories in favour of the canonical one.
+
+        Each memory in *duplicate_hashes* is marked as superseded by
+        *canonical_hash* using the existing supersede_memory pipeline (which
+        sets metadata, creates SUPERSEDES graph edges, and excludes the
+        superseded memories from future searches).
+
+        Args:
+            canonical_hash: Content hash of the memory to keep
+            duplicate_hashes: Content hashes of the memories to supersede
+            reason: Human-readable reason stored in supersession metadata
+            dry_run: If True, validate inputs but do not modify storage
+
+        Returns:
+            Dict with success status, superseded list, and any errors
+        """
+        if canonical_hash in duplicate_hashes:
+            duplicate_hashes = [h for h in duplicate_hashes if h != canonical_hash]
+
+        if not duplicate_hashes:
+            return {"success": True, "superseded": [], "dry_run": dry_run, "message": "No duplicates to merge"}
+
+        # Verify canonical exists
+        canonical = await self.storage.get_memory_by_hash(canonical_hash)
+        if canonical is None:
+            return {"success": False, "error": f"Canonical memory not found: {canonical_hash}"}
+
+        if dry_run:
+            # Validate all duplicates exist without modifying storage
+            missing = []
+            for h in duplicate_hashes:
+                if await self.storage.get_memory_by_hash(h) is None:
+                    missing.append(h)
+            return {
+                "success": True,
+                "dry_run": True,
+                "canonical_hash": canonical_hash,
+                "would_supersede": duplicate_hashes,
+                "missing_hashes": missing,
+            }
+
+        superseded: list[str] = []
+        errors: list[str] = []
+
+        for dup_hash in duplicate_hashes:
+            result = await self.supersede_memory(
+                old_hash=dup_hash,
+                new_hash=canonical_hash,
+                reason=reason,
+            )
+            if result.get("success"):
+                superseded.append(dup_hash)
+            else:
+                errors.append(f"{dup_hash}: {result.get('error', 'unknown error')}")
+
+        return {
+            "success": len(errors) == 0,
+            "canonical_hash": canonical_hash,
+            "superseded": superseded,
+            "errors": errors,
+            "dry_run": False,
         }

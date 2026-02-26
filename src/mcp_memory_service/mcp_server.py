@@ -543,6 +543,88 @@ async def memory_contradictions(
     return _inject_latency(result, _t0)
 
 
+@mcp.tool()
+async def find_duplicates(
+    ctx: Context,
+    similarity_threshold: float = 0.95,
+    limit: int = 500,
+    strategy: str = "keep_newest",
+) -> dict[str, Any]:
+    """Scan memories for near-duplicates using embedding cosine similarity.
+
+    Loads up to *limit* memories, embeds them in a single batch pass, then
+    clusters semantically similar pairs into duplicate groups. Each group
+    includes a recommended canonical memory based on the chosen strategy.
+
+    Call merge_duplicates to supersede the non-canonical memories once you
+    have reviewed the groups.
+
+    Args:
+        similarity_threshold: Cosine similarity threshold (default 0.95).
+            Memories above this are considered duplicates. Lower values
+            (e.g. 0.90) find more aggressive duplicates; higher values
+            (e.g. 0.99) find only near-exact restatements.
+        limit: Maximum number of memories to scan (default 500).
+            Larger values are more thorough but slower.
+        strategy: Canonical selection — which memory to keep:
+            "keep_newest" (default), "keep_oldest", "keep_most_accessed"
+
+    Returns:
+        {success, groups: [{hashes, canonical_hash, max_similarity, size}],
+         total_memories_scanned, total_duplicates_found}
+    """
+    _t0 = time.perf_counter()
+    similarity_threshold = max(0.5, min(1.0, similarity_threshold))
+    limit = max(10, min(limit, 2000))
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    result = await memory_service.find_duplicates(
+        similarity_threshold=similarity_threshold,
+        limit=limit,
+        strategy=strategy,
+    )
+    return _inject_latency(result, _t0)
+
+
+@mcp.tool()
+async def merge_duplicates(
+    canonical_hash: str,
+    duplicate_hashes: list[str],
+    ctx: Context,
+    reason: str = "Merged by deduplication",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Supersede duplicate memories in favour of a canonical one.
+
+    Each memory in *duplicate_hashes* is marked as superseded by
+    *canonical_hash* and excluded from future search results. The duplicates
+    are NOT deleted — they remain for historical audit via the graph layer.
+
+    Typical workflow:
+        1. Call find_duplicates to identify groups
+        2. Review the groups and confirm the canonical_hash
+        3. Call merge_duplicates with the group's hashes
+        4. Optionally set dry_run=True first to preview without modifying storage
+
+    Args:
+        canonical_hash: Content hash of the memory to keep
+        duplicate_hashes: Content hashes of the memories to supersede
+        reason: Human-readable reason stored in each supersession record
+        dry_run: If True, validate inputs and preview result without modifying storage
+
+    Returns:
+        {success, canonical_hash, superseded: [hashes], errors: [], dry_run}
+    """
+    _t0 = time.perf_counter()
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    result = await memory_service.merge_duplicate_group(
+        canonical_hash=canonical_hash,
+        duplicate_hashes=duplicate_hashes,
+        reason=reason,
+        dry_run=dry_run,
+    )
+    return _inject_latency(result, _t0)
+
+
 # =============================================================================
 # THREE-TIER MEMORY (server-side automation, not exposed as tools by default)
 # =============================================================================
