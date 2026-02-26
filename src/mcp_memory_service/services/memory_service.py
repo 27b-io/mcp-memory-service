@@ -22,6 +22,7 @@ from ..config import (
 )
 from ..graph.client import GraphClient
 from ..graph.queue import HebbianWriteQueue
+from ..hooks import CreateEvent, DeleteEvent, HookRegistry, HookValidationError, RetrieveEvent, UpdateEvent
 from ..memory_tiers import ThreeTierMemory
 from ..models.audit_log import AuditLog
 from ..models.memory import Memory
@@ -128,10 +129,12 @@ class MemoryService:
         storage: MemoryStorage,
         graph_client: GraphClient | None = None,
         write_queue: HebbianWriteQueue | None = None,
+        hooks: HookRegistry | None = None,
     ):
         self.storage = storage
         self._graph = graph_client
         self._write_queue = write_queue
+        self._hooks = hooks if hooks is not None else HookRegistry()
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
@@ -1229,6 +1232,17 @@ class MemoryService:
         }
         if filtered_below_threshold > 0:
             response["filtered_below_threshold"] = filtered_below_threshold
+
+        # Fire post-retrieve hook (non-fatal)
+        await self._hooks.fire_post(
+            "post_retrieve",
+            RetrieveEvent(
+                query=query,
+                result_hashes=[r["content_hash"] for r in results if "content_hash" in r],
+                result_count=len(results),
+            ),
+        )
+
         return response
 
     def _build_pagination_metadata(self, total: int, page: int, page_size: int) -> dict[str, Any]:
@@ -1360,6 +1374,22 @@ class MemoryService:
             # Generate summary (client-provided takes precedence, mode from config)
             final_summary = await summarise(content, client_summary=summary, config=settings)
 
+            # Fire pre-create hook (can raise HookValidationError to abort)
+            try:
+                await self._hooks.fire_pre(
+                    "pre_create",
+                    CreateEvent(
+                        content=content,
+                        content_hash=content_hash,
+                        tags=list(final_tags),
+                        memory_type=memory_type,
+                        metadata=dict(final_metadata),
+                        client_hostname=client_hostname,
+                    ),
+                )
+            except HookValidationError as e:
+                return {"success": False, "error": str(e)}
+
             # Process content if auto-splitting is enabled and content exceeds max length
             max_length = self.storage.max_content_length
             if ENABLE_AUTO_SPLIT and max_length and len(content) > max_length:
@@ -1439,6 +1469,19 @@ class MemoryService:
                     for mem_dict in stored_memories:
                         await self._create_relates_to_edges(mem_dict["content_hash"], cross_refs)
 
+                # Fire post-create hook (non-fatal)
+                await self._hooks.fire_post(
+                    "post_create",
+                    CreateEvent(
+                        content=content,
+                        content_hash=content_hash,
+                        tags=list(final_tags),
+                        memory_type=memory_type,
+                        metadata=dict(final_metadata),
+                        client_hostname=client_hostname,
+                    ),
+                )
+
                 return result
             else:
                 # Store as single memory
@@ -1491,6 +1534,19 @@ class MemoryService:
                     if cross_refs:
                         result["cross_references"] = cross_refs
                         await self._create_relates_to_edges(content_hash, cross_refs)
+
+                    # Fire post-create hook (non-fatal)
+                    await self._hooks.fire_post(
+                        "post_create",
+                        CreateEvent(
+                            content=content,
+                            content_hash=content_hash,
+                            tags=list(final_tags),
+                            memory_type=memory_type,
+                            metadata=dict(final_metadata),
+                            client_hostname=client_hostname,
+                        ),
+                    )
 
                     return result
                 else:
@@ -1842,6 +1898,17 @@ class MemoryService:
             }
             if filtered_below_threshold > 0:
                 response["filtered_below_threshold"] = filtered_below_threshold
+
+            # Fire post-retrieve hook (non-fatal)
+            await self._hooks.fire_post(
+                "post_retrieve",
+                RetrieveEvent(
+                    query=query,
+                    result_hashes=[r["content_hash"] for r in results if "content_hash" in r],
+                    result_count=len(results),
+                ),
+            )
+
             return response
 
         except Exception as e:
@@ -1935,6 +2002,17 @@ class MemoryService:
             # Determine match type description
             match_type = "ALL" if match_all else "ANY"
 
+            # Fire post-retrieve hook (non-fatal)
+            tag_query = ", ".join(tags) if isinstance(tags, list) else tags
+            await self._hooks.fire_post(
+                "post_retrieve",
+                RetrieveEvent(
+                    query=tag_query,
+                    result_hashes=[r["content_hash"] for r in results if "content_hash" in r],
+                    result_count=len(results),
+                ),
+            )
+
             return {
                 "memories": results,
                 "tags": tags,
@@ -1984,6 +2062,12 @@ class MemoryService:
             Dictionary with operation result
         """
         try:
+            # Fire pre-delete hook (can raise HookValidationError to abort)
+            try:
+                await self._hooks.fire_pre("pre_delete", DeleteEvent(content_hash=content_hash))
+            except HookValidationError as e:
+                return {"success": False, "content_hash": content_hash, "error": str(e)}
+
             success, message = await self.storage.delete(content_hash)
             if success:
                 # Clean up graph node and edges (non-blocking, non-fatal)
@@ -2000,6 +2084,10 @@ class MemoryService:
                     actor=None,  # TODO: Add client_hostname parameter to track actor
                     success=True,
                 )
+
+                # Fire post-delete hook (non-fatal)
+                await self._hooks.fire_post("post_delete", DeleteEvent(content_hash=content_hash))
+
                 return {"success": True, "content_hash": content_hash}
             else:
                 # Log failed delete operation
@@ -2697,6 +2785,13 @@ class MemoryService:
                 continue
 
             try:
+                # Fire pre-update hook; HookValidationError counts as failure for this item
+                try:
+                    await self._hooks.fire_pre("pre_update", UpdateEvent(content_hash=hash_, fields=update_fields))
+                except HookValidationError as e:
+                    results.append({"index": i, "success": False, "content_hash": hash_, "error": str(e)})
+                    continue
+
                 success, message = await self.storage.update_memory_metadata(
                     content_hash=hash_,
                     updates=update_fields,
@@ -2705,6 +2800,8 @@ class MemoryService:
                 if success:
                     updated_count += 1
                     results.append({"index": i, "success": True, "content_hash": hash_})
+                    # Fire post-update hook (non-fatal)
+                    await self._hooks.fire_post("post_update", UpdateEvent(content_hash=hash_, fields=update_fields))
                 else:
                     results.append({"index": i, "success": False, "content_hash": hash_, "error": message})
             except Exception as e:
