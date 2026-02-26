@@ -507,6 +507,9 @@ class QdrantStorage(MemoryStorage):
             return
 
         embeddings = await self.generate_embeddings_batch(tags, prompt_name="passage")
+        if len(embeddings) != len(tags):
+            raise ValueError(f"Embedding batch returned {len(embeddings)} vectors for {len(tags)} tags")
+
         now = datetime.now().timestamp()
         points = [
             PointStruct(
@@ -862,9 +865,16 @@ class QdrantStorage(MemoryStorage):
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, lambda: self.client.upsert(collection_name=self.collection_name, points=[point]))
 
-            # Index any new tags into the tag embedding collection
+            # Index any new tags into the tag embedding collection (non-fatal)
             if memory.tags:
-                await self.index_new_tags(memory.tags)
+                try:
+                    await self.index_new_tags(memory.tags)
+                except Exception as tag_err:
+                    logger.warning(
+                        "Tag indexing failed for memory %s (non-fatal): %s",
+                        memory.content_hash[:8],
+                        tag_err,
+                    )
 
             # Record success for circuit breaker
             self._record_success()
