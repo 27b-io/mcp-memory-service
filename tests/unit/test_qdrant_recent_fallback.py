@@ -263,6 +263,7 @@ class TestEnsurePayloadIndexes:
             patch.object(qdrant_storage, "_collection_exists", new_callable=AsyncMock, return_value=True),
             patch.object(qdrant_storage, "_verify_model_compatibility", new_callable=AsyncMock),
             patch.object(qdrant_storage, "_ensure_payload_indexes", new_callable=AsyncMock) as mock_ensure,
+            patch.object(qdrant_storage, "_ensure_tag_collection", new_callable=AsyncMock),
         ):
             # Mock the client creation
             qdrant_storage.client = MagicMock()

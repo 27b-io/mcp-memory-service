@@ -12,18 +12,16 @@ from mcp_memory_service.models.memory import Memory, MemoryQueryResult
 async def _clear_cachekit_caches():
     """Clear CacheKit L1 caches before and after tests."""
     try:
-        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_get_tag_embeddings
+        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags
 
         await _cached_fetch_all_tags.ainvalidate_cache()
-        await _cached_get_tag_embeddings.ainvalidate_cache()
     except Exception:  # noqa: BLE001
         pass  # Best-effort: cache functions may not exist or Redis may be unavailable
     yield
     try:
-        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_get_tag_embeddings
+        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags
 
         await _cached_fetch_all_tags.ainvalidate_cache()
-        await _cached_get_tag_embeddings.ainvalidate_cache()
     except Exception:  # noqa: BLE001
         pass  # Best-effort: cache functions may not exist or Redis may be unavailable
 
