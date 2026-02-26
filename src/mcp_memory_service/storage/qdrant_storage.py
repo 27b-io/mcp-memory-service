@@ -2286,6 +2286,92 @@ class QdrantStorage(MemoryStorage):
             self._record_failure()
             return 0
 
+    async def fetch_vectors_for_clustering(self) -> list[tuple[str, list[float], list[str]]]:
+        """Fetch all memories with stored embeddings for clustering.
+
+        Scrolls the entire collection with with_vectors=True. This is more
+        efficient than re-embedding because vectors are already stored in Qdrant.
+
+        Returns:
+            List of (content_hash, embedding, tags) tuples.
+            Points without vectors (e.g. the metadata sentinel) are skipped.
+        """
+        self._check_circuit_breaker()
+        loop = asyncio.get_event_loop()
+        results: list[tuple[str, list[float], list[str]]] = []
+        next_offset = None
+
+        try:
+            while True:
+                scroll_result = await loop.run_in_executor(
+                    None,
+                    lambda noff=next_offset: self.client.scroll(
+                        collection_name=self.collection_name,
+                        limit=200,
+                        with_payload=True,
+                        with_vectors=True,
+                        offset=noff,
+                    ),
+                )
+                points, next_offset = scroll_result
+
+                for point in points:
+                    if point.id == self.METADATA_POINT_ID:
+                        continue
+                    if point.vector is None:
+                        continue
+                    payload = point.payload or {}
+                    content_hash = payload.get("content_hash", str(point.id))
+                    tags = self._normalize_tags(payload.get("tags", []))
+                    embedding = list(point.vector)
+                    results.append((content_hash, embedding, tags))
+
+                if next_offset is None:
+                    break
+
+            self._record_success()
+            logger.info("Fetched %d memory vectors for clustering", len(results))
+            return results
+
+        except Exception as e:
+            self._record_failure()
+            logger.error("fetch_vectors_for_clustering failed: %s", e)
+            raise
+
+    async def set_payload_fields(self, content_hashes: list[str], fields: dict[str, Any]) -> None:
+        """Bulk-set arbitrary payload fields on multiple memories in a single call.
+
+        Uses Qdrant's set_payload with explicit point IDs for O(1) per batch.
+        Safe to call with large lists — Qdrant handles batching internally.
+
+        Args:
+            content_hashes: Memories to update
+            fields: Fields to set (merged into existing payload, not replaced)
+        """
+        if not content_hashes or not fields:
+            return
+
+        self._check_circuit_breaker()
+        loop = asyncio.get_event_loop()
+        point_ids = [self._hash_to_uuid(h) for h in content_hashes]
+
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: self.client.set_payload(
+                    collection_name=self.collection_name,
+                    payload=fields,
+                    points=point_ids,
+                ),
+            )
+            self._record_success()
+            logger.debug("set_payload_fields updated %d points with fields: %s", len(point_ids), list(fields.keys()))
+
+        except Exception as e:
+            self._record_failure()
+            logger.error("set_payload_fields failed: %s", e)
+            raise
+
     async def close(self) -> None:
         """
         Close the Qdrant client connection.

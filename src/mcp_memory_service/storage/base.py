@@ -495,3 +495,25 @@ class MemoryStorage(ABC):
     async def get_access_patterns(self) -> dict[str, datetime]:
         """Get memory access pattern statistics. Override for specific implementations."""
         return {}
+
+    async def fetch_vectors_for_clustering(self) -> list[tuple[str, list[float], list[str]]]:
+        """Fetch all memories with their stored embeddings for clustering.
+
+        Returns:
+            List of (content_hash, embedding, tags) tuples.
+            Only memories with stored vectors are returned.
+            Override in concrete implementations for efficient bulk retrieval.
+        """
+        return []
+
+    async def set_payload_fields(self, content_hashes: list[str], fields: dict[str, Any]) -> None:
+        """Bulk-set arbitrary payload fields on multiple memories.
+
+        Args:
+            content_hashes: Memories to update
+            fields: Field names and values to set (merged into existing payload)
+
+        Override in concrete implementations for efficient batch updates.
+        No-op in base class.
+        """
+        return  # no-op default

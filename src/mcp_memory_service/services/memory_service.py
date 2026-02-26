@@ -134,6 +134,7 @@ class MemoryService:
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
+        self._cluster_registry: dict[str, Any] | None = None  # populated by run_clustering()
         self._init_three_tier()
 
         # Set module-level storage ref for CacheKit-cached functions
@@ -2536,6 +2537,145 @@ class MemoryService:
                 "k": k,
                 "error": f"Failed to find similar memories: {str(e)}",
             }
+
+    # ---------------------------------------------------------------------------
+    # Clustering
+    # ---------------------------------------------------------------------------
+
+    async def run_clustering(self, min_cluster_size: int = 5) -> dict[str, Any]:
+        """Run HDBSCAN/KMeans clustering on all stored memory embeddings.
+
+        Fetches stored vectors from Qdrant (no re-embedding), clusters them,
+        stores cluster_id/cluster_label back on each memory payload in bulk,
+        and caches the registry for fast cluster-aware retrieval.
+
+        Args:
+            min_cluster_size: Minimum members to form a cluster (default 5).
+                Smaller values produce more, finer-grained clusters.
+
+        Returns:
+            {success, n_clusters, n_noise, n_memories, clusters: [...]}
+        """
+        from ..utils.clustering import build_cluster_registry, run_clustering
+
+        try:
+            records = await self.storage.fetch_vectors_for_clustering()
+        except NotImplementedError:
+            return {"success": False, "error": "Storage backend does not support vector fetching for clustering"}
+        except Exception as e:
+            return {"success": False, "error": f"Failed to fetch vectors: {e}"}
+
+        if not records:
+            return {"success": False, "error": "No memories with stored vectors found"}
+
+        content_hashes = [r[0] for r in records]
+        embeddings = [r[1] for r in records]
+        tags_list = [r[2] for r in records]
+
+        labels, clusters = run_clustering(
+            embeddings=embeddings,
+            content_hashes=content_hashes,
+            tags_list=tags_list,
+            min_cluster_size=min_cluster_size,
+        )
+
+        # Persist cluster assignments to Qdrant payload grouped by cluster.
+        try:
+            for cluster in clusters:
+                await self.storage.set_payload_fields(
+                    cluster.member_hashes,
+                    {"cluster_id": cluster.cluster_id, "cluster_label": cluster.label},
+                )
+            noise = [content_hashes[i] for i, lbl in enumerate(labels) if lbl == -1]
+            if noise:
+                await self.storage.set_payload_fields(noise, {"cluster_id": -1, "cluster_label": "noise"})
+        except Exception as e:
+            logger.warning("Failed to persist cluster assignments to storage: %s", e)
+
+        registry = build_cluster_registry(labels, content_hashes, clusters)
+        self._cluster_registry = registry
+
+        return {
+            "success": True,
+            "n_clusters": registry["n_clusters"],
+            "n_noise": registry["n_noise"],
+            "n_memories": registry["total_memories"],
+            "clusters": registry["clusters"],
+        }
+
+    def get_clusters(self) -> dict[str, Any]:
+        """Return cached cluster registry from the last run_clustering() call.
+
+        Returns:
+            {success, n_clusters, n_noise, n_memories, clusters: [...]}
+            or {success: False, error: ...} if clustering hasn't run yet.
+        """
+        if self._cluster_registry is None:
+            return {
+                "success": False,
+                "error": "No clustering data available. Call run_clustering first.",
+            }
+        reg = self._cluster_registry
+        return {
+            "success": True,
+            "n_clusters": reg["n_clusters"],
+            "n_noise": reg["n_noise"],
+            "n_memories": reg["total_memories"],
+            "clusters": reg["clusters"],
+        }
+
+    async def expand_by_cluster(
+        self,
+        content_hashes: list[str],
+        max_per_cluster: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Expand a result set by adding cluster neighbours.
+
+        For each result memory, adds up to max_per_cluster additional memories
+        from the same cluster. Useful for context spreading: ask about one
+        memory, get the neighbourhood.
+
+        Args:
+            content_hashes: Hashes from the primary search results
+            max_per_cluster: Cap on additional neighbours per cluster
+
+        Returns:
+            Formatted memory dicts for the *additional* memories only.
+            Empty list if clustering hasn't run or no neighbours found.
+        """
+        if not self._cluster_registry or not content_hashes:
+            return []
+
+        hash_to_cluster: dict[str, int] = self._cluster_registry.get("hash_to_cluster", {})
+        cluster_members: dict[int, list[str]] = self._cluster_registry.get("cluster_members", {})
+
+        seen = set(content_hashes)
+        additional_hashes: list[str] = []
+        added_per_cluster: dict[int, int] = {}
+
+        for h in content_hashes:
+            cid = hash_to_cluster.get(h, -1)
+            if cid == -1:
+                continue
+            already_added = added_per_cluster.get(cid, 0)
+            if already_added >= max_per_cluster:
+                continue
+            for member in cluster_members.get(cid, []):
+                if member not in seen and already_added < max_per_cluster:
+                    additional_hashes.append(member)
+                    seen.add(member)
+                    already_added += 1
+            added_per_cluster[cid] = already_added
+
+        if not additional_hashes:
+            return []
+
+        try:
+            memories = await self.storage.get_memories_batch(additional_hashes)
+            return [self._format_memory(m) for m in memories if m]
+        except Exception as e:
+            logger.warning("expand_by_cluster batch fetch failed: %s", e)
+            return []
 
     # ---------------------------------------------------------------------------
     # Batch Operations

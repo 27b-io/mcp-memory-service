@@ -275,6 +275,7 @@ async def search(
     memory_type: str | None = None,
     encoding_context: dict[str, Any] | None = None,
     include_superseded: bool = False,
+    expand_clusters: bool = False,
 ) -> str | dict[str, Any]:
     """Search and retrieve memories. Consolidates all retrieval modes into one tool.
 
@@ -296,6 +297,9 @@ async def search(
         memory_type: Filter by type for "recent" mode (note/decision/task/reference)
         encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
         include_superseded: If True, include superseded memories in results (default: False)
+        expand_clusters: If True, expand results with cluster neighbours (requires prior
+            run_clustering call). Adds up to 3 semantically-related memories per cluster
+            found in results. Only applies to hybrid mode.
 
     Returns:
         hybrid/tag/recent: TOON-formatted string (pipe-delimited, with pagination header).
@@ -366,7 +370,17 @@ async def search(
         "has_more": result.get("has_more", False),
         "total_pages": result.get("total_pages", 0),
     }
-    toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
+
+    memories = result["memories"]
+
+    # Cluster expansion: append semantically-related neighbours for hybrid mode.
+    if expand_clusters and mode == "hybrid" and memories:
+        result_hashes = [m.get("content_hash") for m in memories if m.get("content_hash")]
+        neighbours = await memory_service.expand_by_cluster(result_hashes, max_per_cluster=3)
+        if neighbours:
+            memories = list(memories) + neighbours
+
+    toon_output, _ = format_search_results_as_toon(memories, pagination=pagination)
     return _inject_latency(toon_output, _t0)
 
 
@@ -540,6 +554,78 @@ async def memory_contradictions(
     limit = max(1, min(limit, 100))
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.get_contradictions_dashboard(limit=limit)
+    return _inject_latency(result, _t0)
+
+
+# =============================================================================
+# CLUSTERING
+# =============================================================================
+
+
+@mcp.tool()
+async def run_clustering(
+    ctx: Context,
+    min_cluster_size: int = 5,
+) -> dict[str, Any]:
+    """Cluster all memories by semantic similarity using HDBSCAN.
+
+    Fetches stored embeddings from the vector database (no re-embedding),
+    discovers natural groupings, stores cluster_id/cluster_label on each
+    memory, and caches the registry for cluster-aware retrieval.
+
+    Args:
+        min_cluster_size: Minimum members required to form a cluster (default 5).
+            Lower values → more, finer-grained clusters.
+            Higher values → fewer, broader clusters.
+
+    Returns:
+        {success, n_clusters, n_noise, n_memories, clusters: [
+            {cluster_id, label, size, top_tags, member_hashes, summary}
+        ]}
+    """
+    _t0 = time.perf_counter()
+    min_cluster_size = max(2, min(min_cluster_size, 100))
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    result = await memory_service.run_clustering(min_cluster_size=min_cluster_size)
+    return _inject_latency(result, _t0)
+
+
+@mcp.tool()
+async def memory_clusters(
+    ctx: Context,
+    cluster_id: int | None = None,
+) -> dict[str, Any]:
+    """Return cluster information from the last run_clustering() call.
+
+    Clusters are computed on demand by run_clustering and cached in memory.
+    Call run_clustering first to populate cluster data.
+
+    Args:
+        cluster_id: If provided, return details for a specific cluster
+            (including full member_hashes list). If None, return summary
+            of all clusters.
+
+    Returns:
+        {success, n_clusters, n_noise, n_memories, clusters: [...]}
+        or {success, cluster: {...}} for a specific cluster_id.
+        or {success: False, error: ...} if clustering hasn't run yet.
+    """
+    _t0 = time.perf_counter()
+    memory_service = ctx.request_context.lifespan_context.memory_service
+    result = memory_service.get_clusters()
+
+    if not result["success"]:
+        return _inject_latency(result, _t0)
+
+    if cluster_id is not None:
+        matching = [c for c in result["clusters"] if c["cluster_id"] == cluster_id]
+        if not matching:
+            return _inject_latency(
+                {"success": False, "error": f"Cluster {cluster_id} not found"},
+                _t0,
+            )
+        return _inject_latency({"success": True, "cluster": matching[0]}, _t0)
+
     return _inject_latency(result, _t0)
 
 
