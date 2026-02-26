@@ -8,6 +8,20 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.16.0](https://github.com/27b-io/mcp-memory-service/compare/v11.15.0...v11.16.0) (2026-02-26)
+
+
+### Features
+
+* memory lifecycle hooks for create, delete, update, retrieve ([#138](https://github.com/27b-io/mcp-memory-service/issues/138)) ([1b6aa4c](https://github.com/27b-io/mcp-memory-service/commit/1b6aa4c76a2495bb83008b13d931d13bf3342d64))
+* switch MCP HTTP transport to stateless mode ([#135](https://github.com/27b-io/mcp-memory-service/issues/135)) ([af3e8b0](https://github.com/27b-io/mcp-memory-service/commit/af3e8b08b8dcea636737aa66f214f7df0231270e))
+
+
+### Bug Fixes
+
+* clean up orphan tag embeddings on memory deletion (mm-ke2zl, [#131](https://github.com/27b-io/mcp-memory-service/issues/131)) ([#136](https://github.com/27b-io/mcp-memory-service/issues/136)) ([8f6fb75](https://github.com/27b-io/mcp-memory-service/commit/8f6fb75f0c23f705a9d890fb48e844195e4d7d36))
+* convert stale-session 400 to spec-compliant 404 ([#133](https://github.com/27b-io/mcp-memory-service/issues/133)) ([9cccd6a](https://github.com/27b-io/mcp-memory-service/commit/9cccd6a0a52d004f1540f42387a2ff91a3cfdefb))
+
 ## [11.15.0](https://github.com/27b-io/mcp-memory-service/compare/v11.14.1...v11.15.0) (2026-02-26)
 
 
