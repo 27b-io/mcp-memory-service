@@ -538,6 +538,48 @@ class QdrantStorage(MemoryStorage):
         if new_tags:
             await self._upsert_tag_embeddings(new_tags)
 
+    async def _cleanup_orphaned_tags(self, tags: list[str]) -> None:
+        """Remove tag embeddings for tags no longer referenced by any memory.
+
+        Called after memory deletion. For each candidate tag, counts remaining
+        memories that use it; removes the tag embedding and evicts from
+        _known_tags when the count reaches zero.
+
+        Non-fatal: logs warnings on failure so callers are not disrupted.
+        """
+        if not tags:
+            return
+
+        loop = asyncio.get_event_loop()
+        orphaned: list[str] = []
+
+        for tag in tags:
+            tag_filter = Filter(must=[FieldCondition(key="tags", match=MatchValue(value=tag))])
+            count_result = await loop.run_in_executor(
+                None,
+                lambda f=tag_filter: self.client.count(
+                    collection_name=self.collection_name,
+                    count_filter=f,
+                    exact=True,
+                ),
+            )
+            if count_result.count == 0:
+                orphaned.append(tag)
+
+        if not orphaned:
+            return
+
+        tag_ids = [self._tag_to_uuid(t) for t in orphaned]
+        await loop.run_in_executor(
+            None,
+            lambda: self.client.delete(
+                collection_name=self.tag_collection_name,
+                points_selector=tag_ids,
+            ),
+        )
+        self._known_tags.difference_update(orphaned)
+        logger.info("Removed %d orphaned tag embeddings: %s", len(orphaned), orphaned)
+
     async def search_similar_tags(
         self,
         query_embedding: list[float],
@@ -1471,12 +1513,33 @@ class QdrantStorage(MemoryStorage):
             point_id = self._hash_to_uuid(content_hash)
 
             loop = asyncio.get_event_loop()
+
+            # Fetch tags before deletion so we can clean up orphaned embeddings
+            points = await loop.run_in_executor(
+                None,
+                lambda: self.client.retrieve(
+                    collection_name=self.collection_name,
+                    ids=[point_id],
+                    with_payload=["tags"],
+                    with_vectors=False,
+                ),
+            )
+            tags_to_check: list[str] = points[0].payload.get("tags", []) if points else []
+
             await loop.run_in_executor(
                 None, lambda: self.client.delete(collection_name=self.collection_name, points_selector=[point_id])
             )
 
             self._record_success()
             logger.debug(f"Deleted memory {content_hash[:8]}...")
+
+            # Clean up any tag embeddings that are no longer referenced (non-fatal)
+            if tags_to_check:
+                try:
+                    await self._cleanup_orphaned_tags(tags_to_check)
+                except Exception as tag_err:
+                    logger.warning("Tag embedding cleanup failed (non-fatal): %s", tag_err)
+
             return True, "Memory deleted successfully"
 
         except Exception as e:
@@ -1514,6 +1577,11 @@ class QdrantStorage(MemoryStorage):
                 self._record_success()
                 return 0, f"No memories found with tag '{tag}'"
 
+            # Collect all unique tags from the memories being deleted
+            tags_to_check: set[str] = set()
+            for p in points:
+                tags_to_check.update(p.payload.get("tags", []) if p.payload else [])
+
             # Delete all points with this tag
             await loop.run_in_executor(
                 None, lambda: self.client.delete(collection_name=self.collection_name, points_selector=tag_filter)
@@ -1521,6 +1589,14 @@ class QdrantStorage(MemoryStorage):
 
             self._record_success()
             logger.debug(f"Deleted {count} memories with tag '{tag}'")
+
+            # Clean up orphaned tag embeddings (non-fatal)
+            if tags_to_check:
+                try:
+                    await self._cleanup_orphaned_tags(list(tags_to_check))
+                except Exception as tag_err:
+                    logger.warning("Tag embedding cleanup failed (non-fatal): %s", tag_err)
+
             return count, f"Deleted {count} memories with tag '{tag}'"
 
         except Exception as e:
@@ -1561,6 +1637,11 @@ class QdrantStorage(MemoryStorage):
                 self._record_success()
                 return 0, f"No memories found with ALL tags {tags}"
 
+            # Collect all unique tags from the memories being deleted
+            tags_to_check: set[str] = set()
+            for p in points:
+                tags_to_check.update(p.payload.get("tags", []) if p.payload else [])
+
             # Delete all points matching ALL tags
             await loop.run_in_executor(
                 None, lambda: self.client.delete(collection_name=self.collection_name, points_selector=all_tags_filter)
@@ -1568,6 +1649,14 @@ class QdrantStorage(MemoryStorage):
 
             self._record_success()
             logger.debug(f"Deleted {count} memories with ALL tags {tags}")
+
+            # Clean up orphaned tag embeddings (non-fatal)
+            if tags_to_check:
+                try:
+                    await self._cleanup_orphaned_tags(list(tags_to_check))
+                except Exception as tag_err:
+                    logger.warning("Tag embedding cleanup failed (non-fatal): %s", tag_err)
+
             return count, f"Deleted {count} memories with ALL tags"
 
         except Exception as e:
