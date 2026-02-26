@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.16.1](https://github.com/27b-io/mcp-memory-service/compare/v11.16.0...v11.16.1) (2026-02-26)
+
+
+### Bug Fixes
+
+* add pytest timeout guards to prevent infinite test loops ([#139](https://github.com/27b-io/mcp-memory-service/issues/139)) ([a285aeb](https://github.com/27b-io/mcp-memory-service/commit/a285aebe2b62d94ecfa9b1bfd330c88113ad1312))
+
 ## [11.16.0](https://github.com/27b-io/mcp-memory-service/compare/v11.15.0...v11.16.0) (2026-02-26)
 
 
