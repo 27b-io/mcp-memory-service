@@ -51,6 +51,21 @@ class TestTagCollectionInit:
                 mock_upsert.assert_called_once_with(["python", "docker"])
 
     @pytest.mark.asyncio
+    async def test_creates_collection_no_migration_when_no_tags(self, qdrant_storage):
+        """Should create tag collection but skip migration when no tags exist."""
+        collections_mock = MagicMock()
+        col = MagicMock()
+        col.name = "memories"
+        collections_mock.collections = [col]
+        qdrant_storage.client.get_collections.return_value = collections_mock
+
+        with patch.object(qdrant_storage, "get_all_tags", new_callable=AsyncMock, return_value=[]):
+            with patch.object(qdrant_storage, "_upsert_tag_embeddings", new_callable=AsyncMock) as mock_upsert:
+                await qdrant_storage._ensure_tag_collection()
+                qdrant_storage.client.create_collection.assert_called_once()
+                mock_upsert.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_loads_known_tags_when_collection_exists(self, qdrant_storage):
         """Should populate _known_tags from existing tag collection."""
         collections_mock = MagicMock()

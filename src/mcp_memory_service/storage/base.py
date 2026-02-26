@@ -117,9 +117,22 @@ class MemoryStorage(ABC):
         """
         pass
 
-    async def generate_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for multiple texts in a single batched forward pass."""
+    async def generate_embeddings_batch(self, texts: list[str], prompt_name: str = "query") -> list[list[float]]:
+        """Generate embeddings for multiple texts in a single batched forward pass.
+
+        Args:
+            texts: List of texts to embed
+            prompt_name: Prompt prefix for instruction-tuned models
+                         ("query" for search queries, "passage" for documents)
+        """
         raise NotImplementedError("Subclass must implement generate_embeddings_batch")
+
+    async def search_similar_tags(self, query_embedding: list[float], threshold: float = 0.5, max_tags: int = 10) -> list[str]:
+        """Find semantically similar tags via the tag embedding collection."""
+        return []
+
+    async def index_new_tags(self, tags: list[str]) -> None:  # noqa: B027
+        """Index new tags into the tag embedding collection (no-op if all known)."""
 
     async def search_by_vector(
         self,
