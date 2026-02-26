@@ -30,96 +30,10 @@ import asyncio
 import logging
 import signal
 import sys
-from http import HTTPStatus
-
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .shared_storage import close_shared_storage, get_shared_storage
 
 logger = logging.getLogger(__name__)
-
-# Header name (bytes, as ASGI transmits headers)
-_MCP_SESSION_ID = b"mcp-session-id"
-_STALE_SESSION_BODY = b"No valid session ID"
-
-
-class StaleSessionMiddleware:
-    """Convert stale-session 400 errors to spec-compliant 404.
-
-    The MCP SDK's StreamableHTTPSessionManager returns 400 when a client sends
-    a session ID the server doesn't recognise (e.g. after a pod restart).  Per
-    the MCP spec, expired/unknown sessions should return 404, which signals
-    clients to discard the stale session and re-initialise.
-
-    This ASGI middleware intercepts the response and rewrites the status code
-    when the specific stale-session error is detected.
-    """
-
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        # Fast path: no session header → nothing to fix
-        has_session = any(k == _MCP_SESSION_ID for k, _ in scope.get("headers", []))
-        if not has_session:
-            await self.app(scope, receive, send)
-            return
-
-        # Buffer the response start so we can rewrite if needed
-        captured_start: dict | None = None
-        is_400 = False
-
-        async def send_wrapper(message: dict) -> None:
-            nonlocal captured_start, is_400
-
-            if message["type"] == "http.response.start":
-                if message.get("status") == HTTPStatus.BAD_REQUEST:
-                    # Hold the start message until we see the body
-                    captured_start = message
-                    is_400 = True
-                    return
-                await send(message)
-                return
-
-            if message["type"] == "http.response.body":
-                if is_400 and captured_start is not None:
-                    if message.get("more_body", False):
-                        # Streamed response — not our single-chunk target.
-                        # Release the buffered start and forward all chunks.
-                        await send(captured_start)
-                        await send(message)
-                        captured_start = None
-                        is_400 = False
-                    else:
-                        # Final (or only) body chunk — safe to inspect.
-                        body = message.get("body", b"")
-                        if _STALE_SESSION_BODY in body:
-                            logger.warning("Rewriting stale-session 400 → 404 for client re-initialisation")
-                            captured_start["status"] = HTTPStatus.NOT_FOUND
-                            await send(captured_start)
-                            await send(
-                                {
-                                    "type": "http.response.body",
-                                    "body": b"Not Found: Session expired, please re-initialize",
-                                }
-                            )
-                        else:
-                            # Not the error we're looking for — pass through
-                            await send(captured_start)
-                            await send(message)
-                        captured_start = None
-                        is_400 = False
-                else:
-                    await send(message)
-                return
-
-            await send(message)
-
-        await self.app(scope, receive, send_wrapper)
 
 
 class UnifiedServer:
@@ -194,8 +108,6 @@ class UnifiedServer:
         try:
             import os
 
-            from starlette.middleware import Middleware
-
             from mcp_memory_service.mcp_server import mcp
 
             # Get port and host from environment
@@ -209,12 +121,14 @@ class UnifiedServer:
 
             # FastMCP v2.0 async API
             if transport == "http":
+                # Stateless mode: each request gets a pre-initialised session.
+                # No session IDs tracked → no stale-session problem after pod restarts.
                 await mcp.run_async(
                     transport="http",
                     host=host,
                     port=port,
+                    stateless_http=True,
                     uvicorn_config={"ws": "none"},
-                    middleware=[Middleware(StaleSessionMiddleware)],
                 )
             else:
                 await mcp.run_async(transport="stdio")
