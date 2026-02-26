@@ -259,14 +259,17 @@ class TestEnsurePayloadIndexes:
         qdrant_storage.config = MagicMock()
 
         with (
-            patch.object(qdrant_storage, "_detect_vector_dimensions", new_callable=AsyncMock, return_value=768),
+            patch.object(qdrant_storage, "_ensure_model_loaded"),
             patch.object(qdrant_storage, "_collection_exists", new_callable=AsyncMock, return_value=True),
             patch.object(qdrant_storage, "_verify_model_compatibility", new_callable=AsyncMock),
             patch.object(qdrant_storage, "_ensure_payload_indexes", new_callable=AsyncMock) as mock_ensure,
             patch.object(qdrant_storage, "_ensure_tag_collection", new_callable=AsyncMock),
         ):
-            # Mock the client creation
+            # Mock the client creation and model instance
             qdrant_storage.client = MagicMock()
+            mock_model = MagicMock()
+            mock_model.get_sentence_embedding_dimension.return_value = 768
+            qdrant_storage._embedding_model_instance = mock_model
 
             await qdrant_storage.initialize()
 
