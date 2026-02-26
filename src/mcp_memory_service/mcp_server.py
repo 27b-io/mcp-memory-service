@@ -82,7 +82,6 @@ class MCPServerContext:
 @asynccontextmanager
 async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext]:
     """Manage MCP server lifecycle with proper resource initialization and cleanup."""
-    logger.info("Initializing MCP Memory Service components...")
 
     # Register optional three-tier tools before accepting requests
     _maybe_register_three_tier_tools()
@@ -91,7 +90,7 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     from .shared_storage import get_shared_storage, is_storage_initialized
 
     if is_storage_initialized():
-        logger.info("Using pre-initialized shared storage instance")
+        logger.debug("Using pre-initialized shared storage instance")
         storage = await get_shared_storage()
     else:
         # Fallback to creating storage if running standalone
@@ -743,8 +742,8 @@ def main():
         # Run server with stdio transport
         mcp.run(transport="stdio")
     else:
-        # Run server with HTTP transport (FastMCP v2.0 uses 'http' instead of 'streamable-http')
-        mcp.run(transport="http", host=host, port=port)
+        # Run server with HTTP transport — stateless so no session tracking
+        mcp.run(transport="http", host=host, port=port, stateless_http=True)
 
 
 if __name__ == "__main__":
