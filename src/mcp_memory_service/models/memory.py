@@ -63,6 +63,9 @@ class Memory:
     # Extractive summary: one-line summary for token-efficient scanning (~50 tokens)
     summary: str | None = None
 
+    # Provenance: source, creation method, trust score, modification history
+    provenance: dict[str, Any] | None = None
+
     # Legacy timestamp field (maintain for backward compatibility)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -244,6 +247,8 @@ class Memory:
             "encoding_context": self.encoding_context,
             # Extractive summary
             "summary": self.summary,
+            # Provenance
+            "provenance": self.provenance,
             **self.metadata,
         }
 
@@ -283,6 +288,9 @@ class Memory:
         # Extract summary
         summary = data.get("summary")
 
+        # Extract provenance
+        provenance = data.get("provenance")
+
         # Create metadata dictionary without special fields
         metadata = {
             k: v
@@ -306,6 +314,7 @@ class Memory:
                 "access_timestamps",
                 "encoding_context",
                 "summary",
+                "provenance",
             ]
         }
 
@@ -327,6 +336,7 @@ class Memory:
             access_timestamps=access_timestamps,
             encoding_context=encoding_context,
             summary=summary,
+            provenance=provenance,
         )
 
 

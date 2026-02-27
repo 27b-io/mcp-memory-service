@@ -274,6 +274,7 @@ async def search(
     memory_type: str | None = None,
     encoding_context: dict[str, Any] | None = None,
     include_superseded: bool = False,
+    min_trust_score: float | None = None,
 ) -> str | dict[str, Any]:
     """Search and retrieve memories. Consolidates all retrieval modes into one tool.
 
@@ -295,6 +296,8 @@ async def search(
         memory_type: Filter by type for "recent" mode (note/decision/task/reference)
         encoding_context: Context-dependent retrieval boost (time_of_day, day_type, agent, task_tags)
         include_superseded: If True, include superseded memories in results (default: False)
+        min_trust_score: Filter by minimum provenance trust score (0.0-1.0). Memories without
+            provenance are treated as 0.5. Useful for filtering low-reliability sources.
 
     Returns:
         hybrid/tag/recent: TOON-formatted string (pipe-delimited, with pagination header).
@@ -356,6 +359,7 @@ async def search(
             encoding_context=encoding_context,
             tags=normalized_tags,
             include_superseded=include_superseded,
+            min_trust_score=min_trust_score,
         )
 
     pagination = {
