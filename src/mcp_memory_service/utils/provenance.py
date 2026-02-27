@@ -34,7 +34,7 @@ def compute_trust_score(source: str) -> float:
     Returns 0.5 for unknown sources.
     """
     if source.startswith("source:"):
-        source = source[len("source:"):]
+        source = source[len("source:") :]
     return DEFAULT_SOURCE_TRUST.get(source, 0.5)
 
 

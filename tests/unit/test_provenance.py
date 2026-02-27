@@ -10,8 +10,6 @@ Tests:
 
 import time
 
-import pytest
-
 from mcp_memory_service.utils.provenance import (
     DEFAULT_SOURCE_TRUST,
     MAX_MODIFICATION_HISTORY,
@@ -20,7 +18,6 @@ from mcp_memory_service.utils.provenance import (
     get_trust_score,
     record_modification,
 )
-
 
 # =============================================================================
 # compute_trust_score
