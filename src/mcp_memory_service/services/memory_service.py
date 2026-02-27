@@ -49,6 +49,7 @@ from ..utils.hybrid_search import (
     temporal_decay_factor,
 )
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
+from ..utils.provenance import build_provenance, get_trust_score
 from ..utils.query_intent import get_analyzer
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
@@ -93,6 +94,7 @@ class MemoryResult(TypedDict):
     updated_at_iso: str
     emotional_valence: dict[str, Any] | None
     salience_score: float
+    provenance: dict[str, Any] | None
 
 
 class MemoryService:
@@ -1035,6 +1037,7 @@ class MemoryService:
         min_similarity: float | None,
         encoding_context: dict[str, Any] | None = None,
         include_superseded: bool = False,
+        min_trust_score: float | None = None,
     ) -> dict[str, Any]:
         """Fallback to pure vector search (original behavior)."""
         offset = (page - 1) * page_size
@@ -1170,6 +1173,15 @@ class MemoryService:
         # Filter out superseded memories unless explicitly requested
         if not include_superseded:
             results = self._filter_superseded(results)
+
+        # Filter by minimum provenance trust score
+        if min_trust_score is not None and min_trust_score > 0:
+            results = [
+                r
+                for r in results
+                if get_trust_score(r.get("metadata") or {}) >= min_trust_score
+                or get_trust_score({"provenance": r.get("provenance")}) >= min_trust_score
+            ]
 
         # Enrich results with contradiction warnings (non-blocking, non-fatal)
         warning_map = await self._get_contradiction_warnings([r["content_hash"] for r in results])
@@ -1311,6 +1323,15 @@ class MemoryService:
                     final_tags.append(source_tag)
                 final_metadata["hostname"] = client_hostname
 
+            # Build provenance record (source, creation method, trust score)
+            # Priority: client_hostname > metadata["source"] > "api"
+            provenance_source = client_hostname or final_metadata.get("source") or "api"
+            final_metadata["provenance"] = build_provenance(
+                source=provenance_source,
+                creation_method="direct",
+                actor=client_hostname,
+            )
+
             # Generate content hash for deduplication
             content_hash = generate_content_hash(content)
 
@@ -1369,6 +1390,13 @@ class MemoryService:
                     chunk_metadata["chunk_index"] = i
                     chunk_metadata["total_chunks"] = len(chunks)
                     chunk_metadata["original_hash"] = content_hash
+                    # Override creation_method for split chunks
+                    chunk_metadata["provenance"] = build_provenance(
+                        source=provenance_source,
+                        creation_method="auto_split",
+                        actor=client_hostname,
+                        extra={"chunk_index": i, "total_chunks": len(chunks), "original_hash": content_hash},
+                    )
 
                     # Each chunk gets its own emotional analysis
                     chunk_valence = self._compute_emotional_valence(chunk)
@@ -1546,6 +1574,7 @@ class MemoryService:
         min_similarity: float | None = None,
         encoding_context: dict[str, Any] | None = None,
         include_superseded: bool = False,
+        min_trust_score: float | None = None,
     ) -> dict[str, Any]:
         """
         Retrieve memories using hybrid search (semantic + tag matching).
@@ -1566,6 +1595,8 @@ class MemoryService:
             memory_type: Optional memory type filtering
             min_similarity: Optional minimum similarity threshold (0.0 to 1.0)
             include_superseded: If True, include superseded memories in results
+            min_trust_score: Optional minimum provenance trust score (0.0 to 1.0).
+                Memories without provenance are treated as trust_score=0.5.
 
         Returns:
             Dictionary with search results and pagination metadata
@@ -1591,6 +1622,7 @@ class MemoryService:
                     min_similarity,
                     encoding_context,
                     include_superseded=include_superseded,
+                    min_trust_score=min_trust_score,
                 )
 
             # Get cached tags for keyword extraction
@@ -1610,6 +1642,7 @@ class MemoryService:
                     min_similarity,
                     encoding_context,
                     include_superseded=include_superseded,
+                    min_trust_score=min_trust_score,
                 )
 
             # Determine alpha (explicit > env > adaptive)
@@ -1627,6 +1660,7 @@ class MemoryService:
                     min_similarity,
                     encoding_context,
                     include_superseded=include_superseded,
+                    min_trust_score=min_trust_score,
                 )
 
             # Fetch larger result set for RRF combination
@@ -1818,6 +1852,15 @@ class MemoryService:
             # Filter out superseded memories unless explicitly requested
             if not include_superseded:
                 results = self._filter_superseded(results)
+
+            # Filter by minimum provenance trust score
+            if min_trust_score is not None and min_trust_score > 0:
+                results = [
+                    r
+                    for r in results
+                    if get_trust_score(r.get("metadata") or {}) >= min_trust_score
+                    or get_trust_score({"provenance": r.get("provenance")}) >= min_trust_score
+                ]
 
             # Enrich results with contradiction warnings (non-blocking, non-fatal)
             warning_map = await self._get_contradiction_warnings([r["content_hash"] for r in results])
@@ -2851,6 +2894,7 @@ class MemoryService:
             "emotional_valence": memory.emotional_valence,
             "salience_score": memory.salience_score,
             "encoding_context": memory.encoding_context,
+            "provenance": memory.provenance or (memory.metadata or {}).get("provenance"),
         }
 
     # -------------------------------------------------------------------------
