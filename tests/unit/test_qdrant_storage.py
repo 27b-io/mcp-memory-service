@@ -415,3 +415,78 @@ class TestEmbeddingPromptPrefix:
 
         with pytest.raises(TypeError, match="expected str, got NoneType"):
             storage._generate_embedding("test content", prompt_name="query")
+
+
+# =============================================================================
+# Embedding Model Prewarm Tests
+# =============================================================================
+
+
+class TestEmbeddingModelPrewarm:
+    """Test that initialize() eagerly loads the embedding model."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_calls_ensure_model_loaded(self):
+        """initialize() must prewarm the embedding model before first request."""
+        from unittest.mock import AsyncMock
+
+        with patch("mcp_memory_service.storage.qdrant_storage.QdrantClient"):
+            storage = QdrantStorage(embedding_model="test-model", url="http://localhost:6333")
+
+        storage._initialized = False
+
+        mock_model = MagicMock()
+        mock_model.get_sentence_embedding_dimension.return_value = 768
+
+        with (
+            patch.object(storage, "_ensure_model_loaded") as mock_prewarm,
+            patch.object(storage, "_collection_exists", new_callable=AsyncMock, return_value=False),
+            patch.object(storage, "_create_collection_with_metadata", new_callable=AsyncMock),
+            patch.object(storage, "_ensure_payload_indexes", new_callable=AsyncMock),
+            patch.object(storage, "_ensure_tag_collection", new_callable=AsyncMock),
+        ):
+            storage.client = MagicMock()
+            storage._embedding_model_instance = mock_model
+
+            await storage.initialize()
+
+            mock_prewarm.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_initialize_gets_dimensions_from_model(self):
+        """initialize() must query actual model dimensions, not a lookup table."""
+        from unittest.mock import AsyncMock
+
+        with patch("mcp_memory_service.storage.qdrant_storage.QdrantClient"):
+            storage = QdrantStorage(embedding_model="some-unknown-model", url="http://localhost:6333")
+
+        storage._initialized = False
+
+        mock_model = MagicMock()
+        mock_model.get_sentence_embedding_dimension.return_value = 1234
+
+        with (
+            patch.object(storage, "_ensure_model_loaded"),
+            patch.object(storage, "_collection_exists", new_callable=AsyncMock, return_value=False),
+            patch.object(storage, "_create_collection_with_metadata", new_callable=AsyncMock),
+            patch.object(storage, "_ensure_payload_indexes", new_callable=AsyncMock),
+            patch.object(storage, "_ensure_tag_collection", new_callable=AsyncMock),
+        ):
+            storage.client = MagicMock()
+            storage._embedding_model_instance = mock_model
+
+            await storage.initialize()
+
+            assert storage._vector_size == 1234
+            mock_model.get_sentence_embedding_dimension.assert_called_once()
+
+    def test_ensure_model_loaded_is_idempotent(self):
+        """Calling _ensure_model_loaded when model is already set is a no-op."""
+        with patch("mcp_memory_service.storage.qdrant_storage.QdrantClient"):
+            storage = QdrantStorage(embedding_model="test-model", url="http://localhost:6333")
+
+        storage._embedding_model_instance = MagicMock()
+
+        with patch("mcp_memory_service.storage.qdrant_storage.SentenceTransformer") as mock_st:
+            storage._ensure_model_loaded()
+            mock_st.assert_not_called()

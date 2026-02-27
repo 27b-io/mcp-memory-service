@@ -206,10 +206,30 @@ class QdrantStorage(MemoryStorage):
         """
         return True  # Qdrant supports chunking via metadata
 
+    def _ensure_model_loaded(self) -> None:
+        """Load the embedding model eagerly (thread-safe, idempotent).
+
+        Called during initialize() to prewarm the model so the first real
+        request doesn't pay the load cost.  Also called defensively by
+        _generate_embedding() and generate_embeddings_batch().
+        """
+        if hasattr(self, "_embedding_model_instance"):
+            return
+        with self._model_lock:
+            if hasattr(self, "_embedding_model_instance"):
+                return
+            if not SENTENCE_TRANSFORMERS_AVAILABLE:
+                raise RuntimeError("sentence_transformers not installed. Install with: pip install sentence-transformers")
+            logger.info(f"Loading embedding model: {self.embedding_model}")
+            device = get_torch_device()
+            self._embedding_model_instance = SentenceTransformer(self.embedding_model, device=device, trust_remote_code=True)
+            logger.info(f"Loaded model: {self.embedding_model} on device: {device}")
+
     async def initialize(self) -> None:
         """
         Initialize Qdrant storage with model change detection.
 
+        Loads the embedding model eagerly so the first request is fast.
         Detects if embedding model changed (different dimensions) and fails
         with clear migration instructions. Prevents silent corruption from
         dimension mismatches.
@@ -233,9 +253,12 @@ class QdrantStorage(MemoryStorage):
             self.client = await loop.run_in_executor(None, lambda: QdrantClient(path=self.storage_path))
             logger.info(f"Initialized Qdrant embedded storage at {self.storage_path}")
 
-        # Detect vector dimensions from embedding model
-        self._vector_size = await self._detect_vector_dimensions()
-        logger.info(f"Detected vector dimensions: {self._vector_size}")
+        # Prewarm embedding model — load weights before first request
+        await loop.run_in_executor(None, self._ensure_model_loaded)
+
+        # Get actual vector dimensions from the loaded model
+        self._vector_size = self._embedding_model_instance.get_sentence_embedding_dimension()
+        logger.info(f"Detected vector dimensions from model: {self._vector_size}")
 
         # Check if collection exists
         if await self._collection_exists():
@@ -255,50 +278,6 @@ class QdrantStorage(MemoryStorage):
 
         self._initialized = True
         logger.info("QdrantStorage initialization complete")
-
-    async def _detect_vector_dimensions(self) -> int:
-        """
-        Detect vector dimensions from embedding model.
-
-        Returns:
-            The dimension of vectors produced by the embedding model
-        """
-        # For now, we'll use a placeholder that matches the embedding service pattern
-        # The actual embedding service will be injected from the MemoryService layer
-        # Embedding dimensions detected dynamically from the model
-
-        # Common embedding model dimensions (will be detected dynamically in production)
-        model_dimensions = {
-            "all-MiniLM-L6-v2": 384,
-            "all-MiniLM-L12-v2": 384,
-            "all-mpnet-base-v2": 768,
-            "text-embedding-ada-002": 1536,
-            "@cf/baai/bge-base-en-v1.5": 768,
-            "sentence-transformers/all-MiniLM-L6-v2": 384,
-            "intfloat/e5-small": 384,
-            "intfloat/e5-base": 768,
-            "intfloat/e5-large": 1024,
-            "BAAI/bge-small-en-v1.5": 384,
-            "BAAI/bge-base-en-v1.5": 768,
-            "BAAI/bge-large-en-v1.5": 1024,
-            "infgrad/stella-base-en-v2": 768,
-            "nomic-ai/nomic-embed-text-v1": 768,  # Assuming 768 based on common practice
-            "Snowflake/snowflake-arctic-embed-l-v2.0": 1024,
-            "Snowflake/snowflake-arctic-embed-m-v2.0": 768,
-            "Snowflake/snowflake-arctic-embed-s-v2.0": 384,
-            "nomic-ai/nomic-embed-text-v1.5": 768,
-        }
-
-        # Try to get dimensions from known models first
-        for known_model, dims in model_dimensions.items():
-            if known_model in self.embedding_model:
-                logger.info(f"Using known dimensions for model {self.embedding_model}: {dims}")
-                return dims
-
-        # Default to 384 (all-MiniLM-L6-v2 dimensions) as fallback
-        # In production, this will generate a test embedding to detect actual size
-        logger.warning(f"Unknown model {self.embedding_model}, defaulting to 384 dimensions")
-        return 384
 
     async def _verify_model_compatibility(self) -> None:
         """
@@ -731,21 +710,8 @@ class QdrantStorage(MemoryStorage):
             RuntimeError: If sentence transformers not available
             Exception: If embedding generation fails
         """
-        if not SENTENCE_TRANSFORMERS_AVAILABLE:
-            raise RuntimeError("sentence_transformers not installed. Install with: pip install sentence-transformers")
-
         try:
-            # Thread-safe lazy loading - prevents concurrent requests from loading model twice
-            if not hasattr(self, "_embedding_model_instance"):
-                with self._model_lock:
-                    # Double-check after acquiring lock (another thread may have loaded it)
-                    if not hasattr(self, "_embedding_model_instance"):
-                        logger.info(f"Loading embedding model: {self.embedding_model}")
-                        device = get_torch_device()
-                        self._embedding_model_instance = SentenceTransformer(
-                            self.embedding_model, device=device, trust_remote_code=True
-                        )
-                        logger.info(f"Loaded model: {self.embedding_model} on device: {device}")
+            self._ensure_model_loaded()
 
             # Generate embedding (outside lock - model is thread-safe for inference)
             # Use prompt_name for instruction-tuned models (E5, Nomic, Arctic)
@@ -1093,18 +1059,7 @@ class QdrantStorage(MemoryStorage):
         if not texts:
             return []
 
-        if not SENTENCE_TRANSFORMERS_AVAILABLE:
-            raise RuntimeError("sentence_transformers not installed")
-
-        # Ensure model is loaded (same pattern as _generate_embedding)
-        if not hasattr(self, "_embedding_model_instance"):
-            with self._model_lock:
-                if not hasattr(self, "_embedding_model_instance"):
-                    logger.info(f"Loading embedding model: {self.embedding_model}")
-                    device = get_torch_device()
-                    self._embedding_model_instance = SentenceTransformer(
-                        self.embedding_model, device=device, trust_remote_code=True
-                    )
+        self._ensure_model_loaded()
 
         model = self._embedding_model_instance
         prompts = getattr(model, "prompts", None) or {}
