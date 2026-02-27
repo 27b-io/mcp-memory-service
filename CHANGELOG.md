@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.17.0](https://github.com/27b-io/mcp-memory-service/compare/v11.16.1...v11.17.0) (2026-02-27)
+
+
+### Features
+
+* prewarm embedding model on startup ([#141](https://github.com/27b-io/mcp-memory-service/issues/141)) ([626905a](https://github.com/27b-io/mcp-memory-service/commit/626905a18f6c71344a08551909b162ddae213dfe))
+
 ## [11.16.1](https://github.com/27b-io/mcp-memory-service/compare/v11.16.0...v11.16.1) (2026-02-26)
 
 
