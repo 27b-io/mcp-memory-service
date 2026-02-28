@@ -40,10 +40,10 @@ Tags = Annotated[list[str], BeforeValidator(normalize_tags)]
 # ---------------------------------------------------------------------------
 
 UnitFloat = Annotated[float, Field(ge=0.0, le=1.0)]
-"""Float clamped to [0.0, 1.0] — for scores, thresholds, similarities."""
+"""Float validated within [0.0, 1.0] — for scores, thresholds, similarities."""
 
 NonNegativeInt = Annotated[int, Field(ge=0)]
-"""Integer ≥ 0 — for counts, page numbers."""
+"""Integer validated as >= 0 — for counts, page numbers."""
 
 
 # ---------------------------------------------------------------------------

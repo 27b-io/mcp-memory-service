@@ -77,7 +77,7 @@ class RelationParams(BaseModel):
 
     action: Literal["create", "get", "delete"]
     content_hash: ContentHash
-    target_hash: str | None = None
+    target_hash: ContentHash | None = None
     relation_type: RelationType | None = None
 
     @model_validator(mode="after")

@@ -4,6 +4,7 @@ Pydantic v2 models replacing the original dataclass-based Memory
 and MemoryQueryResult with full validation and timestamp synchronisation.
 """
 
+import calendar
 import logging
 import time
 from datetime import datetime, timezone
@@ -59,21 +60,15 @@ def _iso_to_float(iso_str: str) -> float:
 
     try:
         if iso_str.endswith("Z"):
-            import calendar
-
             dt = datetime.fromisoformat(iso_str[:-1])
             return calendar.timegm(dt.timetuple()) + dt.microsecond / 1_000_000.0
         elif "+" in iso_str or iso_str.count("-") > 2:
             return datetime.fromisoformat(iso_str).timestamp()
         else:
-            import calendar
-
             dt = datetime.fromisoformat(iso_str)
             return calendar.timegm(dt.timetuple()) + dt.microsecond / 1_000_000.0
     except (ValueError, TypeError):
         try:
-            import calendar
-
             dt = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S")
             return float(calendar.timegm(dt.timetuple()))
         except (ValueError, TypeError):
@@ -126,6 +121,27 @@ def _sync_pair(
 
 
 # ---------------------------------------------------------------------------
+# Safe numeric parsing helpers (for legacy/malformed storage data)
+# ---------------------------------------------------------------------------
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    """Convert *v* to float, returning *default* on failure."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(v: Any, default: int = 0) -> int:
+    """Convert *v* to int, returning *default* on failure."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+# ---------------------------------------------------------------------------
 # Memory model
 # ---------------------------------------------------------------------------
 
@@ -167,7 +183,7 @@ class Memory(BaseModel):
     provenance: dict[str, Any] | None = None
 
     # Legacy timestamp field — computed from created_at, excluded from dumps
-    timestamp: datetime = Field(default_factory=datetime.now, exclude=True)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), exclude=True)
 
     @model_validator(mode="after")
     def sync_timestamps(self) -> Self:
@@ -266,8 +282,8 @@ class Memory(BaseModel):
             updated_at=updated_at,
             updated_at_iso=updated_at_iso,
             emotional_valence=data.get("emotional_valence"),
-            salience_score=float(data.get("salience_score", 0.0)),
-            access_count=int(data.get("access_count", 0)),
+            salience_score=_safe_float(data.get("salience_score", 0.0)),
+            access_count=_safe_int(data.get("access_count", 0)),
             access_timestamps=data.get("access_timestamps", []),
             encoding_context=data.get("encoding_context"),
             summary=data.get("summary"),

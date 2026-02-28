@@ -172,7 +172,7 @@ async def store_memory(
             summary=summary,
         )
     except ValidationError as e:
-        return _inject_latency({"success": False, "message": str(e)}, _t0)
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
 
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.store_memory(
@@ -279,7 +279,7 @@ async def search(
             min_trust_score=min_trust_score,
         )
     except ValidationError as e:
-        return _inject_latency({"error": str(e)}, _t0)
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
 
     memory_service = ctx.request_context.lifespan_context.memory_service
 

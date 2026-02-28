@@ -177,6 +177,7 @@ class ListResult(BaseModel):
     page: int = 1
     page_size: int = 10
     total_pages: int = 1
+    error: str | None = None
 
 
 class ScanResult(BaseModel):
