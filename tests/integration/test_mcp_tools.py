@@ -29,7 +29,7 @@ def deterministic_embedding(text: str, vector_size: int = 384) -> list[float]:
 
 
 def parse_tool_result(result) -> dict | str:
-    """Parse a FastMCP CallToolResult into a dict (JSON) or raw string (TOON)."""
+    """Parse a FastMCP CallToolResult into a dict (JSON) or a raw string (plain text)."""
     text = result.content[0].text
     try:
         return json.loads(text)
@@ -255,9 +255,9 @@ class TestSearch:
         )
         assert isinstance(result, str)
         # The TOON output must contain our stored memory's hash prefix
-        assert content_hash[:12] in result, (
-            f"Hybrid search should find memory {content_hash[:12]} via tag-boosted RRF, got: {result[:200]}"
-        )
+        assert (
+            content_hash[:12] in result
+        ), f"Hybrid search should find memory {content_hash[:12]} via tag-boosted RRF, got: {result[:200]}"
 
     async def test_search_tag_mode(self, mcp_client):
         await _seed_search(mcp_client)
@@ -280,9 +280,9 @@ class TestSearch:
         assert isinstance(result, dict)
         assert result.get("count", 0) > 0, f"Scan should find exact-match memory, got: {result}"
         found_hashes = [r["content_hash"] for r in result.get("results", [])]
-        assert stored_hash in found_hashes, (
-            f"Scan results should contain {stored_hash[:12]}, got hashes: {[h[:12] for h in found_hashes]}"
-        )
+        assert (
+            stored_hash in found_hashes
+        ), f"Scan results should contain {stored_hash[:12]}, got hashes: {[h[:12] for h in found_hashes]}"
 
     async def test_search_similar_mode(self, mcp_client):
         """Similar mode uses pure k-NN vector search. Same text → same embedding → similarity 1.0."""
@@ -294,9 +294,9 @@ class TestSearch:
         assert isinstance(result, dict)
         assert result.get("count", 0) > 0, f"Similar should find exact-match memory, got: {result}"
         found_hashes = [m["content_hash"] for m in result.get("memories", [])]
-        assert stored_hash in found_hashes, (
-            f"Similar results should contain {stored_hash[:12]}, got hashes: {[h[:12] for h in found_hashes]}"
-        )
+        assert (
+            stored_hash in found_hashes
+        ), f"Similar results should contain {stored_hash[:12]}, got hashes: {[h[:12] for h in found_hashes]}"
 
     async def test_search_invalid_mode(self, mcp_client):
         result = parse_tool_result(await mcp_client.call_tool("search", {"query": "anything", "mode": "bogus"}))
@@ -503,13 +503,15 @@ class TestFindDuplicates:
         assert result["success"] is True
         assert result["total_duplicates_found"] > 0, f"Should detect duplicates when all embeddings are identical, got: {result}"
         assert len(result["groups"]) > 0, "Should have at least one duplicate group"
-        # Verify our two memories appear in a group together
-        all_group_hashes = set()
+        # Verify both memories appear in the same duplicate group
+        shared_group = None
         for group in result["groups"]:
-            all_group_hashes.update(group["hashes"])
-        assert hash_a in all_group_hashes or hash_b in all_group_hashes, (
-            "At least one of our test memories should be in a duplicate group"
-        )
+            if hash_a in group["hashes"] and hash_b in group["hashes"]:
+                shared_group = group
+                break
+        assert (
+            shared_group is not None
+        ), f"hash_a and hash_b should be in the same duplicate group, but groups were: {result['groups']}"
 
 
 # ---------------------------------------------------------------------------
@@ -657,9 +659,9 @@ class TestCrossToolWorkflows:
         )
         assert isinstance(search_default, str)
         assert hash_b[:12] in search_default, f"B should appear in default hybrid search, got: {search_default[:300]}"
-        assert hash_a[:12] not in search_default, (
-            f"Superseded A should be excluded from default search, got: {search_default[:300]}"
-        )
+        assert (
+            hash_a[:12] not in search_default
+        ), f"Superseded A should be excluded from default search, got: {search_default[:300]}"
 
         # Hybrid search with include_superseded=True — A should be present
         search_with_superseded = parse_tool_result(
@@ -675,9 +677,9 @@ class TestCrossToolWorkflows:
             )
         )
         assert isinstance(search_with_superseded, str)
-        assert hash_a[:12] in search_with_superseded, (
-            f"Superseded A should appear with include_superseded=True, got: {search_with_superseded[:300]}"
-        )
+        assert (
+            hash_a[:12] in search_with_superseded
+        ), f"Superseded A should appear with include_superseded=True, got: {search_with_superseded[:300]}"
 
 
 # ---------------------------------------------------------------------------
