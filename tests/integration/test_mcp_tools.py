@@ -190,7 +190,7 @@ class TestStoreMemory:
         )
         assert isinstance(search_result, str)
         assert content_hash[:12] in search_result
-        # Verify at least one of the stored tags appears in the TOON output
+        # Verify at least one of the stored tags appears in the plain text output
         assert unique_tag in search_result or "readback-extra" in search_result
 
     async def test_store_comma_separated_tags(self, mcp_client):
@@ -254,7 +254,7 @@ class TestSearch:
             await mcp_client.call_tool("search", {"query": "hybridunique marker", "mode": "hybrid", "min_similarity": 0.0})
         )
         assert isinstance(result, str)
-        # The TOON output must contain our stored memory's hash prefix
+        # The plain text output must contain our stored memory's hash prefix
         assert (
             content_hash[:12] in result
         ), f"Hybrid search should find memory {content_hash[:12]} via tag-boosted RRF, got: {result[:200]}"
