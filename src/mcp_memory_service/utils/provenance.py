@@ -6,11 +6,15 @@ Supports trust scoring based on source reliability to enable filtering by
 source quality.
 
 Trust scores range from 0.0 (untrusted) to 1.0 (fully trusted). Sources not
-in the DEFAULT_SOURCE_TRUST map receive a score of 0.5 (neutral).
+in the DEFAULT_SOURCE_TRUST map receive DEFAULT_TRUST_SCORE (neutral).
 """
 
+import math
 import time
 from typing import Any
+
+# Neutral trust score for memories without provenance or with invalid scores.
+DEFAULT_TRUST_SCORE: float = 0.5
 
 # Default trust scores by source type.
 # Add sources here to set their default reliability.
@@ -20,22 +24,31 @@ DEFAULT_SOURCE_TRUST: dict[str, float] = {
     "batch": 0.7,
     "auto_split": 0.8,
     "import": 0.6,
-    "unknown": 0.5,
+    "unknown": DEFAULT_TRUST_SCORE,
 }
 
-# Modification history is capped to prevent unbounded metadata growth
-MAX_MODIFICATION_HISTORY = 50
+# Keys that build_provenance() sets — extra dict must not overwrite these.
+_RESERVED_PROVENANCE_KEYS: frozenset[str] = frozenset(
+    {
+        "source",
+        "creation_method",
+        "trust_score",
+        "created_at",
+        "modification_history",
+        "actor",
+    }
+)
 
 
 def compute_trust_score(source: str) -> float:
     """Return trust score for a given source string.
 
     Supports hostname-prefixed sources like "source:hostname" (strips prefix).
-    Returns 0.5 for unknown sources.
+    Returns DEFAULT_TRUST_SCORE for unknown sources.
     """
     if source.startswith("source:"):
         source = source[len("source:") :]
-    return DEFAULT_SOURCE_TRUST.get(source, 0.5)
+    return DEFAULT_SOURCE_TRUST.get(source, DEFAULT_TRUST_SCORE)
 
 
 def build_provenance(
@@ -51,7 +64,8 @@ def build_provenance(
         source: Originating source identifier (e.g. "api", hostname, "consolidation")
         creation_method: How the memory was created ("direct", "auto_split", "batch", "consolidation")
         actor: Optional agent/client identifier (e.g. client_hostname)
-        extra: Optional additional fields to merge into the provenance record
+        extra: Optional additional fields to merge into the provenance record.
+            Reserved keys (source, trust_score, etc.) are silently ignored.
 
     Returns:
         Provenance dict suitable for storage in metadata["provenance"]
@@ -67,44 +81,59 @@ def build_provenance(
     if actor:
         record["actor"] = actor
     if extra:
-        record.update(extra)
+        safe_extra = {k: v for k, v in extra.items() if k not in _RESERVED_PROVENANCE_KEYS}
+        record.update(safe_extra)
     return record
 
 
-def record_modification(
-    provenance: dict[str, Any],
-    operation: str,
-    actor: str | None = None,
-) -> dict[str, Any]:
-    """Append a modification record to provenance modification_history.
+def _extract_trust_from_provenance(provenance: Any) -> float | None:
+    """Extract trust_score from a provenance dict, returning None if invalid.
 
-    Returns a new provenance dict (does not mutate the original).
-    History is capped at MAX_MODIFICATION_HISTORY entries (oldest dropped).
+    Returns None for missing, non-numeric, NaN, inf, or out-of-range [0.0, 1.0] values.
     """
-    provenance = dict(provenance)
-    history: list[dict[str, Any]] = list(provenance.get("modification_history", []))
+    if not isinstance(provenance, dict):
+        return None
+    raw = provenance.get("trust_score")
+    if raw is None:
+        return None
+    try:
+        score = float(raw)
+    except (ValueError, TypeError):
+        return None
+    if not math.isfinite(score) or score < 0.0 or score > 1.0:
+        return None
+    return score
 
-    entry: dict[str, Any] = {
-        "timestamp": time.time(),
-        "operation": operation,
-    }
-    if actor:
-        entry["actor"] = actor
 
-    history.append(entry)
-    if len(history) > MAX_MODIFICATION_HISTORY:
-        history = history[-MAX_MODIFICATION_HISTORY:]
+def resolve_trust_score(result: dict[str, Any]) -> float:
+    """Resolve the canonical trust score from a search result dict.
 
-    provenance["modification_history"] = history
-    return provenance
+    Checks top-level provenance first (canonical post-roundtrip location),
+    then falls back to metadata.provenance (pre-roundtrip location).
+    Returns DEFAULT_TRUST_SCORE if neither location has valid provenance.
+
+    Handles NaN/inf by treating them as missing.
+    """
+    # Top-level provenance is canonical (post-roundtrip)
+    score = _extract_trust_from_provenance(result.get("provenance"))
+    if score is not None:
+        return score
+
+    # Fallback: metadata.provenance (pre-roundtrip)
+    metadata = result.get("metadata")
+    if isinstance(metadata, dict):
+        score = _extract_trust_from_provenance(metadata.get("provenance"))
+        if score is not None:
+            return score
+
+    return DEFAULT_TRUST_SCORE
 
 
 def get_trust_score(memory_metadata: dict[str, Any]) -> float:
     """Extract trust score from a memory's metadata dict.
 
-    Returns 0.5 if no provenance is present (neutral default).
+    Returns DEFAULT_TRUST_SCORE if no provenance is present or trust_score is
+    missing, non-numeric, NaN, infinite, or outside [0.0, 1.0].
     """
-    provenance = memory_metadata.get("provenance")
-    if not isinstance(provenance, dict):
-        return 0.5
-    return float(provenance.get("trust_score", 0.5))
+    score = _extract_trust_from_provenance(memory_metadata.get("provenance"))
+    return score if score is not None else DEFAULT_TRUST_SCORE

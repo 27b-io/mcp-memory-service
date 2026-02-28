@@ -16,6 +16,7 @@ Features:
 """
 
 import logging
+import math
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -319,6 +320,11 @@ async def search(
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
     min_similarity = max(0.0, min(min_similarity, 1.0))
+    if min_trust_score is not None:
+        if math.isnan(min_trust_score) or math.isinf(min_trust_score):
+            min_trust_score = None
+        else:
+            min_trust_score = max(0.0, min(min_trust_score, 1.0))
 
     memory_service = ctx.request_context.lifespan_context.memory_service
 
