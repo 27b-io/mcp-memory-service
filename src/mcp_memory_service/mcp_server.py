@@ -1,35 +1,22 @@
 #!/usr/bin/env python3
-"""
-FastAPI MCP Server for Memory Service
+"""FastAPI MCP Server for Memory Service.
 
-This module implements a native MCP server using the FastAPI MCP framework,
-replacing the Node.js HTTP-to-MCP bridge to resolve SSL connectivity issues
-and provide direct MCP protocol support.
-
-Features:
-- Native MCP protocol implementation using FastMCP
-- Direct integration with existing memory storage backends
-- Streamable HTTP transport for remote access
-- 5 core tools: store_memory, search, delete_memory, check_database_health, relation
-- Three-tier memory tools available behind MCP_THREE_TIER_EXPOSE_TOOLS=true
-- SSL/HTTPS support with proper certificate handling
+Native MCP protocol implementation using FastMCP with Pydantic-validated
+tool inputs.  Each tool handler constructs an input model for validation,
+removing all inline range clamping, mode checking, and required-field logic.
 """
 
 import logging
-import math
+import os
+import sys
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, TypedDict
-
-try:
-    from typing import NotRequired  # Python 3.11+
-except ImportError:
-    from typing_extensions import NotRequired  # Python 3.10
-import os
-import sys
 from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
 
 # Add src to path for imports
 current_dir = Path(__file__).parent
@@ -40,12 +27,22 @@ from fastmcp import Context, FastMCP  # noqa: E402
 
 # Import existing memory service components
 from .formatters.toon import format_search_results_as_toon  # noqa: E402
+from .models.mcp_inputs import (  # noqa: E402
+    ContradictionsParams,
+    FindDuplicatesParams,
+    MergeDuplicatesParams,
+    RelationParams,
+    SearchParams,
+    StoreMemoryParams,
+    SupersedeParams,
+)
+from .models.validators import normalize_tags  # noqa: E402
 from .resources.toon_documentation import TOON_FORMAT_DOCUMENTATION  # noqa: E402
 from .services.memory_service import MemoryService  # noqa: E402
 from .storage.base import MemoryStorage  # noqa: E402
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)  # Default to INFO level
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -68,7 +65,6 @@ def _inject_latency(response: dict[str, Any] | str, start: float) -> dict[str, A
     if isinstance(response, dict):
         response["latency_ms"] = elapsed
         return response
-    # TOON string — prepend latency as comment
     return f"# latency_ms={elapsed}\n{response}"
 
 
@@ -94,13 +90,12 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
         logger.debug("Using pre-initialized shared storage instance")
         storage = await get_shared_storage()
     else:
-        # Fallback to creating storage if running standalone
         logger.info("No shared storage found, initializing new instance (standalone mode)")
         from .storage.factory import create_storage_instance
 
         storage = await create_storage_instance()
 
-    # Initialize memory service with shared business logic (including graph layer if available)
+    # Initialize memory service with shared business logic
     from .shared_storage import get_graph_client, get_write_queue
 
     memory_service = MemoryService(
@@ -112,8 +107,6 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     try:
         yield MCPServerContext(storage=storage, memory_service=memory_service)
     finally:
-        # Only close storage if we created it (standalone mode)
-        # Shared storage is managed by unified_server
         if not is_storage_initialized():
             logger.info("Shutting down MCP Memory Service components...")
             if hasattr(storage, "close"):
@@ -131,61 +124,13 @@ mcp = FastMCP("MCP Memory Service", lifespan=mcp_server_lifespan)
 
 @mcp.resource("toon://format/documentation")
 def toon_format_docs() -> str:
-    """
-    Return comprehensive TOON format specification for LLM consumption.
-
-    This resource provides the complete TOON (Terser Object Notation) format
-    specification, including structure, field types, parsing strategies, and examples.
-    Used by LLMs to understand the compact pipe-delimited format returned by memory tools.
-    """
+    """Return comprehensive TOON format specification for LLM consumption."""
     return TOON_FORMAT_DOCUMENTATION
-
-
-# =============================================================================
-# TYPE DEFINITIONS
-# =============================================================================
-
-
-class StoreMemorySuccess(TypedDict):
-    """Return type for successful single memory storage."""
-
-    success: bool
-    message: str
-    content_hash: str
-    interference: NotRequired[dict[str, Any]]
-
-
-class StoreMemorySplitSuccess(TypedDict):
-    """Return type for successful chunked memory storage."""
-
-    success: bool
-    message: str
-    chunks_created: int
-    chunk_hashes: list[str]
-    interference: NotRequired[dict[str, Any]]
-
-
-class StoreMemoryFailure(TypedDict):
-    """Return type for failed memory storage."""
-
-    success: bool
-    message: str
-    chunks_created: NotRequired[int]
-    chunk_hashes: NotRequired[list[str]]
 
 
 # =============================================================================
 # CORE MEMORY OPERATIONS
 # =============================================================================
-
-
-def _normalize_tags(tags: str | list[str] | None) -> list[str]:
-    """Normalize tags from string or list format to a clean list of trimmed, non-empty strings."""
-    if tags is None:
-        return []
-    if isinstance(tags, str):
-        return [t.strip() for t in tags.split(",") if t.strip()]
-    return [s for item in tags if item is not None and (s := str(item).strip())]
 
 
 @mcp.tool()
@@ -197,7 +142,7 @@ async def store_memory(
     metadata: dict[str, Any] | None = None,
     client_hostname: str | None = None,
     summary: str | None = None,
-) -> StoreMemorySuccess | StoreMemorySplitSuccess | StoreMemoryFailure:
+) -> dict[str, Any]:
     """Store a new memory for future semantic retrieval.
 
     Content is vectorized for similarity search. Emotional valence, salience scoring,
@@ -216,48 +161,58 @@ async def store_memory(
         May include interference dict if contradictions detected.
     """
     _t0 = time.perf_counter()
-    # C1 fix: normalize tags before passing to service layer
-    normalized_tags = _normalize_tags(tags)
-    # Delegate to shared MemoryService business logic
+
+    try:
+        params = StoreMemoryParams(
+            content=content,
+            tags=tags,
+            memory_type=memory_type,
+            metadata=metadata,
+            client_hostname=client_hostname,
+            summary=summary,
+        )
+    except ValidationError as e:
+        return _inject_latency({"success": False, "message": str(e)}, _t0)
+
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.store_memory(
-        content=content,
-        tags=normalized_tags or None,
-        memory_type=memory_type,
-        metadata=metadata,
-        client_hostname=client_hostname,
-        summary=summary,
+        content=params.content,
+        tags=params.tags or None,
+        memory_type=params.memory_type,
+        metadata=params.metadata,
+        client_hostname=params.client_hostname,
+        summary=params.summary,
     )
 
-    # Transform MemoryService response to MCP schema
+    # Transform service response to MCP wire format
     if result["success"]:
         interference = result.get("interference")
 
         if "memory" in result:
-            # Single memory case
-            response = StoreMemorySuccess(
-                success=True,
-                message="Memory stored successfully",
-                content_hash=result["memory"]["content_hash"],
-            )
+            response: dict[str, Any] = {
+                "success": True,
+                "message": "Memory stored successfully",
+                "content_hash": result["memory"]["content_hash"],
+            }
             if interference:
                 response["interference"] = interference
             return _inject_latency(response, _t0)
         elif "memories" in result:
-            # Chunked memory case
             chunk_hashes = [m["content_hash"] for m in result["memories"]]
-            response = StoreMemorySplitSuccess(
-                success=True,
-                message=f"Memory stored as {result['total_chunks']} chunks",
-                chunks_created=result["total_chunks"],
-                chunk_hashes=chunk_hashes,
-            )
+            response = {
+                "success": True,
+                "message": f"Memory stored as {result['total_chunks']} chunks",
+                "chunks_created": result["total_chunks"],
+                "chunk_hashes": chunk_hashes,
+            }
             if interference:
                 response["interference"] = interference
             return _inject_latency(response, _t0)
 
-    # Failure case
-    return _inject_latency(StoreMemoryFailure(success=False, message=result.get("error", "Unknown error occurred")), _t0)
+    return _inject_latency(
+        {"success": False, "message": result.get("error", "Unknown error occurred")},
+        _t0,
+    )
 
 
 @mcp.tool()
@@ -306,72 +261,77 @@ async def search(
     """
     _t0 = time.perf_counter()
 
-    # C2: validate mode
-    _VALID_MODES = {"hybrid", "scan", "similar", "tag", "recent"}
-    if mode not in _VALID_MODES:
-        return _inject_latency({"error": f"Unknown mode: '{mode}'. Valid: {', '.join(sorted(_VALID_MODES))}"}, _t0)
-
-    # C3: require query for query-dependent modes
-    if mode in {"hybrid", "scan", "similar"} and not (query or "").strip():
-        return _inject_latency({"error": f"query is required for '{mode}' mode"}, _t0)
-
-    # M3: clamp numeric params to safe ranges
-    k = max(1, min(k, 100))
-    page = max(1, page)
-    page_size = max(1, min(page_size, 100))
-    min_similarity = max(0.0, min(min_similarity, 1.0))
-    if min_trust_score is not None:
-        if math.isnan(min_trust_score) or math.isinf(min_trust_score):
-            min_trust_score = None
-        else:
-            min_trust_score = max(0.0, min(min_trust_score, 1.0))
-
-    memory_service = ctx.request_context.lifespan_context.memory_service
-
-    if mode == "scan":
-        # M4: output param applies to scan mode
-        output_format = output if output in {"full", "summary", "both"} else "full"
-        result = await memory_service.scan_memories(
+    # Validate all inputs via Pydantic model
+    try:
+        params = SearchParams(
             query=query,
-            n_results=k,
-            min_relevance=min_similarity,
-            output_format=output_format,
-        )
-        return _inject_latency(result, _t0)
-
-    if mode == "similar":
-        result = await memory_service.find_similar_memories(query=query, k=k)
-        return _inject_latency(result, _t0)
-
-    if mode == "tag":
-        normalized = _normalize_tags(tags)
-        if not normalized:
-            return _inject_latency({"error": "tags parameter required for tag mode"}, _t0)
-        result = await memory_service.search_by_tag(tags=normalized, match_all=match_all, page=page, page_size=page_size)
-    elif mode == "recent":
-        normalized = _normalize_tags(tags)
-        if len(normalized) > 1:
-            logger.warning("recent mode only supports a single tag filter; using first tag '%s'", normalized[0])
-        tag_filter = normalized[0] if normalized else None
-        result = await memory_service.list_memories(page=page, page_size=page_size, tag=tag_filter, memory_type=memory_type)
-    else:
-        # hybrid search — M1: pass tags through for boosting
-        normalized_tags = _normalize_tags(tags) or None
-        result = await memory_service.retrieve_memories(
-            query=query,
+            mode=mode,
+            tags=tags,
+            match_all=match_all,
+            k=k,
             page=page,
             page_size=page_size,
             min_similarity=min_similarity,
+            output=output,
+            memory_type=memory_type,
             encoding_context=encoding_context,
-            tags=normalized_tags,
             include_superseded=include_superseded,
             min_trust_score=min_trust_score,
         )
+    except ValidationError as e:
+        return _inject_latency({"error": str(e)}, _t0)
+
+    memory_service = ctx.request_context.lifespan_context.memory_service
+
+    if params.mode == "scan":
+        result = await memory_service.scan_memories(
+            query=params.query,
+            n_results=params.k,
+            min_relevance=params.min_similarity,
+            output_format=params.output,
+        )
+        return _inject_latency(result, _t0)
+
+    if params.mode == "similar":
+        result = await memory_service.find_similar_memories(query=params.query, k=params.k)
+        return _inject_latency(result, _t0)
+
+    if params.mode == "tag":
+        if not params.tags:
+            return _inject_latency({"error": "tags parameter required for tag mode"}, _t0)
+        result = await memory_service.search_by_tag(
+            tags=params.tags,
+            match_all=params.match_all,
+            page=params.page,
+            page_size=params.page_size,
+        )
+    elif params.mode == "recent":
+        if len(params.tags) > 1:
+            logger.warning("recent mode only supports a single tag filter; using first tag '%s'", params.tags[0])
+        tag_filter = params.tags[0] if params.tags else None
+        result = await memory_service.list_memories(
+            page=params.page,
+            page_size=params.page_size,
+            tag=tag_filter,
+            memory_type=params.memory_type,
+        )
+    else:
+        # hybrid search
+        result = await memory_service.retrieve_memories(
+            query=params.query,
+            page=params.page,
+            page_size=params.page_size,
+            min_similarity=params.min_similarity,
+            encoding_context=params.encoding_context,
+            tags=params.tags or None,
+            include_superseded=params.include_superseded,
+            min_trust_score=params.min_trust_score,
+        )
 
     pagination = {
-        "page": result.get("page", page),
+        "page": result.get("page", params.page),
         "total": result.get("total", 0),
-        "page_size": result.get("page_size", page_size),
+        "page_size": result.get("page_size", params.page_size),
         "has_more": result.get("has_more", False),
         "total_pages": result.get("total_pages", 0),
     }
@@ -381,8 +341,7 @@ async def search(
 
 @mcp.tool()
 async def delete_memory(content_hash: str, ctx: Context) -> dict[str, bool | str]:
-    """
-    Permanently delete a specific memory by its unique identifier.
+    """Permanently delete a specific memory by its unique identifier.
 
     Removes a memory from the database. This operation is irreversible.
     The content_hash is returned when storing memories or can be found in
@@ -402,7 +361,6 @@ async def delete_memory(content_hash: str, ctx: Context) -> dict[str, bool | str
     Warning: Deletion is permanent. Verify the content_hash before deleting.
     """
     _t0 = time.perf_counter()
-    # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.delete_memory(content_hash)
     return _inject_latency(result, _t0)
@@ -410,8 +368,7 @@ async def delete_memory(content_hash: str, ctx: Context) -> dict[str, bool | str
 
 @mcp.tool()
 async def check_database_health(ctx: Context) -> dict[str, Any]:
-    """
-    Check memory database health and get storage statistics.
+    """Check memory database health and get storage statistics.
 
     Verifies database connectivity and returns operational metrics including
     total memory count, storage backend type, and system status.
@@ -428,7 +385,6 @@ async def check_database_health(ctx: Context) -> dict[str, Any]:
     verifying service status, troubleshooting performance problems.
     """
     _t0 = time.perf_counter()
-    # Delegate to shared MemoryService business logic
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.check_database_health()
     return _inject_latency(result, _t0)
@@ -466,27 +422,34 @@ async def relation(
     """
     _t0 = time.perf_counter()
 
-    _VALID_ACTIONS = {"create", "get", "delete"}
-    if action not in _VALID_ACTIONS:
-        return _inject_latency(
-            {"success": False, "error": f"Unknown action: '{action}'. Valid: {', '.join(sorted(_VALID_ACTIONS))}"}, _t0
+    try:
+        params = RelationParams(
+            action=action,
+            content_hash=content_hash,
+            target_hash=target_hash,
+            relation_type=relation_type,
         )
+    except ValidationError as e:
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
 
     memory_service = ctx.request_context.lifespan_context.memory_service
 
-    if action == "create":
-        if not target_hash or not relation_type:
-            return _inject_latency({"success": False, "error": "target_hash and relation_type required for create"}, _t0)
+    if params.action == "create":
         result = await memory_service.create_relation(
-            source_hash=content_hash, target_hash=target_hash, relation_type=relation_type
+            source_hash=params.content_hash,
+            target_hash=params.target_hash,
+            relation_type=params.relation_type,
         )
-    elif action == "get":
-        result = await memory_service.get_relations(content_hash=content_hash, relation_type=relation_type)
-    elif action == "delete":
-        if not target_hash or not relation_type:
-            return _inject_latency({"success": False, "error": "target_hash and relation_type required for delete"}, _t0)
+    elif params.action == "get":
+        result = await memory_service.get_relations(
+            content_hash=params.content_hash,
+            relation_type=params.relation_type,
+        )
+    else:  # delete
         result = await memory_service.delete_relation(
-            source_hash=content_hash, target_hash=target_hash, relation_type=relation_type
+            source_hash=params.content_hash,
+            target_hash=params.target_hash,
+            relation_type=params.relation_type,
         )
 
     return _inject_latency(result, _t0)
@@ -522,8 +485,18 @@ async def memory_supersede(
         {success, superseded, superseded_by, reason} on success, or {success, error} on failure.
     """
     _t0 = time.perf_counter()
+
+    try:
+        params = SupersedeParams(old_id=old_id, new_id=new_id, reason=reason)
+    except ValidationError as e:
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
+
     memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.supersede_memory(old_hash=old_id, new_hash=new_id, reason=reason)
+    result = await memory_service.supersede_memory(
+        old_hash=params.old_id,
+        new_hash=params.new_id,
+        reason=params.reason,
+    )
     return _inject_latency(result, _t0)
 
 
@@ -546,9 +519,14 @@ async def memory_contradictions(
          memory_b_content, memory_a_superseded, memory_b_superseded}], total}
     """
     _t0 = time.perf_counter()
-    limit = max(1, min(limit, 100))
+
+    try:
+        params = ContradictionsParams(limit=limit)
+    except ValidationError as e:
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
+
     memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.get_contradictions_dashboard(limit=limit)
+    result = await memory_service.get_contradictions_dashboard(limit=params.limit)
     return _inject_latency(result, _t0)
 
 
@@ -583,13 +561,21 @@ async def find_duplicates(
          total_memories_scanned, total_duplicates_found}
     """
     _t0 = time.perf_counter()
-    similarity_threshold = max(0.5, min(1.0, similarity_threshold))
-    limit = max(10, min(limit, 2000))
+
+    try:
+        params = FindDuplicatesParams(
+            similarity_threshold=similarity_threshold,
+            limit=limit,
+            strategy=strategy,
+        )
+    except ValidationError as e:
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
+
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.find_duplicates(
-        similarity_threshold=similarity_threshold,
-        limit=limit,
-        strategy=strategy,
+        similarity_threshold=params.similarity_threshold,
+        limit=params.limit,
+        strategy=params.strategy,
     )
     return _inject_latency(result, _t0)
 
@@ -624,12 +610,23 @@ async def merge_duplicates(
         {success, canonical_hash, superseded: [hashes], errors: [], dry_run}
     """
     _t0 = time.perf_counter()
+
+    try:
+        params = MergeDuplicatesParams(
+            canonical_hash=canonical_hash,
+            duplicate_hashes=duplicate_hashes,
+            reason=reason,
+            dry_run=dry_run,
+        )
+    except ValidationError as e:
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
+
     memory_service = ctx.request_context.lifespan_context.memory_service
     result = await memory_service.merge_duplicate_group(
-        canonical_hash=canonical_hash,
-        duplicate_hashes=duplicate_hashes,
-        reason=reason,
-        dry_run=dry_run,
+        canonical_hash=params.canonical_hash,
+        duplicate_hashes=params.duplicate_hashes,
+        reason=params.reason,
+        dry_run=params.dry_run,
     )
     return _inject_latency(result, _t0)
 
@@ -637,9 +634,6 @@ async def merge_duplicates(
 # =============================================================================
 # THREE-TIER MEMORY (server-side automation, not exposed as tools by default)
 # =============================================================================
-# The three-tier memory model (sensory → working → long-term) runs server-side.
-# To expose these as MCP tools for autonomous agent rigs, set:
-#   MCP_THREE_TIER_EXPOSE_TOOLS=true
 
 
 def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
@@ -658,7 +652,7 @@ def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
         three_tier = memory_service.three_tier
         if three_tier is None:
             return {"success": False, "error": "Three-tier memory is disabled"}
-        tag_list = _normalize_tags(tags)
+        tag_list = normalize_tags(tags)
         three_tier.push_sensory(content, metadata=metadata, tags=tag_list, memory_type=memory_type)
         return {"success": True, "message": "Item pushed to sensory buffer", "buffer": three_tier.sensory.stats()}
 
@@ -676,7 +670,7 @@ def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
         three_tier = memory_service.three_tier
         if three_tier is None:
             return {"success": False, "error": "Three-tier memory is disabled"}
-        tag_list = _normalize_tags(tags)
+        tag_list = normalize_tags(tags)
         chunk = three_tier.attend(key=key, content=content, metadata=metadata, tags=tag_list, memory_type=memory_type)
         return {"success": True, "key": key, "access_count": chunk.access_count, "working_memory": three_tier.working.stats()}
 
@@ -721,10 +715,7 @@ def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
 
 
 def _maybe_register_three_tier_tools() -> None:
-    """Register three-tier tools if expose_tools is enabled.
-
-    Deferred to startup (not module-level) to preserve lazy _SettingsProxy behavior.
-    """
+    """Register three-tier tools if expose_tools is enabled."""
     from .config import settings as _settings
 
     if _settings.three_tier.expose_tools:
@@ -738,21 +729,17 @@ def _maybe_register_three_tier_tools() -> None:
 
 def main():
     """Main entry point for the FastAPI MCP server."""
-    # Configure for Claude Code integration
     port = int(os.getenv("MCP_SERVER_PORT", "8000"))
     host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
 
     logger.info(f"Starting MCP Memory Service FastAPI server on {host}:{port}")
     logger.info("Storage backend: Qdrant")
 
-    # Check transport mode from environment
     transport_mode = os.getenv("MCP_TRANSPORT_MODE", "http")
 
     if transport_mode == "stdio":
-        # Run server with stdio transport
         mcp.run(transport="stdio")
     else:
-        # Run server with HTTP transport — stateless so no session tracking
         mcp.run(transport="http", host=host, port=port, stateless_http=True)
 
 
