@@ -35,6 +35,7 @@ _RESERVED_PROVENANCE_KEYS: frozenset[str] = frozenset(
         "trust_score",
         "created_at",
         "modification_history",
+        "actor",
     }
 )
 

@@ -115,6 +115,11 @@ class TestBuildProvenance:
         for key in _RESERVED_PROVENANCE_KEYS:
             assert prov.get(key) != "HACKED", f"Reserved key '{key}' was overwritten by extra"
 
+    def test_extra_cannot_overwrite_actor(self):
+        """extra dict must not clobber the explicit actor parameter."""
+        prov = build_provenance(source="api", creation_method="direct", actor="legit-agent", extra={"actor": "evil"})
+        assert prov["actor"] == "legit-agent"
+
     def test_extra_non_reserved_keys_still_work(self):
         """Non-reserved keys in extra must still be merged normally."""
         prov = build_provenance(
