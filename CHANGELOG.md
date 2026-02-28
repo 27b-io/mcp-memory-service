@@ -8,6 +8,20 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.18.0](https://github.com/27b-io/mcp-memory-service/compare/v11.17.0...v11.18.0) (2026-02-28)
+
+
+### Features
+
+* add memory provenance tracking with trust scoring ([#144](https://github.com/27b-io/mcp-memory-service/issues/144)) ([29cb1fe](https://github.com/27b-io/mcp-memory-service/commit/29cb1feff71782c2b1b39cecfe70d469d92efd3b))
+* integration tests for all 9 MCP tools via FastMCP Client ([#147](https://github.com/27b-io/mcp-memory-service/issues/147)) ([a85a842](https://github.com/27b-io/mcp-memory-service/commit/a85a842df8416128954f3a05076f490da753f17d))
+
+
+### Bug Fixes
+
+* resolve trust filter OR-condition bug and harden provenance ([#148](https://github.com/27b-io/mcp-memory-service/issues/148)) ([5e9b3a3](https://github.com/27b-io/mcp-memory-service/commit/5e9b3a328d57ae3b3891a8add2e23bdbcf947768))
+* split Dockerfile model prewarm to prevent cascade failure ([#146](https://github.com/27b-io/mcp-memory-service/issues/146)) ([99187dc](https://github.com/27b-io/mcp-memory-service/commit/99187dcaefd27d9672bb8986703a5a594be292bb))
+
 ## [11.17.0](https://github.com/27b-io/mcp-memory-service/compare/v11.16.1...v11.17.0) (2026-02-27)
 
 
