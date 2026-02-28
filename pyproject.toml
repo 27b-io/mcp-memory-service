@@ -63,6 +63,7 @@ dependencies = [
     "vadersentiment>=3.3.2",
     "spacy>=3.8.11",
     "cachekit>=0.3.1",
+    "einops>=0.8.2",
 ]
 
 [project.optional-dependencies]
