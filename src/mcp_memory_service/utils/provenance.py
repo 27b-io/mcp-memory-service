@@ -129,9 +129,19 @@ def resolve_trust_score(result: dict[str, Any]) -> float:
 def get_trust_score(memory_metadata: dict[str, Any]) -> float:
     """Extract trust score from a memory's metadata dict.
 
-    Returns DEFAULT_TRUST_SCORE if no provenance is present (neutral default).
+    Returns DEFAULT_TRUST_SCORE if no provenance is present or trust_score is
+    missing, non-numeric, NaN, or infinite.
     """
     provenance = memory_metadata.get("provenance")
     if not isinstance(provenance, dict):
         return DEFAULT_TRUST_SCORE
-    return float(provenance.get("trust_score", DEFAULT_TRUST_SCORE))
+    raw = provenance.get("trust_score")
+    if raw is None:
+        return DEFAULT_TRUST_SCORE
+    try:
+        score = float(raw)
+    except (ValueError, TypeError):
+        return DEFAULT_TRUST_SCORE
+    if not math.isfinite(score):
+        return DEFAULT_TRUST_SCORE
+    return score

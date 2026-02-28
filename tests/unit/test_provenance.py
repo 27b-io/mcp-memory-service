@@ -201,6 +201,23 @@ class TestGetTrustScore:
         metadata = {"provenance": {"trust_score": 0.3}}
         assert get_trust_score(metadata) == 0.3
 
+    def test_returns_default_for_invalid_trust_score_values(self):
+        """Non-numeric, NaN, and inf trust_score values must fall back to default."""
+        invalid_values = [
+            None,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            "not_a_number",
+            [],
+            {"nested": "dict"},
+        ]
+        for val in invalid_values:
+            metadata = {"provenance": {"trust_score": val}}
+            assert (
+                get_trust_score(metadata) == DEFAULT_TRUST_SCORE
+            ), f"get_trust_score should return DEFAULT_TRUST_SCORE for trust_score={val!r}"
+
     def test_default_uses_constant(self):
         """The default value must be the named constant, not a magic number."""
         assert DEFAULT_TRUST_SCORE == 0.5
