@@ -49,7 +49,7 @@ from ..utils.hybrid_search import (
     temporal_decay_factor,
 )
 from ..utils.interference import ContradictionSignal, InterferenceResult, detect_contradiction_signals
-from ..utils.provenance import build_provenance, get_trust_score
+from ..utils.provenance import build_provenance, get_trust_score, resolve_trust_score
 from ..utils.query_intent import get_analyzer
 from ..utils.salience import SalienceFactors, apply_salience_boost, compute_salience
 from ..utils.spaced_repetition import apply_spacing_boost, compute_spacing_quality
@@ -741,6 +741,16 @@ class MemoryService:
         """Filter out superseded memories from a results list."""
         return [r for r in results if not (r.get("metadata") or {}).get("superseded_by")]
 
+    def _filter_by_trust_score(self, results: list[dict[str, Any]], min_trust_score: float | None) -> list[dict[str, Any]]:
+        """Filter results by minimum provenance trust score.
+
+        Uses resolve_trust_score() to find the canonical score from whichever
+        location has real provenance data (top-level or metadata).
+        """
+        if min_trust_score is None or min_trust_score <= 0:
+            return results
+        return [r for r in results if resolve_trust_score(r) >= min_trust_score]
+
     def _fire_access_count_updates(self, content_hashes: list[str]) -> None:
         """
         Schedule access count increments as background tasks (fire-and-forget).
@@ -1175,13 +1185,7 @@ class MemoryService:
             results = self._filter_superseded(results)
 
         # Filter by minimum provenance trust score
-        if min_trust_score is not None and min_trust_score > 0:
-            results = [
-                r
-                for r in results
-                if get_trust_score(r.get("metadata") or {}) >= min_trust_score
-                or get_trust_score({"provenance": r.get("provenance")}) >= min_trust_score
-            ]
+        results = self._filter_by_trust_score(results, min_trust_score)
 
         # Enrich results with contradiction warnings (non-blocking, non-fatal)
         warning_map = await self._get_contradiction_warnings([r["content_hash"] for r in results])
