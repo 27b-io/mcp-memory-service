@@ -87,7 +87,10 @@ def build_provenance(
 
 
 def _extract_trust_from_provenance(provenance: Any) -> float | None:
-    """Extract trust_score from a provenance dict, returning None if invalid."""
+    """Extract trust_score from a provenance dict, returning None if invalid.
+
+    Returns None for missing, non-numeric, NaN, inf, or out-of-range [0.0, 1.0] values.
+    """
     if not isinstance(provenance, dict):
         return None
     raw = provenance.get("trust_score")
@@ -97,7 +100,7 @@ def _extract_trust_from_provenance(provenance: Any) -> float | None:
         score = float(raw)
     except (ValueError, TypeError):
         return None
-    if math.isnan(score) or math.isinf(score):
+    if not math.isfinite(score) or score < 0.0 or score > 1.0:
         return None
     return score
 
@@ -130,18 +133,7 @@ def get_trust_score(memory_metadata: dict[str, Any]) -> float:
     """Extract trust score from a memory's metadata dict.
 
     Returns DEFAULT_TRUST_SCORE if no provenance is present or trust_score is
-    missing, non-numeric, NaN, or infinite.
+    missing, non-numeric, NaN, infinite, or outside [0.0, 1.0].
     """
-    provenance = memory_metadata.get("provenance")
-    if not isinstance(provenance, dict):
-        return DEFAULT_TRUST_SCORE
-    raw = provenance.get("trust_score")
-    if raw is None:
-        return DEFAULT_TRUST_SCORE
-    try:
-        score = float(raw)
-    except (ValueError, TypeError):
-        return DEFAULT_TRUST_SCORE
-    if not math.isfinite(score):
-        return DEFAULT_TRUST_SCORE
-    return score
+    score = _extract_trust_from_provenance(memory_metadata.get("provenance"))
+    return score if score is not None else DEFAULT_TRUST_SCORE

@@ -175,6 +175,11 @@ class TestResolveTrustScore:
         result_neg = {"provenance": {"trust_score": float("-inf"), "source": "api"}}
         assert resolve_trust_score(result_neg) == DEFAULT_TRUST_SCORE
 
+    def test_out_of_range_trust_score_returns_default(self):
+        """Trust scores outside [0.0, 1.0] must be treated as invalid."""
+        assert resolve_trust_score({"provenance": {"trust_score": -0.1}}) == DEFAULT_TRUST_SCORE
+        assert resolve_trust_score({"provenance": {"trust_score": 1.1}}) == DEFAULT_TRUST_SCORE
+
 
 # =============================================================================
 # get_trust_score
@@ -202,12 +207,14 @@ class TestGetTrustScore:
         assert get_trust_score(metadata) == 0.3
 
     def test_returns_default_for_invalid_trust_score_values(self):
-        """Non-numeric, NaN, and inf trust_score values must fall back to default."""
+        """Non-numeric, NaN, inf, and out-of-range trust_score values must fall back to default."""
         invalid_values = [
             None,
             float("nan"),
             float("inf"),
             float("-inf"),
+            -0.1,
+            1.1,
             "not_a_number",
             [],
             {"nested": "dict"},
