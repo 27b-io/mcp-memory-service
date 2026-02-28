@@ -92,7 +92,10 @@ def _extract_trust_from_provenance(provenance: Any) -> float | None:
     raw = provenance.get("trust_score")
     if raw is None:
         return None
-    score = float(raw)
+    try:
+        score = float(raw)
+    except (ValueError, TypeError):
+        return None
     if math.isnan(score) or math.isinf(score):
         return None
     return score
