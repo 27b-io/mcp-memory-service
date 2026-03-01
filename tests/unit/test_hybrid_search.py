@@ -6,7 +6,7 @@ adaptive alpha calculation, and recency decay.
 """
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -332,7 +332,7 @@ class TestApplyRecencyDecay:
         memory = MagicMock()
         memory.content_hash = content_hash
         # Use UTC-aware datetime with 'Z' suffix to match production data format
-        updated_at = datetime.now(timezone.utc) - timedelta(days=days_ago)
+        updated_at = datetime.now(UTC) - timedelta(days=days_ago)
         memory.updated_at_iso = updated_at.isoformat().replace("+00:00", "Z")
         return (memory, score, {"vector_score": score})
 
@@ -423,7 +423,7 @@ class TestCombineResultsRRFScoresAreCosine:
     def _make_memory(self, content_hash: str):
         memory = MagicMock()
         memory.content_hash = content_hash
-        memory.updated_at_iso = datetime.now(timezone.utc).isoformat()
+        memory.updated_at_iso = datetime.now(UTC).isoformat()
         return memory
 
     def _make_query_result(self, content_hash: str, similarity: float):
@@ -509,7 +509,7 @@ class TestTemporalDecayAppliedAfterBoosts:
     def _make_memory(self, content_hash: str, days_old: float):
         memory = MagicMock()
         memory.content_hash = content_hash
-        memory.updated_at_iso = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        memory.updated_at_iso = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
         memory.salience_score = 0.0
         memory.access_timestamps = []
         memory.encoding_context = None

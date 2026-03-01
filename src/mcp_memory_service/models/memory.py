@@ -1,24 +1,19 @@
-# Copyright 2024 Heinrich Krupp
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Memory-related data models.
 
-"""Memory-related data models."""
+Pydantic v2 models replacing the original dataclass-based Memory
+and MemoryQueryResult with full validation and timestamp synchronisation.
+"""
 
+import calendar
 import logging
+import math
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .validators import ContentHash, NonNegativeInt, Tags
 
 # Try to import dateutil, but fall back to standard datetime parsing if not available
 try:
@@ -30,208 +25,207 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Timestamp helpers (module-level, shared by model validator and touch())
+# ---------------------------------------------------------------------------
 
-@dataclass
-class Memory:
-    """Represents a single memory entry."""
+# Fields that are *not* metadata — everything else is overflow metadata
+_KNOWN_FIELDS = frozenset(
+    {
+        "content",
+        "content_hash",
+        "tags_str",
+        "type",
+        "timestamp",
+        "timestamp_float",
+        "timestamp_str",
+        "created_at",
+        "created_at_iso",
+        "updated_at",
+        "updated_at_iso",
+        "emotional_valence",
+        "salience_score",
+        "access_count",
+        "access_timestamps",
+        "encoding_context",
+        "summary",
+        "provenance",
+    }
+)
 
-    content: str
-    content_hash: str
-    tags: list[str] = field(default_factory=list)
+
+def _iso_to_float(iso_str: str) -> float:
+    """Convert ISO string to float timestamp, ensuring UTC interpretation."""
+    if DATEUTIL_AVAILABLE:
+        return dateutil_parser.isoparse(iso_str).timestamp()
+
+    try:
+        if iso_str.endswith("Z"):
+            dt = datetime.fromisoformat(iso_str[:-1])
+            return calendar.timegm(dt.timetuple()) + dt.microsecond / 1_000_000.0
+        elif "+" in iso_str or iso_str.count("-") > 2:
+            return datetime.fromisoformat(iso_str).timestamp()
+        else:
+            dt = datetime.fromisoformat(iso_str)
+            return calendar.timegm(dt.timetuple()) + dt.microsecond / 1_000_000.0
+    except (ValueError, TypeError):
+        try:
+            dt = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S")
+            return float(calendar.timegm(dt.timetuple()))
+        except (ValueError, TypeError):
+            logger.warning("Failed to parse timestamp '%s', using current time", iso_str)
+            return time.time()
+
+
+def _float_to_iso(ts: float) -> str:
+    """Convert float timestamp to ISO string (UTC, Z-suffix)."""
+    return datetime.fromtimestamp(ts, UTC).isoformat().replace("+00:00", "Z")
+
+
+def _sync_pair(
+    ts_float: float | None,
+    ts_iso: str | None,
+    now: float,
+    label: str,
+) -> tuple[float, str]:
+    """Synchronise a (float, iso) timestamp pair.
+
+    Returns a consistent (float, iso) tuple, filling in whichever is missing
+    and resolving mismatches.
+    """
+    if ts_float is not None and ts_iso is not None:
+        try:
+            parsed = _iso_to_float(ts_iso)
+            diff = abs(ts_float - parsed)
+            if diff > 1.0 and diff < 86400:
+                logger.info("Timezone mismatch in %s (diff: %.1fs), preferring float", label, diff)
+                return ts_float, _float_to_iso(ts_float)
+            elif diff >= 86400:
+                logger.warning("Large %s diff (%.1fs), using current time", label, diff)
+                return now, _float_to_iso(now)
+            return ts_float, ts_iso
+        except Exception as e:
+            logger.warning("Error parsing %s timestamps: %s, using float", label, e)
+            ts_float = ts_float if ts_float is not None else now
+            return ts_float, _float_to_iso(ts_float)
+
+    if ts_float is not None:
+        return ts_float, _float_to_iso(ts_float)
+
+    if ts_iso:
+        try:
+            return _iso_to_float(ts_iso), ts_iso
+        except ValueError as e:
+            logger.warning("Invalid %s_iso: %s", label, e)
+
+    return now, _float_to_iso(now)
+
+
+# ---------------------------------------------------------------------------
+# Safe numeric parsing helpers (for legacy/malformed storage data)
+# ---------------------------------------------------------------------------
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    """Convert *v* to float, returning *default* on failure or non-finite values."""
+    try:
+        result = float(v)
+        return result if math.isfinite(result) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(v: Any, default: int = 0) -> int:
+    """Convert *v* to int, returning *default* on failure."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+# ---------------------------------------------------------------------------
+# Memory model
+# ---------------------------------------------------------------------------
+
+
+class Memory(BaseModel):
+    """Represents a single memory entry with validated fields."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    content: str = Field(min_length=1)
+    content_hash: ContentHash
+    tags: Tags = []
+    # str (not Literal) — storage may contain legacy values
     memory_type: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     embedding: list[float] | None = None
 
-    # Timestamp fields with flexible input formats
-    # Store as float and ISO8601 string for maximum compatibility
+    # Timestamps: model_validator syncs float <-> ISO automatically
     created_at: float | None = None
     created_at_iso: str | None = None
     updated_at: float | None = None
     updated_at_iso: str | None = None
 
     # Emotional tagging and salience scoring
-    emotional_valence: dict[str, Any] | None = None  # {sentiment, magnitude, category}
-    salience_score: float = 0.0  # 0.0–1.0 computed importance
-    access_count: int = 0  # Retrieval frequency counter
+    emotional_valence: dict[str, Any] | None = None
+    salience_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    access_count: NonNegativeInt = 0
 
     # Spaced repetition: recent access timestamps (ring buffer, newest last)
-    access_timestamps: list[float] = field(default_factory=list)
+    access_timestamps: list[float] = Field(default_factory=list)
 
     # Encoding context: environmental context captured at storage time
     encoding_context: dict[str, Any] | None = None
 
-    # Extractive summary: one-line summary for token-efficient scanning (~50 tokens)
+    # Extractive summary: one-line summary for token-efficient scanning
     summary: str | None = None
 
     # Provenance: source, creation method, trust score, modification history
     provenance: dict[str, Any] | None = None
 
-    # Legacy timestamp field (maintain for backward compatibility)
-    timestamp: datetime = field(default_factory=datetime.now)
+    # Legacy timestamp field — computed from created_at, excluded from dumps
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), exclude=True)
 
-    def __post_init__(self):
-        """Initialize timestamps after object creation."""
-        # Synchronize the timestamps
-        self._sync_timestamps(
-            created_at=self.created_at,
-            created_at_iso=self.created_at_iso,
-            updated_at=self.updated_at,
-            updated_at_iso=self.updated_at_iso,
-        )
-
-    def _sync_timestamps(self, created_at=None, created_at_iso=None, updated_at=None, updated_at_iso=None):
-        """
-        Synchronize timestamp fields to ensure all formats are available.
-        Handles any combination of inputs and fills in missing values.
-        Always uses UTC time.
-        """
+    @model_validator(mode="after")
+    def sync_timestamps(self) -> Self:
+        """Synchronise float and ISO timestamp pairs, filling in missing values."""
         now = time.time()
 
-        def iso_to_float(iso_str: str) -> float:
-            """Convert ISO string to float timestamp, ensuring UTC interpretation."""
-            if DATEUTIL_AVAILABLE:
-                # dateutil properly handles timezone info
-                parsed_dt = dateutil_parser.isoparse(iso_str)
-                return parsed_dt.timestamp()
-            else:
-                # Fallback to basic ISO parsing with explicit UTC handling
-                try:
-                    # Handle common ISO formats
-                    if iso_str.endswith("Z"):
-                        # UTC timezone indicated by 'Z'
-                        dt = datetime.fromisoformat(iso_str[:-1])
-                        # Treat as UTC and convert to timestamp
-                        import calendar
+        self.created_at, self.created_at_iso = _sync_pair(
+            self.created_at,
+            self.created_at_iso,
+            now,
+            "created_at",
+        )
+        self.updated_at, self.updated_at_iso = _sync_pair(
+            self.updated_at,
+            self.updated_at_iso,
+            now,
+            "updated_at",
+        )
 
-                        return calendar.timegm(dt.timetuple()) + dt.microsecond / 1000000.0
-                    elif "+" in iso_str or iso_str.count("-") > 2:
-                        # Has timezone info, use fromisoformat in Python 3.7+
-                        dt = datetime.fromisoformat(iso_str)
-                        return dt.timestamp()
-                    else:
-                        # No timezone info, assume UTC
-                        dt = datetime.fromisoformat(iso_str)
-                        return calendar.timegm(dt.timetuple()) + dt.microsecond / 1000000.0
-                except (ValueError, TypeError):
-                    # Last resort: try strptime and treat as UTC
-                    try:
-                        dt = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S")
-                        return calendar.timegm(dt.timetuple())
-                    except (ValueError, TypeError):
-                        # If all parsing fails, return current timestamp
-                        logging.warning(f"Failed to parse timestamp '{iso_str}', using current time")
-                        return datetime.now().timestamp()
+        # Keep legacy field in sync
+        self.timestamp = datetime.fromtimestamp(self.created_at, UTC)
+        return self
 
-        def float_to_iso(ts: float) -> str:
-            """Convert float timestamp to ISO string."""
-            return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
-
-        # Handle created_at
-        if created_at is not None and created_at_iso is not None:
-            # Validate that they represent the same time (with more generous tolerance for timezone issues)
-            try:
-                iso_ts = iso_to_float(created_at_iso)
-                time_diff = abs(created_at - iso_ts)
-                # Allow up to 1 second difference for rounding, but reject obvious timezone mismatches
-                if time_diff > 1.0 and time_diff < 86400:  # Between 1 second and 24 hours suggests timezone issue
-                    logger.info(f"Timezone mismatch detected (diff: {time_diff}s), preferring float timestamp")
-                    # Use the float timestamp as authoritative and regenerate ISO
-                    self.created_at = created_at
-                    self.created_at_iso = float_to_iso(created_at)
-                elif time_diff >= 86400:  # More than 24 hours difference suggests data corruption
-                    logger.warning(f"Large timestamp difference detected ({time_diff}s), using current time")
-                    self.created_at = now
-                    self.created_at_iso = float_to_iso(now)
-                else:
-                    # Small difference, keep both values
-                    self.created_at = created_at
-                    self.created_at_iso = created_at_iso
-            except Exception as e:
-                logger.warning(f"Error parsing timestamps: {e}, using float timestamp")
-                self.created_at = created_at if created_at is not None else now
-                self.created_at_iso = float_to_iso(self.created_at)
-        elif created_at is not None:
-            self.created_at = created_at
-            self.created_at_iso = float_to_iso(created_at)
-        elif created_at_iso:
-            try:
-                self.created_at = iso_to_float(created_at_iso)
-                self.created_at_iso = created_at_iso
-            except ValueError as e:
-                logger.warning(f"Invalid created_at_iso: {e}")
-                self.created_at = now
-                self.created_at_iso = float_to_iso(now)
-        else:
-            self.created_at = now
-            self.created_at_iso = float_to_iso(now)
-
-        # Handle updated_at
-        if updated_at is not None and updated_at_iso is not None:
-            # Validate that they represent the same time (with more generous tolerance for timezone issues)
-            try:
-                iso_ts = iso_to_float(updated_at_iso)
-                time_diff = abs(updated_at - iso_ts)
-                # Allow up to 1 second difference for rounding, but reject obvious timezone mismatches
-                if time_diff > 1.0 and time_diff < 86400:  # Between 1 second and 24 hours suggests timezone issue
-                    logger.info(f"Timezone mismatch detected in updated_at (diff: {time_diff}s), preferring float timestamp")
-                    # Use the float timestamp as authoritative and regenerate ISO
-                    self.updated_at = updated_at
-                    self.updated_at_iso = float_to_iso(updated_at)
-                elif time_diff >= 86400:  # More than 24 hours difference suggests data corruption
-                    logger.warning(f"Large timestamp difference detected in updated_at ({time_diff}s), using current time")
-                    self.updated_at = now
-                    self.updated_at_iso = float_to_iso(now)
-                else:
-                    # Small difference, keep both values
-                    self.updated_at = updated_at
-                    self.updated_at_iso = updated_at_iso
-            except Exception as e:
-                logger.warning(f"Error parsing updated timestamps: {e}, using float timestamp")
-                self.updated_at = updated_at if updated_at is not None else now
-                self.updated_at_iso = float_to_iso(self.updated_at)
-        elif updated_at is not None:
-            self.updated_at = updated_at
-            self.updated_at_iso = float_to_iso(updated_at)
-        elif updated_at_iso:
-            try:
-                self.updated_at = iso_to_float(updated_at_iso)
-                self.updated_at_iso = updated_at_iso
-            except ValueError as e:
-                logger.warning(f"Invalid updated_at_iso: {e}")
-                self.updated_at = now
-                self.updated_at_iso = float_to_iso(now)
-        else:
-            self.updated_at = now
-            self.updated_at_iso = float_to_iso(now)
-
-        # Update legacy timestamp field for backward compatibility
-        self.timestamp = datetime.fromtimestamp(self.created_at, timezone.utc)
-
-    def touch(self):
+    def touch(self) -> None:
         """Update the updated_at timestamps to the current time."""
         now = time.time()
         self.updated_at = now
-        self.updated_at_iso = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+        self.updated_at_iso = _float_to_iso(now)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert memory to dictionary format for storage."""
-        # Ensure timestamps are synchronized
-        self._sync_timestamps(
-            created_at=self.created_at,
-            created_at_iso=self.created_at_iso,
-            updated_at=self.updated_at,
-            updated_at_iso=self.updated_at_iso,
-        )
-
+        """Convert to storage-compatible dictionary with legacy field names."""
         return {
             "content": self.content,
             "content_hash": self.content_hash,
             "tags_str": ",".join(self.tags) if self.tags else "",
             "type": self.memory_type,
-            # Store timestamps in all formats for better compatibility
-            "timestamp": float(self.created_at),  # Changed from int() to preserve precision
-            "timestamp_float": self.created_at,  # Legacy timestamp (float)
-            "timestamp_str": self.created_at_iso,  # Legacy timestamp (ISO)
+            # Legacy timestamp fields
+            "timestamp": float(self.created_at),
+            "timestamp_float": self.created_at,
+            "timestamp_str": self.created_at_iso,
             # New timestamp fields
             "created_at": self.created_at,
             "created_at_iso": self.created_at_iso,
@@ -254,75 +248,34 @@ class Memory:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], embedding: list[float] | None = None) -> "Memory":
-        """Create a Memory instance from dictionary data."""
+        """Create a Memory instance from storage dictionary data.
+
+        Handles legacy field names (tags_str, type, timestamp_float, etc.)
+        and extracts overflow keys into metadata.
+        """
         tags = data.get("tags_str", "").split(",") if data.get("tags_str") else []
 
-        # Extract timestamps with different priorities
-        # First check new timestamp fields (created_at/updated_at)
+        # Extract timestamps: prefer new fields, fall back to legacy
         created_at = data.get("created_at")
         created_at_iso = data.get("created_at_iso")
         updated_at = data.get("updated_at")
         updated_at_iso = data.get("updated_at_iso")
 
-        # If new fields are missing, try to get from legacy timestamp fields
         if created_at is None and created_at_iso is None:
             if "timestamp_float" in data:
-                created_at = float(data["timestamp_float"])
+                created_at = _safe_float(data["timestamp_float"])
             elif "timestamp" in data:
-                created_at = float(data["timestamp"])
-
+                created_at = _safe_float(data["timestamp"])
             if "timestamp_str" in data and created_at_iso is None:
                 created_at_iso = data["timestamp_str"]
 
-        # Extract emotional tagging and salience fields
-        emotional_valence = data.get("emotional_valence")
-        salience_score = float(data.get("salience_score", 0.0))
-        access_count = int(data.get("access_count", 0))
+        # Overflow keys → metadata
+        metadata = {k: v for k, v in data.items() if k not in _KNOWN_FIELDS}
 
-        # Extract spaced repetition fields
-        access_timestamps = data.get("access_timestamps", [])
-
-        # Extract encoding context
-        encoding_context = data.get("encoding_context")
-
-        # Extract summary
-        summary = data.get("summary")
-
-        # Extract provenance
-        provenance = data.get("provenance")
-
-        # Create metadata dictionary without special fields
-        metadata = {
-            k: v
-            for k, v in data.items()
-            if k
-            not in [
-                "content",
-                "content_hash",
-                "tags_str",
-                "type",
-                "timestamp",
-                "timestamp_float",
-                "timestamp_str",
-                "created_at",
-                "created_at_iso",
-                "updated_at",
-                "updated_at_iso",
-                "emotional_valence",
-                "salience_score",
-                "access_count",
-                "access_timestamps",
-                "encoding_context",
-                "summary",
-                "provenance",
-            ]
-        }
-
-        # Create memory instance with synchronized timestamps
         return cls(
             content=data["content"],
             content_hash=data["content_hash"],
-            tags=[tag for tag in tags if tag],  # Filter out empty tags
+            tags=[tag for tag in tags if tag],
             memory_type=data.get("type"),
             metadata=metadata,
             embedding=embedding,
@@ -330,23 +283,24 @@ class Memory:
             created_at_iso=created_at_iso,
             updated_at=updated_at,
             updated_at_iso=updated_at_iso,
-            emotional_valence=emotional_valence,
-            salience_score=salience_score,
-            access_count=access_count,
-            access_timestamps=access_timestamps,
-            encoding_context=encoding_context,
-            summary=summary,
-            provenance=provenance,
+            emotional_valence=data.get("emotional_valence"),
+            salience_score=_safe_float(data.get("salience_score", 0.0)),
+            access_count=_safe_int(data.get("access_count", 0)),
+            access_timestamps=data.get("access_timestamps", []),
+            encoding_context=data.get("encoding_context"),
+            summary=data.get("summary"),
+            provenance=data.get("provenance"),
         )
 
 
-@dataclass
-class MemoryQueryResult:
-    """Represents a memory query result with relevance score and debug information."""
+class MemoryQueryResult(BaseModel):
+    """Memory query result with relevance score and debug information."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     memory: Memory
     relevance_score: float
-    debug_info: dict[str, Any] = field(default_factory=dict)
+    debug_info: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def similarity_score(self) -> float:
