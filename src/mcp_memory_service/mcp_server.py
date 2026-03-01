@@ -714,12 +714,19 @@ def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
         return {"enabled": True, "tiers": three_tier.stats()}
 
 
+_three_tier_registered = False
+
+
 def _maybe_register_three_tier_tools() -> None:
-    """Register three-tier tools if expose_tools is enabled."""
+    """Register three-tier tools if expose_tools is enabled (once only)."""
+    global _three_tier_registered
+    if _three_tier_registered:
+        return
     from .config import settings as _settings
 
     if _settings.three_tier.expose_tools:
         _register_three_tier_tools(mcp)
+    _three_tier_registered = True
 
 
 # =============================================================================

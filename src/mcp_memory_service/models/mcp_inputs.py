@@ -55,7 +55,7 @@ class SearchParams(BaseModel):
             return None
         v = float(v)
         if math.isnan(v) or math.isinf(v):
-            return None
+            raise ValueError("min_trust_score must be a finite number")
         return max(0.0, min(v, 1.0))
 
     @model_validator(mode="after")
