@@ -29,6 +29,7 @@ from fastmcp import Context, FastMCP  # noqa: E402
 from .formatters.toon import format_search_results_as_toon  # noqa: E402
 from .models.mcp_inputs import (  # noqa: E402
     ContradictionsParams,
+    DeleteMemoryParams,
     FindDuplicatesParams,
     MergeDuplicatesParams,
     RelationParams,
@@ -328,6 +329,10 @@ async def search(
             min_trust_score=params.min_trust_score,
         )
 
+    memories = result.get("memories")
+    if memories is None:
+        return _inject_latency(result, _t0)
+
     pagination = {
         "page": result.get("page", params.page),
         "total": result.get("total", 0),
@@ -335,7 +340,7 @@ async def search(
         "has_more": result.get("has_more", False),
         "total_pages": result.get("total_pages", 0),
     }
-    toon_output, _ = format_search_results_as_toon(result["memories"], pagination=pagination)
+    toon_output, _ = format_search_results_as_toon(memories, pagination=pagination)
     return _inject_latency(toon_output, _t0)
 
 
@@ -361,8 +366,14 @@ async def delete_memory(content_hash: str, ctx: Context) -> dict[str, bool | str
     Warning: Deletion is permanent. Verify the content_hash before deleting.
     """
     _t0 = time.perf_counter()
+
+    try:
+        params = DeleteMemoryParams(content_hash=content_hash)
+    except ValidationError as e:
+        return _inject_latency({"success": False, "error": str(e)}, _t0)
+
     memory_service = ctx.request_context.lifespan_context.memory_service
-    result = await memory_service.delete_memory(content_hash)
+    result = await memory_service.delete_memory(params.content_hash)
     return _inject_latency(result, _t0)
 
 

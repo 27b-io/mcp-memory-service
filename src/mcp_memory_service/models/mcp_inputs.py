@@ -53,7 +53,10 @@ class SearchParams(BaseModel):
         """Reject NaN/Inf and clamp to [0, 1]."""
         if v is None:
             return None
-        v = float(v)
+        try:
+            v = float(v)
+        except (TypeError, ValueError) as e:
+            raise ValueError("min_trust_score must be a finite number") from e
         if math.isnan(v) or math.isinf(v):
             raise ValueError("min_trust_score must be a finite number")
         return max(0.0, min(v, 1.0))

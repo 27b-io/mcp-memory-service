@@ -156,7 +156,7 @@ class WriteQueue:
 
                         self.queue.task_done()
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Queue became empty while processing
                         break
                     except Exception as e:

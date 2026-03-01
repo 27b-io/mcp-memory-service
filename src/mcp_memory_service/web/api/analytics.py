@@ -20,7 +20,7 @@ Provides usage statistics, trends, and performance metrics for the memory system
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -256,7 +256,7 @@ async def get_analytics_overview(
 
         # Calculate memories this month
         # TODO: Add memories_this_month to storage.get_stats() for consistency
-        month_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        month_ago = datetime.now(UTC) - timedelta(days=30)
         month_ago_ts = month_ago.timestamp()
         memories_this_month = 0
         try:
@@ -312,7 +312,7 @@ async def get_memory_growth(
             raise HTTPException(status_code=400, detail="Invalid period. Use: week, month, quarter, year")
 
         # Calculate date ranges
-        end_date = datetime.now(timezone.utc)
+        end_date = datetime.now(UTC)
         start_date = end_date - timedelta(days=days)
 
         # This is a simplified implementation
@@ -329,7 +329,7 @@ async def get_memory_growth(
             date_counts = defaultdict(int)
             for memory in recent_memories:
                 if memory.created_at:
-                    mem_date = datetime.fromtimestamp(memory.created_at, tz=timezone.utc).date()
+                    mem_date = datetime.fromtimestamp(memory.created_at, tz=UTC).date()
                     date_counts[mem_date] += 1
 
             # Create data points
@@ -520,12 +520,12 @@ async def get_activity_heatmap(
 
         date_counts = defaultdict(int)
 
-        end_date = datetime.now(timezone.utc).date()
+        end_date = datetime.now(UTC).date()
         start_date = end_date - timedelta(days=days)
 
         for memory in recent_memories:
             if memory.created_at:
-                mem_date = datetime.fromtimestamp(memory.created_at, tz=timezone.utc).date()
+                mem_date = datetime.fromtimestamp(memory.created_at, tz=UTC).date()
                 if start_date <= mem_date <= end_date:
                     date_counts[mem_date] += 1
 
@@ -605,7 +605,7 @@ async def get_top_tags_report(
 
         # Filter by time period if needed
         if days is not None:
-            (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
+            (datetime.now(UTC) - timedelta(days=days)).timestamp()
             # TODO: CRITICAL - Period filtering not implemented
             # This endpoint accepts a 'period' parameter (7d, 30d, 90d) but returns all-time data
             # This is misleading for API consumers who expect filtered results
@@ -675,7 +675,7 @@ async def get_activity_breakdown(
             hour_counts = defaultdict(int)
             for memory in recent_memories:
                 if memory.created_at:
-                    dt = datetime.fromtimestamp(memory.created_at, tz=timezone.utc)
+                    dt = datetime.fromtimestamp(memory.created_at, tz=UTC)
                     hour_counts[dt.hour] += 1
                     active_days.add(dt.date())
                     activity_dates.append(dt.date())
@@ -691,7 +691,7 @@ async def get_activity_breakdown(
 
             for memory in recent_memories:
                 if memory.created_at:
-                    dt = datetime.fromtimestamp(memory.created_at, tz=timezone.utc)
+                    dt = datetime.fromtimestamp(memory.created_at, tz=UTC)
                     day_counts[dt.weekday()] += 1
                     active_days.add(dt.date())
                     activity_dates.append(dt.date())
@@ -704,7 +704,7 @@ async def get_activity_breakdown(
             week_counts = defaultdict(int)
             for memory in recent_memories:
                 if memory.created_at:
-                    dt = datetime.fromtimestamp(memory.created_at, tz=timezone.utc)
+                    dt = datetime.fromtimestamp(memory.created_at, tz=UTC)
                     # Get ISO week number
                     week_num = dt.isocalendar()[1]
                     week_counts[week_num] += 1
@@ -712,7 +712,7 @@ async def get_activity_breakdown(
                     activity_dates.append(dt.date())
 
             # Last 12 weeks
-            current_week = datetime.now(timezone.utc).isocalendar()[1]
+            current_week = datetime.now(UTC).isocalendar()[1]
             for i in range(12):
                 week_num = (current_week - 11 + i) % 53
                 count = week_counts.get(week_num, 0)
@@ -725,7 +725,7 @@ async def get_activity_breakdown(
 
         if activity_dates:
             # Current streak - check backwards from today
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(UTC).date()
             activity_dates_set = set(activity_dates)
 
             # A streak is only "current" if it includes today
@@ -815,7 +815,7 @@ async def get_storage_stats(
         # Placeholder growth trend (would need historical data)
         growth_trend = [
             {
-                "date": (datetime.now(timezone.utc) - timedelta(days=i)).date().isoformat(),
+                "date": (datetime.now(UTC) - timedelta(days=i)).date().isoformat(),
                 "size_mb": total_size_mb * (0.9 + i * 0.01),
             }  # Simulated growth
             for i in range(30, 0, -1)

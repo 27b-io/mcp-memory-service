@@ -8,7 +8,7 @@ import calendar
 import logging
 import math
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -79,7 +79,7 @@ def _iso_to_float(iso_str: str) -> float:
 
 def _float_to_iso(ts: float) -> str:
     """Convert float timestamp to ISO string (UTC, Z-suffix)."""
-    return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(ts, UTC).isoformat().replace("+00:00", "Z")
 
 
 def _sync_pair(
@@ -185,7 +185,7 @@ class Memory(BaseModel):
     provenance: dict[str, Any] | None = None
 
     # Legacy timestamp field — computed from created_at, excluded from dumps
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), exclude=True)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), exclude=True)
 
     @model_validator(mode="after")
     def sync_timestamps(self) -> Self:
@@ -206,7 +206,7 @@ class Memory(BaseModel):
         )
 
         # Keep legacy field in sync
-        self.timestamp = datetime.fromtimestamp(self.created_at, timezone.utc)
+        self.timestamp = datetime.fromtimestamp(self.created_at, UTC)
         return self
 
     def touch(self) -> None:

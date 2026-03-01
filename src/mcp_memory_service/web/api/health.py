@@ -18,7 +18,7 @@ Health check endpoints for the HTTP interface.
 
 import platform
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import psutil
@@ -112,7 +112,7 @@ async def health_check(storage: MemoryStorage = Depends(get_storage)):
                     content={
                         "status": "unhealthy",
                         "version": __version__,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                         "uptime_seconds": time.time() - _startup_time,
                         "backend": "qdrant",
                         "circuit_breaker": circuit_status,
@@ -125,7 +125,7 @@ async def health_check(storage: MemoryStorage = Depends(get_storage)):
             return {
                 "status": "healthy",
                 "version": __version__,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "uptime_seconds": time.time() - _startup_time,
                 "write_queue": write_queue.get_stats(),
                 "backend": "qdrant",
@@ -141,7 +141,7 @@ async def health_check(storage: MemoryStorage = Depends(get_storage)):
                 content={
                     "status": "unhealthy",
                     "version": __version__,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "uptime_seconds": time.time() - _startup_time,
                     "backend": "qdrant",
                     "error": str(e),
@@ -153,7 +153,7 @@ async def health_check(storage: MemoryStorage = Depends(get_storage)):
     return HealthResponse(
         status="healthy",
         version=__version__,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         uptime_seconds=time.time() - _startup_time,
         write_queue=write_queue.get_stats(),
     )
@@ -235,7 +235,7 @@ async def detailed_health_check(
     return DetailedHealthResponse(
         status="healthy",
         version=__version__,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         uptime_seconds=time.time() - _startup_time,
         storage=storage_info,
         system=system_info,

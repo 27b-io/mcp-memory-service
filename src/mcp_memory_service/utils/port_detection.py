@@ -16,7 +16,6 @@
 Port detection utilities for multi-client HTTP server coordination.
 """
 
-import asyncio
 import logging
 import socket
 
@@ -86,7 +85,7 @@ async def is_mcp_memory_server_running(host: str = "localhost", port: int = HTTP
     except aiohttp.ClientError as e:
         logger.debug(f"HTTP client error checking {host}:{port}: {e}")
         return False, None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"Timeout checking {host}:{port}")
         return False, None
     except Exception as e:
