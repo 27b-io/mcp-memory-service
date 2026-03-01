@@ -98,7 +98,7 @@ class StoreResult(ServiceResult):
 class DeleteResult(ServiceResult):
     """Result of a ``delete_memory()`` call."""
 
-    content_hash: str | None = None
+    content_hash: ContentHash | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ class GetMemoryResult(BaseModel):
     """Result of a ``get_memory_by_hash()`` call."""
 
     found: bool = False
-    content_hash: str | None = None
+    content_hash: ContentHash | None = None
     memory: MemoryData | None = None
     error: str | None = None
 

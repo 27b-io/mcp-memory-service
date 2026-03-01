@@ -9,6 +9,7 @@ removing all inline range clamping, mode checking, and required-field logic.
 import logging
 import os
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -726,6 +727,7 @@ def _register_three_tier_tools(mcp_instance: FastMCP) -> None:
 
 
 _three_tier_registered = False
+_three_tier_lock = threading.Lock()
 
 
 def _maybe_register_three_tier_tools() -> None:
@@ -733,11 +735,14 @@ def _maybe_register_three_tier_tools() -> None:
     global _three_tier_registered
     if _three_tier_registered:
         return
-    from .config import settings as _settings
+    with _three_tier_lock:
+        if _three_tier_registered:
+            return
+        from .config import settings as _settings
 
-    if _settings.three_tier.expose_tools:
-        _register_three_tier_tools(mcp)
-    _three_tier_registered = True
+        if _settings.three_tier.expose_tools:
+            _register_three_tier_tools(mcp)
+        _three_tier_registered = True
 
 
 # =============================================================================
