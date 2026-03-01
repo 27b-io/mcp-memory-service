@@ -210,7 +210,7 @@ async def store_memory(
             return _inject_latency(response, _t0)
 
     return _inject_latency(
-        {"success": False, "message": result.get("error", "Unknown error occurred")},
+        {"success": False, "error": result.get("error", "Unknown error occurred")},
         _t0,
     )
 
@@ -298,7 +298,7 @@ async def search(
 
     if params.mode == "tag":
         if not params.tags:
-            return _inject_latency({"error": "tags parameter required for tag mode"}, _t0)
+            return _inject_latency({"success": False, "error": "tags parameter required for tag mode"}, _t0)
         result = await memory_service.search_by_tag(
             tags=params.tags,
             match_all=params.match_all,

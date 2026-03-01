@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .models.validators import ContentHash, Tags
+from .models.validators import ContentHash, NonNegativeInt, Tags
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +63,8 @@ class RetrieveEvent(BaseModel):
     """Context for retrieve lifecycle hooks."""
 
     query: str
-    result_hashes: list[str] = Field(default_factory=list)
-    result_count: int = 0
+    result_hashes: list[ContentHash] = Field(default_factory=list)
+    result_count: NonNegativeInt = 0
 
 
 class HookRegistry:

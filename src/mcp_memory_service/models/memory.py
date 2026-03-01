@@ -6,6 +6,7 @@ and MemoryQueryResult with full validation and timestamp synchronisation.
 
 import calendar
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Self
@@ -126,9 +127,10 @@ def _sync_pair(
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
-    """Convert *v* to float, returning *default* on failure."""
+    """Convert *v* to float, returning *default* on failure or non-finite values."""
     try:
-        return float(v)
+        result = float(v)
+        return result if math.isfinite(result) else default
     except (TypeError, ValueError):
         return default
 
@@ -261,9 +263,9 @@ class Memory(BaseModel):
 
         if created_at is None and created_at_iso is None:
             if "timestamp_float" in data:
-                created_at = float(data["timestamp_float"])
+                created_at = _safe_float(data["timestamp_float"])
             elif "timestamp" in data:
-                created_at = float(data["timestamp"])
+                created_at = _safe_float(data["timestamp"])
             if "timestamp_str" in data and created_at_iso is None:
                 created_at_iso = data["timestamp_str"]
 

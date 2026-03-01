@@ -397,7 +397,7 @@ class TestRelation:
     async def test_relation_invalid_action(self, mcp_client):
         result = parse_tool_result(await mcp_client.call_tool("relation", {"action": "bogus", "content_hash": "abc"}))
         assert result["success"] is False
-        assert "create" in result.get("error", "").lower() or "literal_error" in result.get("error", "").lower()
+        assert "literal" in result.get("error", "").lower()
 
 
 # ---------------------------------------------------------------------------

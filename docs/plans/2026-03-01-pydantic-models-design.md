@@ -20,21 +20,21 @@ Config and Web API layers already use Pydantic. The rest doesn't.
 
 | Layer | Action |
 |-------|--------|
-| `models/validators.py` | NEW — shared reusable types |
-| `models/responses.py` | NEW — service response models |
-| `models/mcp_inputs.py` | NEW — MCP tool input models |
-| `models/memory.py` | REWRITE — dataclass → BaseModel |
-| `hooks.py` | MODIFY — dataclass → BaseModel |
-| `services/memory_service.py` | MODIFY — return response models |
-| `mcp_server.py` | MODIFY — use input models |
-| `storage/*.py` | MODIFY — `from_dict()` → `model_validate()` |
-| `tests/**` | MODIFY — update assertions |
+| `@src/mcp_memory_service/models/validators.py` | NEW — shared reusable types |
+| `@src/mcp_memory_service/models/responses.py` | NEW — service response models |
+| `@src/mcp_memory_service/models/mcp_inputs.py` | NEW — MCP tool input models |
+| `@src/mcp_memory_service/models/memory.py` | REWRITE — dataclass → BaseModel |
+| `@src/mcp_memory_service/hooks.py` | MODIFY — dataclass → BaseModel |
+| `@src/mcp_memory_service/services/memory_service.py` | MODIFY — return response models |
+| `@src/mcp_memory_service/mcp_server.py` | MODIFY — use input models |
+| `@src/mcp_memory_service/storage/*.py` | MODIFY — `from_dict()` → `model_validate()` |
+| `@tests/**` | MODIFY — update assertions |
 
 **Out of scope:** Config (already Pydantic), Web API models (already Pydantic), storage ABC, graph client internals.
 
 ## Design
 
-### 1. Shared Validators (`models/validators.py`)
+### 1. Shared Validators (`@src/mcp_memory_service/models/validators.py`)
 
 Reusable `Annotated` types with `BeforeValidator`:
 
