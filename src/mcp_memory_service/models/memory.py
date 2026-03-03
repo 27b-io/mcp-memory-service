@@ -57,7 +57,10 @@ _KNOWN_FIELDS = frozenset(
 def _iso_to_float(iso_str: str) -> float:
     """Convert ISO string to float timestamp, ensuring UTC interpretation."""
     if DATEUTIL_AVAILABLE:
-        return dateutil_parser.isoparse(iso_str).timestamp()
+        dt = dateutil_parser.isoparse(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
 
     try:
         if iso_str.endswith("Z"):

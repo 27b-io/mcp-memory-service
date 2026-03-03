@@ -144,7 +144,11 @@ class WriteQueue:
                 while not self.queue.empty():
                     try:
                         write_op = await asyncio.wait_for(self.queue.get(), timeout=1.0)
+                    except TimeoutError:
+                        # Queue became empty while waiting
+                        break
 
+                    try:
                         # Calculate queue latency
                         latency = (datetime.now() - write_op.enqueued_at).total_seconds()
                         if latency > 1.0:
@@ -153,12 +157,6 @@ class WriteQueue:
                         # Execute the write operation
                         await write_op.execute()
                         processed += 1
-
-                        self.queue.task_done()
-
-                    except TimeoutError:
-                        # Queue became empty while processing
-                        break
                     except Exception as e:
                         # Log error but continue processing remaining operations
                         errors += 1
@@ -166,6 +164,8 @@ class WriteQueue:
                             f"Error processing write operation: {e}",
                             exc_info=True,
                         )
+                    finally:
+                        self.queue.task_done()
 
                 logger.debug(f"Queue processor finished: {processed} processed, {errors} errors")
         else:

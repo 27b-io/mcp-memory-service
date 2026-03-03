@@ -331,7 +331,7 @@ async def search(
         )
 
     memories = result.get("memories")
-    if memories is None:
+    if memories is None or "error" in result:
         return _inject_latency(result, _t0)
 
     pagination = {
