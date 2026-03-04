@@ -70,6 +70,7 @@ class PaginationMeta(BaseModel):
     page: int = 1
     page_size: int = 10
     total_pages: int = 1
+    has_more: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ class RetrieveResult(BaseModel):
     page: int = 1
     page_size: int = 10
     total_pages: int = 1
+    has_more: bool = False
     filtered_below_threshold: int | None = None
     error: str | None = None
 
@@ -161,11 +163,12 @@ class TagSearchResult(BaseModel):
 
     memories: list[MemoryData] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
-    match_all: bool = False
+    match_type: str | None = None
     total: int = 0
     page: int = 1
     page_size: int = 10
     total_pages: int = 1
+    has_more: bool = False
     error: str | None = None
 
 
@@ -177,6 +180,7 @@ class ListResult(BaseModel):
     page: int = 1
     page_size: int = 10
     total_pages: int = 1
+    has_more: bool = False
     error: str | None = None
 
 
@@ -285,13 +289,16 @@ class ContradictionsResult(ServiceResult):
 # ---------------------------------------------------------------------------
 
 
-class ConsolidateResult(BaseModel):
+class ConsolidateResult(ServiceResult):
     """Result of a ``consolidate()`` call."""
 
     edges_decayed: int = 0
+    stale_edges_decayed: int = 0
     edges_pruned: int = 0
+    orphan_nodes: int = 0
     duplicates_found: int = 0
-    error: str | None = None
+    duplicates_merged: int = 0
+    errors: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
