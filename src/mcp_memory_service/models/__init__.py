@@ -25,6 +25,7 @@ from .responses import (
 )
 from .validators import (
     ContentHash,
+    MatchType,
     MemoryType,
     NonNegativeInt,
     OutputFormat,
@@ -41,6 +42,7 @@ __all__ = [
     "MemoryQueryResult",
     # Validators
     "ContentHash",
+    "MatchType",
     "MemoryType",
     "NonNegativeInt",
     "OutputFormat",

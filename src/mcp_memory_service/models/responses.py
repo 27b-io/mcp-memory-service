@@ -8,7 +8,7 @@ these; callers get attribute access and IDE completion instead of
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -64,7 +64,11 @@ class MemoryData(BaseModel):
 
 
 class PaginationMeta(BaseModel):
-    """Pagination metadata included in list/search responses."""
+    """Pagination metadata included in list/search responses.
+
+    Used as a base class for paginated result models so that pagination
+    fields stay centralised (DRY) and serialise flat in the wire format.
+    """
 
     total: int = 0
     page: int = 1
@@ -85,7 +89,7 @@ class StoreResult(ServiceResult):
     # Chunked storage
     memories: list[MemoryData] | None = None
     total_chunks: int | None = None
-    original_hash: str | None = None
+    original_hash: ContentHash | None = None
     # Interference detection
     interference: dict[str, Any] | None = None
     cross_references: list[dict[str, Any]] | None = None
@@ -140,7 +144,7 @@ class HealthResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RetrieveResult(BaseModel):
+class RetrieveResult(PaginationMeta):
     """Result of a ``retrieve_memories()`` call."""
 
     memories: list[MemoryData] = Field(default_factory=list)
@@ -148,39 +152,23 @@ class RetrieveResult(BaseModel):
     hybrid_enabled: bool = True
     alpha_used: float | None = None
     keywords_extracted: list[str] = Field(default_factory=list)
-    # Pagination
-    total: int = 0
-    page: int = 1
-    page_size: int = 10
-    total_pages: int = 1
-    has_more: bool = False
     filtered_below_threshold: int | None = None
     error: str | None = None
 
 
-class TagSearchResult(BaseModel):
+class TagSearchResult(PaginationMeta):
     """Result of a ``search_by_tag()`` call."""
 
     memories: list[MemoryData] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
-    match_type: str | None = None
-    total: int = 0
-    page: int = 1
-    page_size: int = 10
-    total_pages: int = 1
-    has_more: bool = False
+    match_type: Literal["ALL", "ANY"] | None = None
     error: str | None = None
 
 
-class ListResult(BaseModel):
+class ListResult(PaginationMeta):
     """Result of a ``list_memories()`` call."""
 
     memories: list[MemoryData] = Field(default_factory=list)
-    total: int = 0
-    page: int = 1
-    page_size: int = 10
-    total_pages: int = 1
-    has_more: bool = False
     error: str | None = None
 
 
@@ -202,8 +190,8 @@ class ScanResult(BaseModel):
 class RelationResult(ServiceResult):
     """Result of create/delete relation operations."""
 
-    source: str | None = None
-    target: str | None = None
+    source: ContentHash | None = None
+    target: ContentHash | None = None
     relation_type: str | None = None
 
 
@@ -211,7 +199,7 @@ class GetRelationsResult(BaseModel):
     """Result of a ``get_relations()`` call."""
 
     relations: list[dict[str, Any]] = Field(default_factory=list)
-    content_hash: str | None = None
+    content_hash: ContentHash | None = None
     count: int = 0
     error: str | None = None
 
@@ -224,8 +212,8 @@ class GetRelationsResult(BaseModel):
 class DuplicateGroup(BaseModel):
     """A group of duplicate memories with a canonical choice."""
 
-    hashes: list[str]
-    canonical_hash: str
+    hashes: list[ContentHash]
+    canonical_hash: ContentHash
     max_similarity: float
     size: int
 
@@ -241,8 +229,8 @@ class FindDuplicatesResult(ServiceResult):
 class MergeDuplicatesResult(ServiceResult):
     """Result of a ``merge_duplicate_group()`` call."""
 
-    canonical_hash: str | None = None
-    superseded: list[str] = Field(default_factory=list)
+    canonical_hash: ContentHash | None = None
+    superseded: list[ContentHash] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     dry_run: bool = False
 
@@ -255,8 +243,8 @@ class MergeDuplicatesResult(ServiceResult):
 class SupersedeResult(ServiceResult):
     """Result of a ``supersede_memory()`` call."""
 
-    superseded: str | None = None
-    superseded_by: str | None = None
+    superseded: ContentHash | None = None
+    superseded_by: ContentHash | None = None
     reason: str = ""
 
 
@@ -268,8 +256,8 @@ class SupersedeResult(ServiceResult):
 class ContradictionPair(BaseModel):
     """A pair of contradictory memories."""
 
-    memory_a_hash: str
-    memory_b_hash: str
+    memory_a_hash: ContentHash
+    memory_b_hash: ContentHash
     confidence: float | None = None
     memory_a_content: str = ""
     memory_b_content: str = ""
@@ -311,14 +299,22 @@ class BatchItemResult(BaseModel):
 
     index: int
     success: bool
-    content_hash: str | None = None
+    content_hash: ContentHash | None = None
     error: str | None = None
 
 
 class BatchResult(ServiceResult):
-    """Result of batch store/delete/update operations."""
+    """Result of batch store/delete/update operations.
+
+    Operation-specific counters are optional — only the relevant one
+    is populated per call (e.g. ``created`` for batch_store, ``deleted``
+    for batch_delete).  ``failed`` is common to all operations.
+    """
 
     results: list[BatchItemResult] = Field(default_factory=list)
-    total: int = 0
-    succeeded: int = 0
     failed: int = 0
+    # Operation-specific counters (mutually exclusive per call)
+    created: int | None = None
+    deleted: int | None = None
+    updated: int | None = None
+    rolled_back: bool | None = None

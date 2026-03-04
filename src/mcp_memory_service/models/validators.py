@@ -60,5 +60,6 @@ ContentHash = Annotated[str, Field(min_length=1)]
 
 SearchMode = Literal["hybrid", "scan", "similar", "tag", "recent"]
 MemoryType = Literal["note", "decision", "task", "reference"]
+MatchType = Literal["ALL", "ANY"]
 RelationType = Literal["RELATES_TO", "PRECEDES", "CONTRADICTS"]
 OutputFormat = Literal["full", "summary", "both"]
