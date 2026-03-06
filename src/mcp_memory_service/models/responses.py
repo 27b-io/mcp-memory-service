@@ -8,11 +8,11 @@ these; callers get attribute access and IDE completion instead of
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .validators import ContentHash
+from .validators import ContentHash, MatchType
 
 # ---------------------------------------------------------------------------
 # Base
@@ -161,7 +161,7 @@ class TagSearchResult(PaginationMeta):
 
     memories: list[MemoryData] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
-    match_type: Literal["ALL", "ANY"] | None = None
+    match_type: MatchType | None = None
     error: str | None = None
 
 
