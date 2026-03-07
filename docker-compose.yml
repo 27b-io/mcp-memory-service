@@ -9,8 +9,8 @@ services:
       - qdrant-data:/qdrant/storage
     restart: unless-stopped
     healthcheck:
-      # Qdrant image has no curl/wget — use raw TCP probe
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333'"]
+      # Qdrant image has no curl/wget/nc — use bash /dev/tcp for HTTP readiness
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/6333 && echo -e \"GET /readyz HTTP/1.0\\r\\n\" >&3 && grep -q \"ready\" <&3'"]
       interval: 10s
       timeout: 5s
       retries: 5
