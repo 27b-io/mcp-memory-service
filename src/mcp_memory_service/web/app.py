@@ -93,8 +93,11 @@ async def lifespan(app: FastAPI):
     await sse_manager.stop()
     logger.info("SSE Manager stopped")
 
-    # StorageManager owns lifecycle — unified_server calls close_shared_storage().
-    # No manual close needed here.
+    # Idempotent — drains Hebbian write queue, closes graph + storage.
+    # Safe to call even if unified_server already called it.
+    from ..shared_storage import close_shared_storage
+
+    await close_shared_storage()
 
 
 def create_app() -> FastAPI:

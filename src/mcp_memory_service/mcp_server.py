@@ -104,10 +104,11 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     try:
         yield MCPServerContext(storage=storage, memory_service=memory_service)
     finally:
-        # StorageManager owns lifecycle — no manual close needed.
-        # unified_server calls close_shared_storage() on shutdown.
-        # In standalone mode, process exit handles cleanup.
-        pass
+        # Idempotent — drains Hebbian write queue, closes graph + storage.
+        # Safe to call even if unified_server already called it.
+        from .shared_storage import close_shared_storage
+
+        await close_shared_storage()
 
 
 # Create FastMCP server instance

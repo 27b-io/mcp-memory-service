@@ -9,6 +9,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import src.mcp_memory_service.shared_storage as _shared_mod
 from src.mcp_memory_service.shared_storage import (
     StorageManager,
     close_shared_storage,
@@ -21,16 +22,22 @@ from src.mcp_memory_service.shared_storage import (
 pytestmark = pytest.mark.timeout(600)
 
 
+def _reset_manager():
+    """Reset both the singleton class var AND the module-level cached _manager."""
+    StorageManager._instance = None
+    _shared_mod._manager = StorageManager.get_instance()
+
+
 @pytest.fixture(autouse=True)
 async def _reset_storage_manager():
     """Reset StorageManager singleton before each test, clean up after."""
-    StorageManager._instance = None
+    _reset_manager()
     yield
     try:
         await close_shared_storage()
     except Exception:
         pass
-    StorageManager._instance = None
+    _reset_manager()
 
 
 @pytest.mark.asyncio
