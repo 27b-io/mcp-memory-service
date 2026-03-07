@@ -25,7 +25,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Request
@@ -51,7 +51,7 @@ class SSEEvent:
         if self.event_id is None:
             self.event_id = str(uuid.uuid4())
         if self.timestamp is None:
-            self.timestamp = datetime.now(timezone.utc).isoformat()
+            self.timestamp = datetime.now(UTC).isoformat()
 
 
 class SSEManager:
@@ -171,7 +171,7 @@ class SSEManager:
                     heartbeat_event = SSEEvent(
                         event_type="heartbeat",
                         data={
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "timestamp": datetime.now(UTC).isoformat(),
                             "active_connections": len(self.connections),
                             "server_status": "healthy",
                         },
@@ -245,11 +245,11 @@ async def create_event_stream(request: Request):
 
                     yield event_data
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send a ping to keep connection alive
                     yield {
                         "event": "ping",
-                        "data": json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "message": "Connection alive"}),
+                        "data": json.dumps({"timestamp": datetime.now(UTC).isoformat(), "message": "Connection alive"}),
                     }
 
                 except asyncio.CancelledError:

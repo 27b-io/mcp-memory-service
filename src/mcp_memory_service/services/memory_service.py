@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, TypedDict
 
 from ..config import (
@@ -1156,12 +1156,12 @@ class MemoryService:
         td_lambda = settings.hybrid_search.temporal_decay_lambda
         if td_lambda > 0:
             td_base = settings.hybrid_search.temporal_decay_base
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for result, mem in zip(results, result_memories):
                 try:
                     updated_at = datetime.fromisoformat(mem.updated_at_iso)
                     if updated_at.tzinfo is None:
-                        updated_at = updated_at.replace(tzinfo=timezone.utc)
+                        updated_at = updated_at.replace(tzinfo=UTC)
                     days_old = (now - updated_at).total_seconds() / 86400
                 except (ValueError, TypeError):
                     days_old = 365

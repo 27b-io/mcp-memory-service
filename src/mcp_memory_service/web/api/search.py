@@ -19,7 +19,7 @@ Provides semantic search, tag-based search, and time-based recall functionality.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -472,7 +472,7 @@ def parse_time_query(query: str) -> dict[str, Any] | None:
     natural language processing later.
     """
     query_lower = query.lower().strip()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Define time mappings
     if query_lower in ["yesterday"]:

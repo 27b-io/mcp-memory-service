@@ -221,9 +221,9 @@ class TestGetTrustScore:
         ]
         for val in invalid_values:
             metadata = {"provenance": {"trust_score": val}}
-            assert (
-                get_trust_score(metadata) == DEFAULT_TRUST_SCORE
-            ), f"get_trust_score should return DEFAULT_TRUST_SCORE for trust_score={val!r}"
+            assert get_trust_score(metadata) == DEFAULT_TRUST_SCORE, (
+                f"get_trust_score should return DEFAULT_TRUST_SCORE for trust_score={val!r}"
+            )
 
     def test_default_uses_constant(self):
         """The default value must be the named constant, not a magic number."""

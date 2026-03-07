@@ -1,5 +1,4 @@
-"""
-Memory lifecycle hooks.
+"""Memory lifecycle hooks.
 
 Provides HookRegistry for registering async pre/post callbacks on memory operations.
 Pre-hooks can veto operations by raising HookValidationError.
@@ -8,8 +7,11 @@ Post-hooks are fire-and-forget: failures are logged but never propagate.
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+from .models.validators import ContentHash, NonNegativeInt, Tags
 
 logger = logging.getLogger(__name__)
 
@@ -33,40 +35,36 @@ class HookValidationError(Exception):
     """
 
 
-@dataclass
-class CreateEvent:
+class CreateEvent(BaseModel):
     """Context for create lifecycle hooks."""
 
-    content: str
-    content_hash: str
-    tags: list[str]
-    memory_type: str | None
-    metadata: dict[str, Any]
-    client_hostname: str | None
+    content: str = Field(min_length=1)
+    content_hash: ContentHash
+    tags: Tags = []
+    memory_type: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    client_hostname: str | None = None
 
 
-@dataclass
-class DeleteEvent:
+class DeleteEvent(BaseModel):
     """Context for delete lifecycle hooks."""
 
-    content_hash: str
+    content_hash: ContentHash
 
 
-@dataclass
-class UpdateEvent:
+class UpdateEvent(BaseModel):
     """Context for update lifecycle hooks."""
 
-    content_hash: str
-    fields: dict[str, Any]  # keys: tags, memory_type, metadata (whichever were updated)
+    content_hash: ContentHash
+    fields: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class RetrieveEvent:
+class RetrieveEvent(BaseModel):
     """Context for retrieve lifecycle hooks."""
 
     query: str
-    result_hashes: list[str]
-    result_count: int
+    result_hashes: list[ContentHash] = Field(default_factory=list)
+    result_count: NonNegativeInt = 0
 
 
 class HookRegistry:
@@ -97,7 +95,7 @@ class HookRegistry:
 
         Args:
             name: Hook event name (e.g. "pre_create", "post_delete").
-            fn: Async callable receiving the event dataclass for this hook type.
+            fn: Async callable receiving the event model for this hook type.
         """
         self._hooks.setdefault(name, []).append(fn)
 

@@ -5,7 +5,7 @@ Tests context capture, context similarity computation, retrieval boost
 application, and boundary conditions.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from mcp_memory_service.utils.encoding_context import (
     EncodingContext,
@@ -46,44 +46,44 @@ class TestCaptureEncodingContext:
     def test_morning_bucket(self):
         """8 AM UTC should be 'morning'."""
         # 2026-02-07 08:00 UTC
-        ts = datetime(2026, 2, 7, 8, 0, 0, tzinfo=timezone.utc).timestamp()
+        ts = datetime(2026, 2, 7, 8, 0, 0, tzinfo=UTC).timestamp()
         ctx = capture_encoding_context(timestamp=ts)
         assert ctx.time_of_day == "morning"
 
     def test_afternoon_bucket(self):
         """14:00 UTC should be 'afternoon'."""
-        ts = datetime(2026, 2, 7, 14, 0, 0, tzinfo=timezone.utc).timestamp()
+        ts = datetime(2026, 2, 7, 14, 0, 0, tzinfo=UTC).timestamp()
         ctx = capture_encoding_context(timestamp=ts)
         assert ctx.time_of_day == "afternoon"
 
     def test_evening_bucket(self):
         """20:00 UTC should be 'evening'."""
-        ts = datetime(2026, 2, 7, 20, 0, 0, tzinfo=timezone.utc).timestamp()
+        ts = datetime(2026, 2, 7, 20, 0, 0, tzinfo=UTC).timestamp()
         ctx = capture_encoding_context(timestamp=ts)
         assert ctx.time_of_day == "evening"
 
     def test_night_bucket(self):
         """23:00 UTC should be 'night'."""
-        ts = datetime(2026, 2, 7, 23, 0, 0, tzinfo=timezone.utc).timestamp()
+        ts = datetime(2026, 2, 7, 23, 0, 0, tzinfo=UTC).timestamp()
         ctx = capture_encoding_context(timestamp=ts)
         assert ctx.time_of_day == "night"
 
     def test_early_morning_is_night(self):
         """3 AM UTC should be 'night'."""
-        ts = datetime(2026, 2, 7, 3, 0, 0, tzinfo=timezone.utc).timestamp()
+        ts = datetime(2026, 2, 7, 3, 0, 0, tzinfo=UTC).timestamp()
         ctx = capture_encoding_context(timestamp=ts)
         assert ctx.time_of_day == "night"
 
     def test_weekday_detected(self):
         """2026-02-07 is a Saturday, but let's test a weekday."""
         # 2026-02-09 is Monday
-        ts = datetime(2026, 2, 9, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+        ts = datetime(2026, 2, 9, 10, 0, 0, tzinfo=UTC).timestamp()
         ctx = capture_encoding_context(timestamp=ts)
         assert ctx.day_type == "weekday"
 
     def test_weekend_detected(self):
         """2026-02-07 is a Saturday."""
-        ts = datetime(2026, 2, 7, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+        ts = datetime(2026, 2, 7, 10, 0, 0, tzinfo=UTC).timestamp()
         ctx = capture_encoding_context(timestamp=ts)
         assert ctx.day_type == "weekend"
 

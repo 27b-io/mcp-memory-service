@@ -59,7 +59,7 @@ async def test_fire_pre_propagates_hook_validation_error(registry):
         raise HookValidationError("rejected")
 
     registry.add("pre_create", rejector)
-    event = CreateEvent("c", "h", [], None, {}, None)
+    event = CreateEvent(content="c", content_hash="h")
     with pytest.raises(HookValidationError, match="rejected"):
         await registry.fire_pre("pre_create", event)
 
@@ -70,7 +70,7 @@ async def test_fire_pre_propagates_arbitrary_exception(registry):
         raise ValueError("something broke")
 
     registry.add("pre_create", broken)
-    event = CreateEvent("c", "h", [], None, {}, None)
+    event = CreateEvent(content="c", content_hash="h")
     with pytest.raises(ValueError, match="something broke"):
         await registry.fire_pre("pre_create", event)
 
@@ -87,14 +87,14 @@ async def test_fire_pre_multiple_handlers_in_order(registry):
 
     registry.add("pre_create", first)
     registry.add("pre_create", second)
-    await registry.fire_pre("pre_create", CreateEvent("c", "h", [], None, {}, None))
+    await registry.fire_pre("pre_create", CreateEvent(content="c", content_hash="h"))
     assert order == ["first", "second"]
 
 
 @pytest.mark.asyncio
 async def test_fire_pre_no_handlers_is_noop(registry):
     # Should not raise
-    await registry.fire_pre("pre_create", CreateEvent("c", "h", [], None, {}, None))
+    await registry.fire_pre("pre_create", CreateEvent(content="c", content_hash="h"))
 
 
 # --- HookRegistry.fire_post ---
@@ -120,13 +120,13 @@ async def test_fire_post_swallows_exceptions(registry, caplog):
 
     registry.add("post_create", explodes)
     # Must not raise
-    await registry.fire_post("post_create", CreateEvent("c", "h", [], None, {}, None))
+    await registry.fire_post("post_create", CreateEvent(content="c", content_hash="h"))
     assert "boom" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_fire_post_no_handlers_is_noop(registry):
-    await registry.fire_post("post_delete", DeleteEvent("abc"))
+    await registry.fire_post("post_delete", DeleteEvent(content_hash="abc"))
 
 
 # --- Event dataclasses ---

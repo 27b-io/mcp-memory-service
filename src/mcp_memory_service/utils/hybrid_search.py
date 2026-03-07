@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -468,7 +468,7 @@ def apply_recency_decay(
             info["recency_factor"] = 1.0
         return results
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     adjusted: list[tuple[Memory, float, dict]] = []
 
     for memory, score, info in results:
@@ -478,7 +478,7 @@ def apply_recency_decay(
             # Normalize to UTC - handle both aware and naive datetimes
             if updated_at.tzinfo is None:
                 # Assume naive datetime is UTC
-                updated_at = updated_at.replace(tzinfo=timezone.utc)
+                updated_at = updated_at.replace(tzinfo=UTC)
             days_old = (now - updated_at).total_seconds() / 86400
         except (ValueError, TypeError):
             # If we can't parse the date, assume it's old

@@ -8,7 +8,7 @@ Formula: final_score = similarity * (base + exp(-lambda * days) * (1 - base))
 """
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -90,7 +90,7 @@ class TestApplyRecencyDecayWithBase:
         """Create a (memory, score, debug_info) tuple."""
         memory = MagicMock()
         memory.content_hash = content_hash
-        updated_at = datetime.now(timezone.utc) - timedelta(days=days_ago)
+        updated_at = datetime.now(UTC) - timedelta(days=days_ago)
         memory.updated_at_iso = updated_at.isoformat().replace("+00:00", "Z")
         return (memory, score, {"vector_score": score})
 

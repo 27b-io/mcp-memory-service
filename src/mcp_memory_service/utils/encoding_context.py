@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def capture_encoding_context(
         EncodingContext with all dimensions populated
     """
     ts = timestamp or time.time()
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    dt = datetime.fromtimestamp(ts, tz=UTC)
 
     return EncodingContext(
         time_of_day=_hour_to_bucket(dt.hour),
