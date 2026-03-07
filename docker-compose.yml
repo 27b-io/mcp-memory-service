@@ -8,6 +8,13 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
     restart: unless-stopped
+    healthcheck:
+      # Qdrant image has no curl/wget — use raw TCP probe
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     deploy:
       resources:
         limits:
@@ -21,14 +28,20 @@ services:
 
   # FalkorDB graph database (Redis protocol)
   falkordb:
-    image: falkordb/falkordb:latest
+    image: docker.io/falkordb/falkordb:latest
     container_name: mcp-memory-falkordb
     ports:
       - "6379:6379"
     volumes:
       - falkordb-data:/data
-    command: ["--appendonly", "yes", "--appendfsync", "everysec"]
+    command: ["--appendonly", "yes", "--appendfsync", "everysec", "--requirepass", "${FALKORDB_PASSWORD:-changeme}"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${FALKORDB_PASSWORD:-changeme}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     deploy:
       resources:
         limits:
@@ -47,8 +60,10 @@ services:
       dockerfile: Dockerfile
     container_name: mcp-memory-unified
     depends_on:
-      - qdrant
-      - falkordb
+      qdrant:
+        condition: service_healthy
+      falkordb:
+        condition: service_healthy
     ports:
       - "8000:8000"  # HTTP API + dashboard
       - "8001:8001"  # MCP streamable-http
@@ -62,6 +77,7 @@ services:
       - MCP_FALKORDB_ENABLED=true
       - MCP_FALKORDB_HOST=falkordb
       - MCP_FALKORDB_PORT=6379
+      - MCP_FALKORDB_PASSWORD=${FALKORDB_PASSWORD:-changeme}
 
       # HTTP server
       - MCP_HTTP_ENABLED=true
