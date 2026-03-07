@@ -40,7 +40,7 @@ from .api.manage import router as manage_router
 from .api.mcp import router as mcp_router
 from .api.memories import router as memories_router
 from .api.search import router as search_router
-from .dependencies import create_storage_backend, set_storage
+from .dependencies import set_storage
 from .sse import sse_manager
 
 logger = logging.getLogger(__name__)
@@ -57,16 +57,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting MCP Memory Service HTTP interface...")
     try:
-        # Check if shared storage is already initialized (by unified_server)
-        from ..shared_storage import get_shared_storage, is_storage_initialized
+        # StorageManager.get_storage() is idempotent: returns cached instance
+        # if pre-initialized (e.g. by unified_server), otherwise initializes
+        # storage + graph layer + write queue.
+        from ..shared_storage import get_shared_storage
 
-        if is_storage_initialized():
-            logger.info("Using pre-initialized shared storage instance")
-            storage = await get_shared_storage()
-        else:
-            # Fallback to creating storage if running standalone
-            logger.info("No shared storage found, initializing new instance (standalone mode)")
-            storage = await create_storage_backend()
+        storage = await get_shared_storage()
 
         set_storage(storage)  # Set the global storage instance
 
@@ -97,12 +93,8 @@ async def lifespan(app: FastAPI):
     await sse_manager.stop()
     logger.info("SSE Manager stopped")
 
-    # Only close storage if we created it (standalone mode)
-    # Shared storage is managed by unified_server
-    from ..shared_storage import is_storage_initialized
-
-    if storage and not is_storage_initialized():
-        await storage.close()
+    # StorageManager owns lifecycle — unified_server calls close_shared_storage().
+    # No manual close needed here.
 
 
 def create_app() -> FastAPI:

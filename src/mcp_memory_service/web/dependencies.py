@@ -50,17 +50,3 @@ def get_memory_service(storage: MemoryStorage = Depends(get_storage)) -> MemoryS
         graph_client=get_graph_client(),
         write_queue=get_write_queue(),
     )
-
-
-async def create_storage_backend() -> MemoryStorage:
-    """
-    Create and initialize storage backend for web interface based on configuration.
-
-    Returns:
-        Initialized storage backend
-    """
-    from ..storage.factory import create_storage_instance
-
-    logger.info("Creating storage backend for web interface...")
-
-    return await create_storage_instance()
