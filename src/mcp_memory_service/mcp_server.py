@@ -85,17 +85,12 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     # Register optional three-tier tools before accepting requests
     _maybe_register_three_tier_tools()
 
-    # Check if shared storage is already initialized (by unified_server)
-    from .shared_storage import get_shared_storage, is_storage_initialized
+    # StorageManager.get_storage() is idempotent: returns cached instance if
+    # already initialized (e.g. by unified_server), otherwise initializes
+    # storage + graph layer + write queue in one shot.
+    from .shared_storage import get_shared_storage
 
-    if is_storage_initialized():
-        logger.debug("Using pre-initialized shared storage instance")
-        storage = await get_shared_storage()
-    else:
-        logger.info("No shared storage found, initializing new instance (standalone mode)")
-        from .storage.factory import create_storage_instance
-
-        storage = await create_storage_instance()
+    storage = await get_shared_storage()
 
     # Initialize memory service with shared business logic
     from .shared_storage import get_graph_client, get_write_queue
@@ -109,10 +104,11 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     try:
         yield MCPServerContext(storage=storage, memory_service=memory_service)
     finally:
-        if not is_storage_initialized():
-            logger.info("Shutting down MCP Memory Service components...")
-            if hasattr(storage, "close"):
-                await storage.close()
+        # Idempotent — drains Hebbian write queue, closes graph + storage.
+        # Safe to call even if unified_server already called it.
+        from .shared_storage import close_shared_storage
+
+        await close_shared_storage()
 
 
 # Create FastMCP server instance
