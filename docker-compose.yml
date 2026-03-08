@@ -1,137 +1,118 @@
 services:
-  # Qdrant vector database server
+  # Qdrant vector database
   qdrant:
     image: docker.io/qdrant/qdrant:latest
     container_name: mcp-memory-qdrant
     ports:
-      - "6333:6333"  # HTTP API
-      - "6334:6334"  # gRPC (optional)
+      - "6333:6333"
     volumes:
-      - qdrant-server-data:/qdrant/storage
+      - qdrant-data:/qdrant/storage
     restart: unless-stopped
-    # Healthcheck disabled - Qdrant image doesn't include curl/wget
-    # healthcheck:
-    #   test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6333/ || exit 1"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 10s
+    healthcheck:
+      # Qdrant image has no curl/wget/nc — use bash /dev/tcp for HTTP readiness
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/6333 && echo -e \"GET /readyz HTTP/1.0\\r\\n\" >&3 && grep -q \"ready\" <&3'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: "2"
           memory: 2G
         reservations:
-          cpus: '1'
+          cpus: "1"
           memory: 512M
     networks:
-      - mcp-memory-network
+      - mcp-memory
 
-  # FalkorDB graph database (runs on Redis protocol)
+  # FalkorDB graph database (Redis protocol)
   falkordb:
-    image: falkordb/falkordb:latest
+    image: docker.io/falkordb/falkordb:latest
     container_name: mcp-memory-falkordb
     ports:
       - "6379:6379"
     volumes:
       - falkordb-data:/data
-    command: ["--appendonly", "yes", "--appendfsync", "everysec"]
+    command: ["--appendonly", "yes", "--appendfsync", "everysec", "--requirepass", "${FALKORDB_PASSWORD:-changeme}"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${FALKORDB_PASSWORD:-changeme}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     deploy:
       resources:
         limits:
-          cpus: '1'
+          cpus: "1"
           memory: 1G
         reservations:
-          cpus: '0.25'
+          cpus: "0.25"
           memory: 512M
     networks:
-      - mcp-memory-network
+      - mcp-memory
 
-  # Unified MCP Memory Service (HTTP + MCP SSE)
+  # Unified MCP Memory Service (HTTP + MCP)
   mcp-memory:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: mcp-memory-unified
     depends_on:
-      - qdrant  # Wait for qdrant to start (no healthcheck)
-      - falkordb
+      qdrant:
+        condition: service_healthy
+      falkordb:
+        condition: service_healthy
     ports:
-      - "8000:8000"  # HTTP API
-      - "8001:8001"  # MCP SSE Server
+      - "8000:8000"  # HTTP API + dashboard
+      - "8001:8001"  # MCP streamable-http
     environment:
-      # Storage backend
+      # Storage
       - MCP_MEMORY_STORAGE_BACKEND=qdrant
-
-      # Qdrant server mode configuration
+      - MCP_MEMORY_EMBEDDING_MODEL=intfloat/e5-small-v2
       - MCP_QDRANT_URL=http://qdrant:6333
-      - MCP_QDRANT_QUANTIZATION_ENABLED=false
-      - MCP_EMBEDDING_MODEL=intfloat/e5-small
 
-      # FalkorDB graph layer (CQRS pattern)
+      # FalkorDB graph layer
       - MCP_FALKORDB_ENABLED=true
       - MCP_FALKORDB_HOST=falkordb
       - MCP_FALKORDB_PORT=6379
+      - MCP_FALKORDB_PASSWORD=${FALKORDB_PASSWORD:-changeme}
 
-      # HTTP Server configuration (enabled)
+      # HTTP server
       - MCP_HTTP_ENABLED=true
-      - MCP_HTTPS_ENABLED=false
-      - MCP_API_PORT=8000
+      - MCP_HTTP_PORT=8000
+      - MCP_HTTP_HOST=0.0.0.0
 
-      # MCP Server configuration (SSE transport for multi-client support)
-      # This serves the MCP protocol over HTTP on port 8001
+      # MCP server (streamable-http transport)
       - MCP_TRANSPORT_MODE=streamable-http
       - MCP_SERVER_PORT=8001
       - MCP_SERVER_HOST=0.0.0.0
 
-      # OAuth (disable for local development)
-      - MCP_OAUTH_ENABLED=false
-      - MCP_ALLOW_ANONYMOUS_ACCESS=true
-
       # Logging
-      - MCP_LOG_LEVEL=DEBUG
-
+      - MCP_LOG_LEVEL=INFO
     volumes:
-      # Optional: SQLite-vec backup
       - mcp-memory-backups:/root/.local/share/mcp-memory/backups
-      # Note: HuggingFace cache removed - ONNX model is baked into image
-
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
     restart: unless-stopped
-
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: "2"
           memory: 2G
         reservations:
-          cpus: '1'
+          cpus: "1"
           memory: 1G
     networks:
-      - mcp-memory-network
+      - mcp-memory
 
 volumes:
-  # FalkorDB persistent storage
+  qdrant-data:
+    driver: local
   falkordb-data:
-    driver: local
-  # Qdrant server persistent storage
-  qdrant-server-data:
-    driver: local
-  # Legacy volumes (keep temporarily for migration)
-  mcp-memory-data:
-    driver: local
-  mcp-memory-data-mcp:
     driver: local
   mcp-memory-backups:
     driver: local
 
 networks:
-  mcp-memory-network:
+  mcp-memory:
     driver: bridge
