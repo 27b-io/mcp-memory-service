@@ -581,16 +581,16 @@ class QdrantStorage(MemoryStorage):
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             None,
-            lambda: self.client.search(
+            lambda: self.client.query_points(
                 collection_name=self.tag_collection_name,
-                query_vector=query_embedding,
+                query=query_embedding,
                 limit=max_tags,
                 score_threshold=threshold,
                 with_payload=True,
             ),
         )
 
-        return [hit.payload["tag"] for hit in results if "tag" in hit.payload]
+        return [hit.payload["tag"] for hit in results.points if "tag" in hit.payload]
 
     async def _collection_exists(self) -> bool:
         """
