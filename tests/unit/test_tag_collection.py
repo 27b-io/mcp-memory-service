@@ -132,6 +132,7 @@ class TestSearchSimilarTags:
         qdrant_storage.client.query_points.assert_called_once()
         call_kwargs = qdrant_storage.client.query_points.call_args.kwargs
         assert call_kwargs["collection_name"] == "memories_tags"
+        assert call_kwargs["query"] == [1.0, 0.0, 0.0]
         assert call_kwargs["score_threshold"] == 0.5
         assert call_kwargs["limit"] == 10
 
