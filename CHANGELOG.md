@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.20.0](https://github.com/27b-io/mcp-memory-service/compare/v11.19.0...v11.20.0) (2026-03-08)
+
+
+### Features
+
+* golden-sample integration tests for full search pipeline ([#137](https://github.com/27b-io/mcp-memory-service/issues/137)) ([05508aa](https://github.com/27b-io/mcp-memory-service/commit/05508aa7afe42b2591e58d59673e678f4bc9bf07))
+
 ## [11.19.0](https://github.com/27b-io/mcp-memory-service/compare/v11.18.0...v11.19.0) (2026-03-08)
 
 
