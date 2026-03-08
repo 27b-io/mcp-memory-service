@@ -119,7 +119,9 @@ class TestSearchSimilarTags:
         hit2 = MagicMock()
         hit2.payload = {"tag": "docker"}
         hit2.score = 0.7
-        qdrant_storage.client.search.return_value = [hit1, hit2]
+        query_response = MagicMock()
+        query_response.points = [hit1, hit2]
+        qdrant_storage.client.query_points.return_value = query_response
 
         result = await qdrant_storage.search_similar_tags(
             query_embedding=[1.0, 0.0, 0.0],
@@ -127,8 +129,8 @@ class TestSearchSimilarTags:
             max_tags=10,
         )
         assert result == ["python", "docker"]
-        qdrant_storage.client.search.assert_called_once()
-        call_kwargs = qdrant_storage.client.search.call_args.kwargs
+        qdrant_storage.client.query_points.assert_called_once()
+        call_kwargs = qdrant_storage.client.query_points.call_args.kwargs
         assert call_kwargs["collection_name"] == "memories_tags"
         assert call_kwargs["score_threshold"] == 0.5
         assert call_kwargs["limit"] == 10
@@ -139,7 +141,7 @@ class TestSearchSimilarTags:
         qdrant_storage._known_tags = set()
         result = await qdrant_storage.search_similar_tags([1.0, 0.0, 0.0])
         assert result == []
-        qdrant_storage.client.search.assert_not_called()
+        qdrant_storage.client.query_points.assert_not_called()
 
 
 class TestUpsertTagEmbeddings:
