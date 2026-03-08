@@ -8,6 +8,19 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.19.0](https://github.com/27b-io/mcp-memory-service/compare/v11.18.0...v11.19.0) (2026-03-08)
+
+
+### Features
+
+* replace scattered validation with Pydantic models ([#150](https://github.com/27b-io/mcp-memory-service/issues/150)) ([b07ac42](https://github.com/27b-io/mcp-memory-service/commit/b07ac426b348a894c1465d2d811df1ec3a5bfa1d))
+
+
+### Bug Fixes
+
+* eliminate standalone init path that bypassed graph layer ([#151](https://github.com/27b-io/mcp-memory-service/issues/151)) ([#156](https://github.com/27b-io/mcp-memory-service/issues/156)) ([8e74988](https://github.com/27b-io/mcp-memory-service/commit/8e749885799eb6c656a0292e394eb6ee2cf51c35))
+* migrate search_similar_tags from deprecated client.search to query_points ([#160](https://github.com/27b-io/mcp-memory-service/issues/160)) ([6900bae](https://github.com/27b-io/mcp-memory-service/commit/6900bae6464e421eb5fb1457cd9323fc4c145e64))
+
 ## [11.18.0](https://github.com/27b-io/mcp-memory-service/compare/v11.17.0...v11.18.0) (2026-02-28)
 
 

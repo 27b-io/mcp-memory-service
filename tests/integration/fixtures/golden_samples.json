@@ -1,0 +1,330 @@
+[
+  {
+    "id": "gutenberg_1342_1",
+    "content": "It is a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered as the rightful property of some one or other of their daughters.",
+    "source": "Pride and Prejudice by Jane Austen",
+    "themes": ["marriage", "social class", "wealth", "first impressions"],
+    "tags": ["fiction", "social-commentary", "19th-century", "british-literature"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2701_1",
+    "content": "Call me Ishmael. Some years ago -- never mind how long precisely -- having little or no money in my purse, and nothing particular to interest me on shore, I thought I would sail about a little and see the watery part of the world. It is a way I have of driving off the spleen and regulating the circulation. Whenever I find myself growing grim about the mouth; whenever it is a damp, drizzly November in my soul; whenever I find myself involuntarily pausing before coffin warehouses, and bringing up the rear of every funeral I meet -- then, I account it high time to get to sea as soon as I can.",
+    "source": "Moby Dick by Herman Melville",
+    "themes": ["the sea", "melancholy", "adventure", "human restlessness"],
+    "tags": ["fiction", "american-literature", "19th-century", "adventure"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2701_2",
+    "content": "There now is your insular city of the Manhattoes, belted round by wharves as Indian isles by coral reefs -- commerce surrounds it with her surf. Right and left, the streets take you waterward. Its extreme downtown is the battery, where that noble mole is washed by waves, and cooled by breezes, which a few hours previous were out of sight of land. Look at the crowds of water-gazers there.",
+    "source": "Moby Dick by Herman Melville",
+    "themes": ["the sea", "commerce", "urban life", "nature"],
+    "tags": ["fiction", "american-literature", "19th-century", "nature"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1232_1",
+    "content": "Every prince ought to desire to be considered clement and not cruel. Nevertheless he ought to take care not to misuse this clemency. Cesare Borgia was considered cruel; notwithstanding, his cruelty reconciled the Romagna, unified it, and restored it to peace and loyalty. And if this be rightly considered, he will be seen to have been much more merciful than the Florentine people, who, to avoid a reputation for cruelty, permitted Pistoia to be destroyed. Therefore a prince, so long as he keeps his subjects united and loyal, ought not to mind the reproach of cruelty; because with a few examples he will be more merciful than those who, through too much mercy, allow disorders to arise, from which follow murders or robberies.",
+    "source": "The Prince by Niccolo Machiavelli",
+    "themes": ["leadership", "cruelty", "mercy", "political power", "statecraft"],
+    "tags": ["political-theory", "philosophy", "leadership", "renaissance"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1232_2",
+    "content": "Upon this a question arises: whether it be better to be loved than feared or feared than loved? It may be answered that one should wish to be both, but, because it is difficult to unite them in one person, it is much safer to be feared than loved, when, of the two, either must be dispensed with. Because this is to be asserted in general of men, that they are ungrateful, fickle, false, cowardly, covetous, and as long as you succeed they are yours entirely.",
+    "source": "The Prince by Niccolo Machiavelli",
+    "themes": ["leadership", "power", "human nature", "fear", "love"],
+    "tags": ["political-theory", "philosophy", "leadership", "renaissance"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1232_3",
+    "content": "The wish to acquire is in truth very natural and common, and men always do so when they can, and for this they will be praised not blamed; but when they cannot do so, yet wish to do so by any means, then there is folly and blame. Therefore, if France could have attacked Naples with her own forces she ought to have done so; if she could not, then she ought not to have divided it.",
+    "source": "The Prince by Niccolo Machiavelli",
+    "themes": ["ambition", "statecraft", "military strategy", "political wisdom"],
+    "tags": ["political-theory", "philosophy", "strategy", "renaissance"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2680_1",
+    "content": "Remember how long thou hast already put off these things, and how often a certain day and hour as it were, having been set unto thee by the gods, thou hast neglected it. It is high time for thee to understand the true nature both of the world, whereof thou art a part; and of that Lord and Governor of the world, from whom, as a channel from the spring, thou thyself didst flow: and that there is but a certain limit of time appointed unto thee, which if thou shalt not make use of to calm and allay the many distempers of thy soul, it will pass away and thou with it, and never after return.",
+    "source": "Meditations by Marcus Aurelius",
+    "themes": ["mortality", "self-discipline", "time", "stoic philosophy", "urgency"],
+    "tags": ["philosophy", "stoicism", "self-improvement", "ancient-rome"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2680_2",
+    "content": "Let it be thy earnest and incessant care as a Roman and a man to perform whatsoever it is that thou art about, with true and unfeigned gravity, natural affection, freedom and justice: and as for all other cares, and imaginations, how thou mayest ease thy mind of them. Which thou shalt do; if thou shalt go about every action as thy last action, free from all vanity, all passionate and wilful aberration from reason, and from all hypocrisy, and self-love, and dislike of those things, which by the fates or appointment of God have happened unto thee.",
+    "source": "Meditations by Marcus Aurelius",
+    "themes": ["duty", "stoic philosophy", "virtue", "mindfulness", "reason"],
+    "tags": ["philosophy", "stoicism", "self-improvement", "ancient-rome"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2680_3",
+    "content": "Do, soul, do; abuse and contemn thyself; yet a while and the time for thee to respect thyself, will be at an end. Every man's happiness depends from himself, but behold thy life is almost at an end, whiles affording thyself no respect, thou dost make thy happiness to consist in the souls, and conceits of other men.",
+    "source": "Meditations by Marcus Aurelius",
+    "themes": ["self-respect", "happiness", "mortality", "independence of mind"],
+    "tags": ["philosophy", "stoicism", "self-improvement", "ancient-rome"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2680_4",
+    "content": "Why should any of these things that happen externally, so much distract thee? Give thyself leisure to learn some good thing, and cease roving and wandering to and fro. Thou must also take heed of another kind of wandering, for they are idle in their actions, who toil and labour in this life, and have no certain scope to which to direct all their motions, and desires.",
+    "source": "Meditations by Marcus Aurelius",
+    "themes": ["focus", "purpose", "self-discipline", "distraction"],
+    "tags": ["philosophy", "stoicism", "self-improvement", "ancient-rome"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1497_1",
+    "content": "The figure of the cave in Book VII is a recapitulation of the divisions of knowledge in Book VI. The composite animal in Book IX is an allegory of the parts of the soul. The noble captain and the ship and the true pilot in Book VI are a figure of the relation of the people to the philosophers in the State which has been described.",
+    "source": "The Republic by Plato",
+    "themes": ["knowledge", "allegory", "philosophy", "the soul", "governance"],
+    "tags": ["philosophy", "ancient-greece", "political-theory", "epistemology"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1497_2",
+    "content": "To him, as to other great teachers both philosophical and religious, when they looked upward, the world seemed to be the embodiment of error and evil. The common sense of mankind has revolted against this view.",
+    "source": "The Republic by Plato",
+    "themes": ["idealism", "philosophy", "good and evil", "perception"],
+    "tags": ["philosophy", "ancient-greece", "epistemology", "metaphysics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_84_1",
+    "content": "What had been the study and desire of the wisest men since the creation of the world was now within my grasp. Not that, like a magic scene, it all opened upon me at once: the information I had obtained was of a nature rather to direct my endeavours so soon as I should point them towards the object of my search than to exhibit that object already accomplished. I was like the Arabian who had been buried with the dead and found a passage to life, aided only by one glimmering and seemingly ineffectual light.",
+    "source": "Frankenstein by Mary Shelley",
+    "themes": ["scientific discovery", "ambition", "knowledge", "creation"],
+    "tags": ["fiction", "science-fiction", "gothic", "19th-century"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_84_2",
+    "content": "Learn from me, if not by my precepts, at least by my example, how dangerous is the acquirement of knowledge and how much happier that man is who believes his native town to be the world, than he who aspires to become greater than his nature will allow.",
+    "source": "Frankenstein by Mary Shelley",
+    "themes": ["hubris", "knowledge", "consequences of science", "human limits"],
+    "tags": ["fiction", "science-fiction", "gothic", "19th-century", "ethics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_84_3",
+    "content": "When I found so astonishing a power placed within my hands, I hesitated a long time concerning the manner in which I should employ it. Although I possessed the capacity of bestowing animation, yet to prepare a frame for the reception of it, with all its intricacies of fibres, muscles, and veins, still remained a work of inconceivable difficulty and labour. I doubted at first whether I should attempt the creation of a being like myself, or one of simpler organization; but my imagination was too much exalted by my first success to permit me to doubt of my ability to give life to an animal as complex and wonderful as man.",
+    "source": "Frankenstein by Mary Shelley",
+    "themes": ["creation", "power", "ambition", "playing God", "science"],
+    "tags": ["fiction", "science-fiction", "gothic", "19th-century", "ethics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1661_1",
+    "content": "He was, I take it, the most perfect reasoning and observing machine that the world has seen, but as a lover he would have placed himself in a false position. He never spoke of the softer passions, save with a gibe and a sneer. They were admirable things for the observer -- excellent for drawing the veil from men's motives and actions. But for the trained reasoner to admit such intrusions into his own delicate and finely adjusted temperament was to introduce a distracting factor which might throw a doubt upon all his mental results. Grit in a sensitive instrument, or a crack in one of his own high-power lenses, would not be more disturbing than a strong emotion in a nature such as his.",
+    "source": "The Adventures of Sherlock Holmes by Arthur Conan Doyle",
+    "themes": ["reason", "logic", "emotion", "observation", "the scientific mind"],
+    "tags": ["fiction", "detective", "19th-century", "british-literature"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1661_2",
+    "content": "You see, but you do not observe. The distinction is clear. For example, you have frequently seen the steps which lead up from the hall to this room. How often? Well, some hundreds of times. Then how many are there? How many? I don't know. Quite so! You have not observed. And yet you have seen. That is just my point. Now, I know that there are seventeen steps, because I have both seen and observed.",
+    "source": "The Adventures of Sherlock Holmes by Arthur Conan Doyle",
+    "themes": ["observation", "perception", "attention to detail", "deduction"],
+    "tags": ["fiction", "detective", "19th-century", "logic"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1661_3",
+    "content": "It is a capital mistake to theorise before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts. But the note itself. What do you deduce from it? I carefully examined the writing, and the paper upon which it was written. The man who wrote it was presumably well to do. Such paper could not be bought under half a crown a packet. It is peculiarly strong and stiff.",
+    "source": "The Adventures of Sherlock Holmes by Arthur Conan Doyle",
+    "themes": ["scientific method", "logic", "reasoning", "evidence"],
+    "tags": ["fiction", "detective", "19th-century", "logic", "epistemology"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_98_1",
+    "content": "It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season of Light, it was the season of Darkness, it was the spring of hope, it was the winter of despair, we had everything before us, we had nothing before us, we were all going direct to Heaven, we were all going direct the other way -- in short, the period was so far like the present period, that some of its noisiest authorities insisted on its being received, for good or for evil, in the superlative degree of comparison only.",
+    "source": "A Tale of Two Cities by Charles Dickens",
+    "themes": ["revolution", "duality", "social upheaval", "history", "hope and despair"],
+    "tags": ["fiction", "historical", "19th-century", "british-literature"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_36_1",
+    "content": "With infinite complacency men went to and fro over this globe about their little affairs, serene in their assurance of their empire over matter. It is possible that the infusoria under the microscope do the same. No one gave a thought to the older worlds of space as sources of human danger, or thought of them only to dismiss the idea of life upon them as impossible or improbable.",
+    "source": "The War of the Worlds by H.G. Wells",
+    "themes": ["alien life", "human arrogance", "cosmic insignificance", "technology"],
+    "tags": ["fiction", "science-fiction", "19th-century", "british-literature"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_36_2",
+    "content": "Yet across the gulf of space, minds that are to our minds as ours are to those of the beasts that perish, intellects vast and cool and unsympathetic, regarded this earth with envious eyes, and slowly and surely drew their plans against us. And early in the twentieth century came the great disillusionment.",
+    "source": "The War of the Worlds by H.G. Wells",
+    "themes": ["alien invasion", "superior intelligence", "existential threat", "hubris"],
+    "tags": ["fiction", "science-fiction", "19th-century", "british-literature"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_35_1",
+    "content": "Clearly, any real body must have extension in four directions: it must have Length, Breadth, Thickness, and -- Duration. But through a natural infirmity of the flesh, which I will explain to you in a moment, we incline to overlook this fact. There are really four dimensions, three which we call the three planes of Space, and a fourth, Time. There is, however, a tendency to draw an unreal distinction between the former three dimensions and the latter, because it happens that our consciousness moves intermittently in one direction along the latter from the beginning to the end of our lives.",
+    "source": "The Time Machine by H.G. Wells",
+    "themes": ["time travel", "dimensions", "physics", "space-time", "consciousness"],
+    "tags": ["fiction", "science-fiction", "19th-century", "physics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_219_1",
+    "content": "The sea-reach of the Thames stretched before us like the beginning of an interminable waterway. In the offing the sea and the sky were welded together without a joint, and in the luminous space the tanned sails of the barges drifting up with the tide seemed to stand still in red clusters of canvas sharply peaked, with gleams of varnished sprits. A haze rested on the low shores that ran out to sea in vanishing flatness. The air was dark above Gravesend, and farther back still seemed condensed into a mournful gloom, brooding motionless over the biggest, and the greatest, town on earth.",
+    "source": "Heart of Darkness by Joseph Conrad",
+    "themes": ["the sea", "darkness", "empire", "foreboding", "nature"],
+    "tags": ["fiction", "19th-century", "british-literature", "colonialism"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_219_2",
+    "content": "The conquest of the earth, which mostly means the taking it away from those who have a different complexion or slightly flatter noses than ourselves, is not a pretty thing when you look into it too much. What redeems it is the idea only. An idea at the back of it; not a sentimental pretence but an idea; and an unselfish belief in the idea -- something you can set up, and bow down before, and offer a sacrifice to.",
+    "source": "Heart of Darkness by Joseph Conrad",
+    "themes": ["colonialism", "imperialism", "ideology", "conquest", "moral ambiguity"],
+    "tags": ["fiction", "19th-century", "british-literature", "colonialism", "ethics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_219_3",
+    "content": "And it has a fascination, too, that goes to work upon him. The fascination of the abomination -- you know, imagine the growing regrets, the longing to escape, the powerless disgust, the surrender, the hate.",
+    "source": "Heart of Darkness by Joseph Conrad",
+    "themes": ["darkness", "temptation", "moral corruption", "the human condition"],
+    "tags": ["fiction", "19th-century", "british-literature", "psychology"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_174_1",
+    "content": "The artist is the creator of beautiful things. To reveal art and conceal the artist is art's aim. The critic is he who can translate into another manner or a new material his impression of beautiful things. The highest as the lowest form of criticism is a mode of autobiography. Those who find ugly meanings in beautiful things are corrupt without being charming. This is a fault. Those who find beautiful meanings in beautiful things are the cultivated. For these there is hope. They are the elect to whom beautiful things mean only beauty.",
+    "source": "The Picture of Dorian Gray by Oscar Wilde",
+    "themes": ["art", "beauty", "criticism", "aestheticism"],
+    "tags": ["fiction", "19th-century", "british-literature", "aesthetics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_174_2",
+    "content": "There is no such thing as a moral or an immoral book. Books are well written, or badly written. That is all. No artist desires to prove anything. Even things that are true can be proved. No artist has ethical sympathies. An ethical sympathy in an artist is an unpardonable mannerism of style. No artist is ever morbid. The artist can express everything. Thought and language are to the artist instruments of an art. Vice and virtue are to the artist materials for an art.",
+    "source": "The Picture of Dorian Gray by Oscar Wilde",
+    "themes": ["art", "morality", "aestheticism", "literary criticism"],
+    "tags": ["fiction", "19th-century", "british-literature", "aesthetics", "ethics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_174_3",
+    "content": "All art is at once surface and symbol. Those who go beneath the surface do so at their peril. Those who read the symbol do so at their peril. It is the spectator, and not life, that art really mirrors. Diversity of opinion about a work of art shows that the work is new, complex, and vital. When critics disagree, the artist is in accord with himself. All art is quite useless.",
+    "source": "The Picture of Dorian Gray by Oscar Wilde",
+    "themes": ["art", "symbolism", "perception", "aestheticism"],
+    "tags": ["fiction", "19th-century", "british-literature", "aesthetics"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_11_1",
+    "content": "Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do: once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it, 'and what is the use of a book,' thought Alice 'without pictures or conversations?' So she was considering in her own mind (as well as she could, for the hot day made her feel very sleepy and stupid), whether the pleasure of making a daisy-chain would be worth the trouble of getting up and picking the daisies, when suddenly a White Rabbit with pink eyes ran close by her.",
+    "source": "Alice's Adventures in Wonderland by Lewis Carroll",
+    "themes": ["curiosity", "boredom", "imagination", "childhood"],
+    "tags": ["fiction", "fantasy", "19th-century", "british-literature", "children"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2009_1",
+    "content": "As many more individuals of each species are born than can possibly survive; and as, consequently, there is a frequently recurring struggle for existence, it follows that any being, if it vary however slightly in any manner profitable to itself, under the complex and sometimes varying conditions of life, will have a better chance of surviving, and thus be naturally selected. From the strong principle of inheritance, any selected variety will tend to propagate its new and modified form.",
+    "source": "On the Origin of Species by Charles Darwin",
+    "themes": ["natural selection", "evolution", "survival", "adaptation", "biology"],
+    "tags": ["science", "biology", "19th-century", "evolution"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_2009_2",
+    "content": "Natural selection almost inevitably causes much extinction of the less improved forms of life, and leads to what I have called divergence of character. In the next chapter I shall discuss the complex and little known laws of variation. In the five succeeding chapters, the most apparent and gravest difficulties in accepting the theory will be given: namely, first, the difficulties of transitions, or how a simple being or a simple organ can be changed and perfected into a highly developed being or into an elaborately constructed organ.",
+    "source": "On the Origin of Species by Charles Darwin",
+    "themes": ["natural selection", "extinction", "evolution", "biodiversity"],
+    "tags": ["science", "biology", "19th-century", "evolution"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_7370_1",
+    "content": "Though this be a state of liberty, yet it is not a state of licence: though man in that state have an uncontroulable liberty to dispose of his person or possessions, yet he has not liberty to destroy himself, or so much as any creature in his possession, but where some nobler use than its bare preservation calls for it. The state of nature has a law of nature to govern it, which obliges every one: and reason, which is that law, teaches all mankind, who will but consult it, that being all equal and independent, no one ought to harm another in his life, health, liberty, or possessions.",
+    "source": "Second Treatise of Government by John Locke",
+    "themes": ["natural rights", "liberty", "equality", "law of nature", "reason"],
+    "tags": ["political-theory", "philosophy", "17th-century", "enlightenment"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_7370_2",
+    "content": "For men being all the workmanship of one omnipotent, and infinitely wise maker; all the servants of one sovereign master, sent into the world by his order, and about his business; they are his property, whose workmanship they are, made to last during his, not one another's pleasure: and being furnished with like faculties, sharing all in one community of nature, there cannot be supposed any such subordination among us, that may authorize us to destroy one another, as if we were made for one another's uses.",
+    "source": "Second Treatise of Government by John Locke",
+    "themes": ["equality", "natural law", "human dignity", "divine creation"],
+    "tags": ["political-theory", "philosophy", "17th-century", "enlightenment"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1952_1",
+    "content": "If a physician of high standing, and one's own husband, assures friends and relatives that there is really nothing the matter with one but temporary nervous depression -- a slight hysterical tendency -- what is one to do? My brother is also a physician, and also of high standing, and he says the same thing. So I take phosphates or phosphites -- whichever it is, and tonics, and journeys, and air, and exercise, and am absolutely forbidden to 'work' until I am well again. Personally, I disagree with their ideas. Personally, I believe that congenial work, with excitement and change, would do me good.",
+    "source": "The Yellow Wallpaper by Charlotte Perkins Gilman",
+    "themes": ["mental health", "medical authority", "gender", "oppression", "autonomy"],
+    "tags": ["fiction", "feminism", "19th-century", "american-literature", "psychology"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1952_2",
+    "content": "One of those sprawling flamboyant patterns committing every artistic sin. It is dull enough to confuse the eye in following, pronounced enough to constantly irritate, and provoke study, and when you follow the lame, uncertain curves for a little distance they suddenly commit suicide -- plunge off at outrageous angles, destroy themselves in unheard-of contradictions. The color is repellant, almost revolting; a smouldering, unclean yellow, strangely faded by the slow-turning sunlight.",
+    "source": "The Yellow Wallpaper by Charlotte Perkins Gilman",
+    "themes": ["obsession", "perception", "confinement", "mental deterioration"],
+    "tags": ["fiction", "feminism", "19th-century", "american-literature", "psychology"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1952_3",
+    "content": "This wallpaper has a kind of sub-pattern in a different shade, a particularly irritating one, for you can only see it in certain lights, and not clearly then. But in the places where it isn't faded, and where the sun is just so, I can see a strange, provoking, formless sort of figure, that seems to sulk about behind that silly and conspicuous front design.",
+    "source": "The Yellow Wallpaper by Charlotte Perkins Gilman",
+    "themes": ["hidden meaning", "perception", "madness", "symbolism"],
+    "tags": ["fiction", "feminism", "19th-century", "american-literature", "psychology"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_345_1",
+    "content": "Left Munich at 8:35 P.M., on 1st May, arriving at Vienna early next morning; should have arrived at 6:46, but train was an hour late. Buda-Pesth seems a wonderful place, from the glimpse which I got of it from the train and the little I could walk through the streets. I feared to go very far from the station, as we had arrived late and would start as near the correct time as possible. The impression I had was that we were leaving the West and entering the East; the most western of splendid bridges over the Danube, which is here of noble width and depth, took us among the traditions of Turkish rule.",
+    "source": "Dracula by Bram Stoker",
+    "themes": ["travel", "east and west", "journey", "foreboding"],
+    "tags": ["fiction", "gothic", "horror", "19th-century", "british-literature"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_1260_1",
+    "content": "There was no possibility of taking a walk that day. We had been wandering, indeed, in the leafless shrubbery an hour in the morning; but since dinner the cold winter wind had brought with it clouds so sombre, and a rain so penetrating, that further outdoor exercise was now out of the question. I was glad of it: I never liked long walks, especially on chilly afternoons: dreadful to me was the coming home in the raw twilight, with nipped fingers and toes, and a heart saddened by the chidings of Bessie, the nurse, and humbled by the consciousness of my physical inferiority to Eliza, John, and Georgiana Reed.",
+    "source": "Jane Eyre by Charlotte Bronte",
+    "themes": ["isolation", "childhood", "social hierarchy", "resilience"],
+    "tags": ["fiction", "19th-century", "british-literature", "feminism"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_16328_1",
+    "content": "Hrothgar, king of the Danes, builds a great mead-hall, or palace, in which he hopes to feast his liegemen and to give them presents. The joy of king and retainers is, however, of short duration. Grendel, the monster, is seized with hateful jealousy. He cannot brook the sounds of joyance that reach him down in his fen-dwelling near the hall. Oft and anon he goes to the joyous building, bent on direful mischief. Thane after thane is ruthlessly carried off and devoured, while no one is found strong enough and bold enough to cope with the monster. For twelve years he persecutes Hrothgar and his vassals.",
+    "source": "Beowulf (translated by J. Lesslie Hall)",
+    "themes": ["heroism", "monsters", "leadership", "duty", "Anglo-Saxon culture"],
+    "tags": ["poetry", "epic", "anglo-saxon", "medieval"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_16328_2",
+    "content": "Over sea, a day's voyage off, Beowulf, of the Geats, nephew of Higelac, king of the Geats, hears of Grendel's doings and of Hrothgar's misery. He resolves to crush the fell monster and relieve the aged king. With fourteen chosen companions, he sets sail for Dane-land. Reaching that country, he soon persuades Hrothgar of his ability to help him.",
+    "source": "Beowulf (translated by J. Lesslie Hall)",
+    "themes": ["heroism", "courage", "leadership", "duty", "adventure"],
+    "tags": ["poetry", "epic", "anglo-saxon", "medieval"],
+    "memory_type": "reference"
+  },
+  {
+    "id": "gutenberg_16328_3",
+    "content": "Grendel comes, the great march-stepper, bearing God's anger. He seizes and kills one of the sleeping warriors. Then he advances towards Beowulf. A fierce and desperate hand-to-hand struggle ensues. No arms are used, both combatants trusting to strength and hand-grip. Beowulf tears Grendel's shoulder from its socket, and the monster retreats to his den, howling and yelling with agony and fury. The wound is fatal.",
+    "source": "Beowulf (translated by J. Lesslie Hall)",
+    "themes": ["combat", "heroism", "good vs evil", "strength", "monsters"],
+    "tags": ["poetry", "epic", "anglo-saxon", "medieval"],
+    "memory_type": "reference"
+  }
+]
