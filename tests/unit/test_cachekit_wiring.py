@@ -1,6 +1,6 @@
 """Tests for CacheKit wiring and cache infrastructure."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,7 +9,12 @@ import pytest
 async def _clear_caches():
     """Clear CacheKit caches before and after each test."""
     try:
-        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_corpus_count, _cached_embed, _cached_extract_keywords
+        from mcp_memory_service.services.memory_service import (
+            _cached_corpus_count,
+            _cached_embed,
+            _cached_extract_keywords,
+            _cached_fetch_all_tags,
+        )
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
         await _cached_embed.ainvalidate_cache()
@@ -18,7 +23,12 @@ async def _clear_caches():
         pass
     yield
     try:
-        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags, _cached_corpus_count, _cached_embed, _cached_extract_keywords
+        from mcp_memory_service.services.memory_service import (
+            _cached_corpus_count,
+            _cached_embed,
+            _cached_extract_keywords,
+            _cached_fetch_all_tags,
+        )
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
         await _cached_embed.ainvalidate_cache()
@@ -55,10 +65,16 @@ async def test_cached_fetch_all_tags_calls_storage():
 
 
 @pytest.mark.asyncio
-async def test_no_ck_kwargs_in_module():
-    """_ck_kwargs should no longer exist — CacheKit uses defaults."""
+async def test_ck_kwargs_configured_for_redis():
+    """_ck_kwargs should set backend=None when Redis URL is not configured."""
+    import os
+
     import mcp_memory_service.services.memory_service as mod
-    assert not hasattr(mod, "_ck_kwargs"), "_ck_kwargs should be removed; CacheKit resolves backend from env"
+
+    # In test environment, REDIS_URL should not be set
+    assert not os.environ.get("REDIS_URL") and not os.environ.get("CACHEKIT_REDIS_URL")
+    assert hasattr(mod, "_ck_kwargs"), "_ck_kwargs should exist for backend config"
+    assert mod._ck_kwargs.get("backend") is None, "backend should be None when Redis is unavailable"
 
 
 @pytest.mark.asyncio

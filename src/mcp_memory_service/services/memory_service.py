@@ -8,7 +8,6 @@ all memory operations, eliminating the DRY violation and ensuring consistent beh
 
 import asyncio
 import logging
-import os
 import time
 from collections import deque
 from datetime import UTC, datetime
@@ -58,20 +57,27 @@ from ..utils.summariser import summarise
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# CacheKit-backed caches (L1 in-process + L2 auto-resolved from REDIS_URL)
+# CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
 # ---------------------------------------------------------------------------
 _storage_ref: Any = None
 _embed_fn: Any = None  # set in MemoryService.__init__
 
 try:
+    import os
+
     from cachekit import cache as _cachekit_cache
 
-    @_cachekit_cache(ttl=60, namespace="mcp_memory_tags")
+    # Use Redis L2 if REDIS_URL is set, otherwise L1-only
+    _ck_kwargs: dict[str, Any] = {}
+    if not os.environ.get("REDIS_URL") and not os.environ.get("CACHEKIT_REDIS_URL"):
+        _ck_kwargs["backend"] = None  # L1-only, no Redis
+
+    @_cachekit_cache(ttl=60, namespace="mcp_memory_tags", **_ck_kwargs)
     async def _cached_fetch_all_tags() -> list[str]:
         """Fetch all tags from storage, cached 60s. Returns list for serialization."""
         return list(await _storage_ref.get_all_tags())
 
-    @_cachekit_cache(ttl=90, namespace="mcp_memory_corpus")
+    @_cachekit_cache(ttl=90, namespace="mcp_memory_corpus", **_ck_kwargs)
     async def _cached_corpus_count() -> int:
         """Corpus size for adaptive alpha, cached 90s."""
         return await _storage_ref.count()
@@ -79,13 +85,13 @@ try:
     # Embedding cache — namespace includes model name to auto-invalidate on model change
     _model_name = settings.storage.embedding_model.replace("/", "_")
 
-    @_cachekit_cache(ttl=300, namespace=f"mcp_memory_embed_{_model_name}")
+    @_cachekit_cache(ttl=300, namespace=f"mcp_memory_embed_{_model_name}", **_ck_kwargs)
     async def _cached_embed(text: str) -> list[float]:
         """Single-text embedding, cached 5min. Delegates to storage batch API."""
         result = await _embed_fn([text])
         return result[0]
 
-    @_cachekit_cache(ttl=60, namespace="mcp_memory_keywords")
+    @_cachekit_cache(ttl=60, namespace="mcp_memory_keywords", **_ck_kwargs)
     async def _cached_extract_keywords(query: str) -> list[str]:
         """Extract query keywords with tag matching, cached 60s."""
         tags = set(await _cached_fetch_all_tags())
