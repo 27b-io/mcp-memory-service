@@ -12,16 +12,32 @@ from mcp_memory_service.models.memory import Memory, MemoryQueryResult
 async def _clear_cachekit_caches():
     """Clear CacheKit L1 caches before and after tests."""
     try:
-        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags
+        from mcp_memory_service.services.memory_service import (
+            _cached_corpus_count,
+            _cached_embed,
+            _cached_extract_keywords,
+            _cached_fetch_all_tags,
+        )
 
         await _cached_fetch_all_tags.ainvalidate_cache()
+        await _cached_corpus_count.ainvalidate_cache()
+        await _cached_extract_keywords.ainvalidate_cache()
+        await _cached_embed.ainvalidate_cache()
     except Exception:  # noqa: BLE001
         pass  # Best-effort: cache functions may not exist or Redis may be unavailable
     yield
     try:
-        from mcp_memory_service.services.memory_service import _cached_fetch_all_tags
+        from mcp_memory_service.services.memory_service import (
+            _cached_corpus_count,
+            _cached_embed,
+            _cached_extract_keywords,
+            _cached_fetch_all_tags,
+        )
 
         await _cached_fetch_all_tags.ainvalidate_cache()
+        await _cached_corpus_count.ainvalidate_cache()
+        await _cached_extract_keywords.ainvalidate_cache()
+        await _cached_embed.ainvalidate_cache()
     except Exception:  # noqa: BLE001
         pass  # Best-effort: cache functions may not exist or Redis may be unavailable
 
@@ -97,10 +113,12 @@ async def test_fanout_calls_batch_embed_and_search_by_vector():
             page_size=10,
         )
 
-    # Verify: batch embed was called with all sub-queries
-    mock_storage.generate_embeddings_batch.assert_called_once()
-    batch_call_texts = mock_storage.generate_embeddings_batch.call_args[0][0]
-    assert len(batch_call_texts) == 3
+    # Verify: embeddings were generated for all sub-queries
+    # (CacheKit routes per-text through cache, so batch may be called multiple times)
+    all_embedded_texts = []
+    for call in mock_storage.generate_embeddings_batch.call_args_list:
+        all_embedded_texts.extend(call[0][0])
+    assert len(all_embedded_texts) == 3
 
     # Verify: search_by_vector called for each embedding (parallel)
     assert mock_storage.search_by_vector.call_count == 3
