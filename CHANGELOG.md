@@ -8,6 +8,19 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.20.0](https://github.com/27b-io/mcp-memory-service/compare/v11.19.0...v11.20.0) (2026-03-12)
+
+
+### Features
+
+* CacheKit L2 via FalkorDB, fix wiring, cache hot paths, expose stats ([#165](https://github.com/27b-io/mcp-memory-service/issues/165)) ([07c14c8](https://github.com/27b-io/mcp-memory-service/commit/07c14c8dcc48639582111912c3c44b0605548eeb))
+* golden-sample integration tests for full search pipeline ([#137](https://github.com/27b-io/mcp-memory-service/issues/137)) ([05508aa](https://github.com/27b-io/mcp-memory-service/commit/05508aa7afe42b2591e58d59673e678f4bc9bf07))
+
+
+### Bug Fixes
+
+* pin all GitHub Actions to full-length commit SHAs ([#163](https://github.com/27b-io/mcp-memory-service/issues/163)) ([81d28ae](https://github.com/27b-io/mcp-memory-service/commit/81d28ae51e9fb7cec75159ebe937dfbb405dbb21))
+
 ## [11.19.0](https://github.com/27b-io/mcp-memory-service/compare/v11.18.0...v11.19.0) (2026-03-08)
 
 
