@@ -8,7 +8,6 @@ all memory operations, eliminating the DRY violation and ensuring consistent beh
 
 import asyncio
 import logging
-import os
 import time
 from collections import deque
 from datetime import UTC, datetime
@@ -61,19 +60,42 @@ logger = logging.getLogger(__name__)
 # CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
 # ---------------------------------------------------------------------------
 _storage_ref: Any = None
+_embed_fn: Any = None  # set in MemoryService.__init__
 
 try:
+    import os
+
     from cachekit import cache as _cachekit_cache
 
-    # Use Redis if REDIS_URL is set, otherwise L1-only
-    _ck_kwargs: dict[str, Any] = {"serializer": "auto"}
+    # Use Redis L2 if REDIS_URL is set, otherwise L1-only
+    _ck_kwargs: dict[str, Any] = {}
     if not os.environ.get("REDIS_URL") and not os.environ.get("CACHEKIT_REDIS_URL"):
-        _ck_kwargs["backend"] = None
+        _ck_kwargs["backend"] = None  # L1-only, no Redis
 
     @_cachekit_cache(ttl=60, namespace="mcp_memory_tags", **_ck_kwargs)
-    async def _cached_fetch_all_tags() -> set[str]:
-        """Fetch all tags from storage, cached 60s."""
-        return set(await _storage_ref.get_all_tags())
+    async def _cached_fetch_all_tags() -> list[str]:
+        """Fetch all tags from storage, cached 60s. Returns list for serialization."""
+        return list(await _storage_ref.get_all_tags())
+
+    @_cachekit_cache(ttl=90, namespace="mcp_memory_corpus", **_ck_kwargs)
+    async def _cached_corpus_count() -> int:
+        """Corpus size for adaptive alpha, cached 90s."""
+        return await _storage_ref.count()
+
+    # Embedding cache — namespace includes model name to auto-invalidate on model change
+    _model_name = settings.storage.embedding_model.replace("/", "_")
+
+    @_cachekit_cache(ttl=300, namespace=f"mcp_memory_embed_{_model_name}", **_ck_kwargs)
+    async def _cached_embed(text: str) -> list[float]:
+        """Single-text embedding, cached 5min. Delegates to storage batch API."""
+        result = await _embed_fn([text])
+        return result[0]
+
+    @_cachekit_cache(ttl=60, namespace="mcp_memory_keywords", **_ck_kwargs)
+    async def _cached_extract_keywords(query: str) -> list[str]:
+        """Extract query keywords with tag matching, cached 60s."""
+        tags = set(await _cached_fetch_all_tags())
+        return extract_query_keywords(query, tags)
 
     _CACHEKIT_AVAILABLE = True
 except ImportError:
@@ -134,6 +156,10 @@ class MemoryService:
                 "MemoryService re-instantiated with a different storage backend; CacheKit caches will use the new storage."
             )
         _storage_ref = storage
+
+        # Set module-level embed function for CacheKit-cached embeddings
+        global _embed_fn  # noqa: PLW0603
+        _embed_fn = storage.generate_embeddings_batch
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -253,7 +279,7 @@ class MemoryService:
 
         try:
             # Generate query embedding (uses 'query' prompt)
-            query_embedding = (await self.storage.generate_embeddings_batch([query]))[0]
+            query_embedding = (await self._get_embeddings([query]))[0]
 
             # Native Qdrant k-NN search on the tag collection
             matched_tags = await self.storage.search_similar_tags(
@@ -1028,14 +1054,53 @@ class MemoryService:
             "success_rate": success_rate,
         }
 
+    async def _invalidate_mutation_caches(self) -> None:
+        """Invalidate all CacheKit caches after a corpus mutation (store/delete)."""
+        if _CACHEKIT_AVAILABLE:
+            try:
+                await _cached_corpus_count.ainvalidate_cache()
+                await _cached_fetch_all_tags.ainvalidate_cache()
+                await _cached_extract_keywords.ainvalidate_cache()
+            except Exception:
+                logger.debug("Cache invalidation failed (non-fatal)")
+
     async def _get_cached_tags(self) -> set[str]:
         """Get all tags, cached via CacheKit (60s TTL, L1+L2)."""
         if _CACHEKIT_AVAILABLE:
             try:
-                return await _cached_fetch_all_tags()
+                return set(await _cached_fetch_all_tags())
             except Exception:
                 pass
         return set(await self.storage.get_all_tags())
+
+    async def _get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings, using per-text cache when available.
+
+        Cache hits are served from CacheKit (L1/L2). Misses fall through to
+        a single batched forward pass for efficiency.
+        """
+        if not _CACHEKIT_AVAILABLE or not texts:
+            return await self.storage.generate_embeddings_batch(texts)
+
+        results: list[list[float] | None] = [None] * len(texts)
+        miss_indices: list[int] = []
+
+        for i, text in enumerate(texts):
+            try:
+                results[i] = await _cached_embed(text)
+            except Exception:
+                # Cache infra broken — skip remaining texts, batch all misses
+                miss_indices.extend(range(i, len(texts)))
+                break
+
+        # Batch-embed all cache misses in one forward pass
+        if miss_indices:
+            miss_texts = [texts[i] for i in miss_indices]
+            miss_embeddings = await self.storage.generate_embeddings_batch(miss_texts)
+            for idx, emb in zip(miss_indices, miss_embeddings):
+                results[idx] = emb
+
+        return results  # type: ignore[return-value]
 
     async def _retrieve_vector_only(
         self,
@@ -1462,6 +1527,8 @@ class MemoryService:
                     for mem_dict in stored_memories:
                         await self._create_relates_to_edges(mem_dict["content_hash"], cross_refs)
 
+                await self._invalidate_mutation_caches()
+
                 # Fire post-create hook (non-fatal)
                 await self._hooks.fire_post(
                     "post_create",
@@ -1527,6 +1594,8 @@ class MemoryService:
                     if cross_refs:
                         result["cross_references"] = cross_refs
                         await self._create_relates_to_edges(content_hash, cross_refs)
+
+                    await self._invalidate_mutation_caches()
 
                     # Fire post-create hook (non-fatal)
                     await self._hooks.fire_post(
@@ -1629,11 +1698,16 @@ class MemoryService:
                     min_trust_score=min_trust_score,
                 )
 
-            # Get cached tags for keyword extraction
-            existing_tags = await self._get_cached_tags()
-
             # Extract potential tag keywords from query
-            keywords = extract_query_keywords(query, existing_tags)
+            if _CACHEKIT_AVAILABLE:
+                try:
+                    keywords = await _cached_extract_keywords(query)
+                except Exception:
+                    existing_tags = await self._get_cached_tags()
+                    keywords = extract_query_keywords(query, existing_tags)
+            else:
+                existing_tags = await self._get_cached_tags()
+                keywords = extract_query_keywords(query, existing_tags)
 
             # If no keywords match existing tags, fall back to vector-only
             if not keywords:
@@ -1650,7 +1724,13 @@ class MemoryService:
                 )
 
             # Determine alpha (explicit > env > adaptive)
-            corpus_size = await self.storage.count()
+            if _CACHEKIT_AVAILABLE:
+                try:
+                    corpus_size = await _cached_corpus_count()
+                except Exception:
+                    corpus_size = await self.storage.count()
+            else:
+                corpus_size = await self.storage.count()
             alpha = get_adaptive_alpha(corpus_size, len(keywords), config)
 
             # If alpha is 1.0, pure vector search (opt-out)
@@ -1690,8 +1770,8 @@ class MemoryService:
                 try:
                     sub_queries = intent_result.sub_queries
 
-                    # Stage 2: Batched embedding (single forward pass)
-                    embeddings = await self.storage.generate_embeddings_batch(sub_queries)
+                    # Stage 2: Batched embedding (cached per-text, misses batched)
+                    embeddings = await self._get_embeddings(sub_queries)
                     if len(embeddings) != len(sub_queries):
                         raise ValueError(f"Embedding count mismatch: {len(embeddings)} != {len(sub_queries)}")
 
@@ -2087,6 +2167,8 @@ class MemoryService:
                     success=True,
                 )
 
+                await self._invalidate_mutation_caches()
+
                 # Fire post-delete hook (non-fatal)
                 await self._hooks.fire_post("post_delete", DeleteEvent(content_hash=content_hash))
 
@@ -2329,6 +2411,9 @@ class MemoryService:
 
             offset += batch_size
             memories = await self.storage.get_all_memories(limit=batch_size, offset=offset)
+
+        if merged > 0:
+            await self._invalidate_mutation_caches()
 
         return {"found": found, "merged": merged}
 
@@ -2640,6 +2725,8 @@ class MemoryService:
                 logger.debug(f"Rolled back stored memory: {hash_}")
             except Exception as e:
                 logger.warning(f"Rollback failed for {hash_}: {e}")
+        if content_hashes:
+            await self._invalidate_mutation_caches()
 
     async def batch_store_memory(
         self,
@@ -2809,6 +2896,9 @@ class MemoryService:
             except Exception as e:
                 results.append({"index": i, "success": False, "content_hash": hash_, "error": str(e)})
 
+        if updated_count > 0:
+            await self._invalidate_mutation_caches()
+
         return {
             "success": updated_count == len(updates),
             "updated": updated_count,
@@ -2861,6 +2951,9 @@ class MemoryService:
                     results.append({"index": i, "success": False, "content_hash": hash_, "error": message})
             except Exception as e:
                 results.append({"index": i, "success": False, "content_hash": hash_, "error": str(e)})
+
+        if updated_count > 0:
+            await self._invalidate_mutation_caches()
 
         return {
             "success": updated_count == len(content_hashes),

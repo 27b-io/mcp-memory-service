@@ -30,14 +30,12 @@ services:
   falkordb:
     image: docker.io/falkordb/falkordb:latest
     container_name: mcp-memory-falkordb
-    ports:
-      - "6379:6379"
     volumes:
       - falkordb-data:/data
-    command: ["--appendonly", "yes", "--appendfsync", "everysec", "--requirepass", "${FALKORDB_PASSWORD:-changeme}"]
+    command: ["--appendonly", "yes", "--appendfsync", "everysec"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${FALKORDB_PASSWORD:-changeme}", "--no-auth-warning", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -77,7 +75,10 @@ services:
       - MCP_FALKORDB_ENABLED=true
       - MCP_FALKORDB_HOST=falkordb
       - MCP_FALKORDB_PORT=6379
-      - MCP_FALKORDB_PASSWORD=${FALKORDB_PASSWORD:-changeme}
+      - MCP_FALKORDB_PASSWORD=
+
+      # CacheKit L2 (reuse FalkorDB on db 1)
+      - REDIS_URL=redis://falkordb:6379/1
 
       # HTTP server
       - MCP_HTTP_ENABLED=true

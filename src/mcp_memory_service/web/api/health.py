@@ -48,6 +48,18 @@ else:
 router = APIRouter()
 
 
+async def _get_cache_health() -> dict[str, Any]:
+    """Get CacheKit health status for the detailed health endpoint."""
+    try:
+        from cachekit import get_health_checker
+
+        hc = get_health_checker()
+        result = await hc.check_health_async()
+        return result.to_dict()
+    except Exception:
+        return {"status": "unavailable"}
+
+
 class HealthResponse(BaseModel):
     """Basic health check response."""
 
@@ -69,6 +81,7 @@ class DetailedHealthResponse(BaseModel):
     system: dict[str, Any]
     performance: dict[str, Any]
     statistics: dict[str, Any] = None
+    cache: dict[str, Any] = None
 
 
 # Track startup time for uptime calculation
@@ -232,6 +245,9 @@ async def detailed_health_check(
         "backend": storage_info.get("backend", "qdrant"),
     }
 
+    # Get CacheKit health
+    cache_info = await _get_cache_health()
+
     return DetailedHealthResponse(
         status="healthy",
         version=__version__,
@@ -241,6 +257,7 @@ async def detailed_health_check(
         system=system_info,
         performance=performance_info,
         statistics=statistics,
+        cache=cache_info,
     )
 
 
