@@ -1,8 +1,11 @@
 """Tests for CacheKit wiring and cache infrastructure."""
 
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(autouse=True)
@@ -15,12 +18,13 @@ async def _clear_caches():
             _cached_extract_keywords,
             _cached_fetch_all_tags,
         )
+
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
         await _cached_embed.ainvalidate_cache()
         await _cached_extract_keywords.ainvalidate_cache()
     except Exception:
-        pass
+        logger.debug("Cache invalidation failed during setup", exc_info=True)
     yield
     try:
         from mcp_memory_service.services.memory_service import (
@@ -29,18 +33,20 @@ async def _clear_caches():
             _cached_extract_keywords,
             _cached_fetch_all_tags,
         )
+
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
         await _cached_embed.ainvalidate_cache()
         await _cached_extract_keywords.ainvalidate_cache()
     except Exception:
-        pass
+        logger.debug("Cache invalidation failed during teardown", exc_info=True)
 
 
 @pytest.mark.asyncio
 async def test_cachekit_available():
     """CacheKit should be importable and the flag should be True."""
     from mcp_memory_service.services.memory_service import _CACHEKIT_AVAILABLE
+
     assert _CACHEKIT_AVAILABLE is True
 
 
@@ -50,14 +56,17 @@ async def test_cached_fetch_all_tags_calls_storage():
     import mcp_memory_service.services.memory_service as mod
 
     mock_storage = AsyncMock()
-    mock_storage.get_all_tags = AsyncMock(return_value=["python", "rust"])
+    # Return a set so the list() conversion in _cached_fetch_all_tags is exercised
+    mock_storage.get_all_tags = AsyncMock(return_value={"python", "rust"})
 
     original = mod._storage_ref
     mod._storage_ref = mock_storage
     try:
         from mcp_memory_service.services.memory_service import _cached_fetch_all_tags
+
         await _cached_fetch_all_tags.ainvalidate_cache()
         result = await _cached_fetch_all_tags()
+        assert isinstance(result, list), "should convert set to list for serialization"
         assert set(result) == {"python", "rust"}
         mock_storage.get_all_tags.assert_awaited_once()
     finally:
@@ -65,14 +74,15 @@ async def test_cached_fetch_all_tags_calls_storage():
 
 
 @pytest.mark.asyncio
-async def test_ck_kwargs_configured_for_redis():
+async def test_ck_kwargs_configured_for_redis(monkeypatch):
     """_ck_kwargs should set backend=None when Redis URL is not configured."""
-    import os
+    import importlib
 
     import mcp_memory_service.services.memory_service as mod
 
-    # In test environment, REDIS_URL should not be set
-    assert not os.environ.get("REDIS_URL") and not os.environ.get("CACHEKIT_REDIS_URL")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("CACHEKIT_REDIS_URL", raising=False)
+    importlib.reload(mod)
     assert hasattr(mod, "_ck_kwargs"), "_ck_kwargs should exist for backend config"
     assert mod._ck_kwargs.get("backend") is None, "backend should be None when Redis is unavailable"
 
@@ -119,6 +129,11 @@ async def test_cached_embed_delegates_to_embed_fn():
         result = await _cached_embed("test query")
         assert result == [0.1, 0.2, 0.3]
         mock_embed.assert_awaited_with(["test query"])
+
+        # Second call should hit cache — embed fn must NOT be called again
+        result2 = await _cached_embed("test query")
+        assert result2 == [0.1, 0.2, 0.3]
+        assert mock_embed.await_count == 1
     finally:
         mod._embed_fn = original_fn
 
