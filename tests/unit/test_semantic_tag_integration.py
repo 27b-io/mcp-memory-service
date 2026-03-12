@@ -15,6 +15,7 @@ async def _clear_cachekit_caches():
     try:
         from mcp_memory_service.services.memory_service import (
             _cached_corpus_count,
+            _cached_embed,
             _cached_extract_keywords,
             _cached_fetch_all_tags,
         )
@@ -22,12 +23,14 @@ async def _clear_cachekit_caches():
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
         await _cached_extract_keywords.ainvalidate_cache()
+        await _cached_embed.ainvalidate_cache()
     except Exception:  # noqa: BLE001
         pass
     yield
     try:
         from mcp_memory_service.services.memory_service import (
             _cached_corpus_count,
+            _cached_embed,
             _cached_extract_keywords,
             _cached_fetch_all_tags,
         )
@@ -35,6 +38,7 @@ async def _clear_cachekit_caches():
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
         await _cached_extract_keywords.ainvalidate_cache()
+        await _cached_embed.ainvalidate_cache()
     except Exception:  # noqa: BLE001
         pass
 

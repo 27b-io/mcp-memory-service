@@ -54,8 +54,8 @@ async def _invalidate_tag_cache() -> None:
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
         await _cached_extract_keywords.ainvalidate_cache()
-    except (ImportError, AttributeError):
-        pass  # CacheKit not available or function doesn't exist — no-op
+    except Exception:
+        pass  # CacheKit or backend not available — no-op
 
 
 # ---------------------------------------------------------------------------

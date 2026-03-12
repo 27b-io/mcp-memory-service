@@ -2412,6 +2412,9 @@ class MemoryService:
             offset += batch_size
             memories = await self.storage.get_all_memories(limit=batch_size, offset=offset)
 
+        if merged > 0:
+            await self._invalidate_mutation_caches()
+
         return {"found": found, "merged": merged}
 
     async def create_relation(
@@ -2722,6 +2725,8 @@ class MemoryService:
                 logger.debug(f"Rolled back stored memory: {hash_}")
             except Exception as e:
                 logger.warning(f"Rollback failed for {hash_}: {e}")
+        if content_hashes:
+            await self._invalidate_mutation_caches()
 
     async def batch_store_memory(
         self,
@@ -2891,6 +2896,9 @@ class MemoryService:
             except Exception as e:
                 results.append({"index": i, "success": False, "content_hash": hash_, "error": str(e)})
 
+        if updated_count > 0:
+            await self._invalidate_mutation_caches()
+
         return {
             "success": updated_count == len(updates),
             "updated": updated_count,
@@ -2943,6 +2951,9 @@ class MemoryService:
                     results.append({"index": i, "success": False, "content_hash": hash_, "error": message})
             except Exception as e:
                 results.append({"index": i, "success": False, "content_hash": hash_, "error": str(e)})
+
+        if updated_count > 0:
+            await self._invalidate_mutation_caches()
 
         return {
             "success": updated_count == len(content_hashes),

@@ -30,8 +30,6 @@ services:
   falkordb:
     image: docker.io/falkordb/falkordb:latest
     container_name: mcp-memory-falkordb
-    ports:
-      - "6379:6379"
     volumes:
       - falkordb-data:/data
     command: ["--appendonly", "yes", "--appendfsync", "everysec"]

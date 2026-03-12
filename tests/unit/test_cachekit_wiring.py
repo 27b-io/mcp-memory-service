@@ -82,9 +82,12 @@ async def test_ck_kwargs_configured_for_redis(monkeypatch):
 
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.delenv("CACHEKIT_REDIS_URL", raising=False)
-    importlib.reload(mod)
-    assert hasattr(mod, "_ck_kwargs"), "_ck_kwargs should exist for backend config"
-    assert mod._ck_kwargs.get("backend") is None, "backend should be None when Redis is unavailable"
+    try:
+        importlib.reload(mod)
+        assert mod._ck_kwargs.get("backend") is None, "backend should be None when Redis is unavailable"
+    finally:
+        # Restore module state so subsequent tests get a clean module
+        importlib.reload(mod)
 
 
 @pytest.mark.asyncio
