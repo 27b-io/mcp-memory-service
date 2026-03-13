@@ -25,7 +25,10 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from mcp_memory_service.embedding.protocol import EmbeddingProvider
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import exceptions as qdrant_exceptions
@@ -123,6 +126,7 @@ class QdrantStorage(MemoryStorage):
         distance_metric: str = "Cosine",
         storage_path: str | None = None,
         url: str | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
     ):
         """
         Initialize Qdrant storage backend in embedded or server mode.
@@ -175,6 +179,9 @@ class QdrantStorage(MemoryStorage):
         # Embedding service (will be initialized later)
         self.embedding_service = None
 
+        # Pluggable embedding provider (when set, bypasses SentenceTransformer)
+        self._embedding_provider = embedding_provider
+
         # Thread-safe model loading (prevents race condition)
 
         self._model_lock = threading.Lock()
@@ -213,6 +220,8 @@ class QdrantStorage(MemoryStorage):
         request doesn't pay the load cost.  Also called defensively by
         _generate_embedding() and generate_embeddings_batch().
         """
+        if self._embedding_provider is not None:
+            return  # Provider handles embeddings; no local model needed
         if hasattr(self, "_embedding_model_instance"):
             return
         with self._model_lock:
@@ -256,8 +265,11 @@ class QdrantStorage(MemoryStorage):
         # Prewarm embedding model — load weights before first request
         await loop.run_in_executor(None, self._ensure_model_loaded)
 
-        # Get actual vector dimensions from the loaded model
-        self._vector_size = self._embedding_model_instance.get_sentence_embedding_dimension()
+        # Get actual vector dimensions from the loaded model (or injected provider)
+        if self._embedding_provider is not None:
+            self._vector_size = self._embedding_provider.dimensions
+        else:
+            self._vector_size = self._embedding_model_instance.get_sentence_embedding_dimension()
         logger.info(f"Detected vector dimensions from model: {self._vector_size}")
 
         # Check if collection exists
@@ -830,8 +842,12 @@ class QdrantStorage(MemoryStorage):
             # Generate embedding if not provided
             if memory.embedding is None:
                 try:
-                    loop = asyncio.get_event_loop()
-                    memory.embedding = await loop.run_in_executor(None, self._generate_embedding, memory.content)
+                    if self._embedding_provider is not None:
+                        result = await self._embedding_provider.embed_batch([memory.content], prompt_name="passage")
+                        memory.embedding = result[0]
+                    else:
+                        loop = asyncio.get_event_loop()
+                        memory.embedding = await loop.run_in_executor(None, self._generate_embedding, memory.content)
                     logger.debug(f"Generated embedding for memory {memory.content_hash[:8]}...")
                 except Exception as e:
                     logger.error(f"Failed to generate embedding for memory: {e}")
@@ -939,9 +955,15 @@ class QdrantStorage(MemoryStorage):
         try:
             # Generate query embedding using the same method as store
             try:
-                # Use _generate_embedding which handles lazy model loading
-                loop = asyncio.get_event_loop()
-                query_embedding = await loop.run_in_executor(None, lambda: self._generate_embedding(query, prompt_name="query"))
+                if self._embedding_provider is not None:
+                    result = await self._embedding_provider.embed_batch([query], prompt_name="query")
+                    query_embedding = result[0]
+                else:
+                    # Use _generate_embedding which handles lazy model loading
+                    loop = asyncio.get_event_loop()
+                    query_embedding = await loop.run_in_executor(
+                        None, lambda: self._generate_embedding(query, prompt_name="query")
+                    )
             except Exception as e:
                 logger.error(f"Failed to generate query embedding: {e}")
                 self._record_failure()
@@ -1058,6 +1080,10 @@ class QdrantStorage(MemoryStorage):
         """
         if not texts:
             return []
+
+        # Delegate to injected provider when available
+        if self._embedding_provider is not None:
+            return await self._embedding_provider.embed_batch(texts, prompt_name=prompt_name)
 
         self._ensure_model_loaded()
 

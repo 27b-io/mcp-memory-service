@@ -30,7 +30,6 @@ from ...models.memory import Memory, MemoryQueryResult
 from ...services.memory_service import MemoryService
 from ...storage.base import MemoryStorage
 from ..dependencies import get_memory_service, get_storage
-from ..sse import create_search_completed_event, sse_manager
 from .memories import MemoryResponse, memory_to_response
 
 # Constants
@@ -176,18 +175,6 @@ async def semantic_search(
             total_pages=result.get("total_pages", 1),
         )
 
-        # Broadcast SSE event for search completion
-        try:
-            event = create_search_completed_event(
-                query=request.query,
-                search_type="semantic",
-                results_count=len(search_results),
-                processing_time_ms=processing_time,
-            )
-            await sse_manager.broadcast_event(event)
-        except Exception as e:
-            logger.warning(f"Failed to broadcast search_completed event: {e}")
-
         return SearchResponse(
             results=search_results,
             query=request.query,
@@ -253,15 +240,6 @@ async def tag_search(
             has_more=result.get("has_more", False),
             total_pages=result.get("total_pages", 1),
         )
-
-        # Broadcast SSE event for search completion
-        try:
-            event = create_search_completed_event(
-                query=query_string, search_type="tag", results_count=len(search_results), processing_time_ms=processing_time
-            )
-            await sse_manager.broadcast_event(event)
-        except Exception as e:
-            logger.warning(f"Failed to broadcast search_completed event: {e}")
 
         return SearchResponse(
             results=search_results,

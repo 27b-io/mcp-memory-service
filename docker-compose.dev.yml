@@ -1,0 +1,105 @@
+# Development deployment: API + External Embedding + Qdrant
+#
+# This deploys the thin API image (no torch/sentence-transformers, ~200MB)
+# with a separate HuggingFace TEI embedding service and Qdrant backend.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up
+#   curl http://localhost:8000/api/health
+#
+# The API service is the only publicly-exposed endpoint (port 8000).
+# Embedding and Qdrant services communicate only within the compose network.
+#
+# Configuration:
+#   - API uses openai_compat embedding provider
+#   - Qdrant backend for vector storage
+#   - TEI (text-embeddings-inference) for embeddings
+#   - No unnecessary port exposure (security-conscious)
+
+version: "3.8"
+
+services:
+  # HuggingFace Text Embeddings Inference (CPU-based)
+  # Provides OpenAI-compatible embeddings API
+  embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    command: --model-id nomic-ai/nomic-embed-text-v1.5 --port 8080
+    # No host ports — only accessible within the compose network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      # Cache HuggingFace models to avoid re-downloading on container recreate
+      - hf-cache:/data
+    restart: unless-stopped
+    networks:
+      - mcp-dev
+
+  # Qdrant vector database
+  # Stores embeddings for semantic search
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    # No host ports — only accessible within the compose network
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/6333 && echo -e \"GET /readyz HTTP/1.0\\r\\n\" >&3 && grep -q \"ready\" <&3'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mcp-dev
+
+  # MCP Memory Service API (thin image, no embedded models)
+  # Delegates embedding to the external TEI service
+  api:
+    build:
+      context: .
+      target: api
+    # Only expose the API endpoint to host
+    ports:
+      - "8000:8000"
+    depends_on:
+      embedding:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      # Embedding configuration
+      MCP_EMBEDDING_PROVIDER: openai_compat
+      MCP_EMBEDDING_URL: http://embedding:8080
+      MCP_EMBEDDING_MODEL: nomic-ai/nomic-embed-text-v1.5
+      MCP_EMBEDDING_DIMENSIONS: "768"
+
+      # Storage backend
+      MCP_MEMORY_STORAGE_BACKEND: qdrant
+      MCP_QDRANT_URL: http://qdrant:6333
+
+      # HTTP server
+      MCP_HTTP_ENABLED: "true"
+      MCP_HTTP_PORT: "8000"
+      MCP_HTTP_HOST: "0.0.0.0"
+
+      # Logging
+      MCP_LOG_LEVEL: INFO
+
+      # Disable MCP server transport in dev (optional, just use HTTP)
+      MCP_TRANSPORT_MODE: "http"
+    restart: unless-stopped
+    networks:
+      - mcp-dev
+
+volumes:
+  hf-cache:
+    driver: local
+  qdrant-data:
+    driver: local
+
+networks:
+  mcp-dev:
+    driver: bridge

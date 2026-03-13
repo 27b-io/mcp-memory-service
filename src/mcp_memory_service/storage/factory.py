@@ -18,17 +18,28 @@ Storage backend factory for the MCP Memory Service.
 Creates and initializes the Qdrant storage backend.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from .base import MemoryStorage
 from .qdrant_storage import QdrantStorage
 
+if TYPE_CHECKING:
+    from ..embedding.protocol import EmbeddingProvider
+
 logger = logging.getLogger(__name__)
 
 
-async def create_storage_instance() -> MemoryStorage:
+async def create_storage_instance(embedding_provider: EmbeddingProvider | None = None) -> MemoryStorage:
     """
     Create and initialize the Qdrant storage backend instance.
+
+    Args:
+        embedding_provider: Optional EmbeddingProvider to inject into the storage backend.
+            When set, QdrantStorage delegates embedding generation to this provider
+            instead of loading SentenceTransformer in-process.
 
     Returns:
         Initialized QdrantStorage instance
@@ -45,6 +56,7 @@ async def create_storage_instance() -> MemoryStorage:
             collection_name=settings.qdrant.COLLECTION_NAME,
             quantization_enabled=settings.qdrant.quantization_enabled,
             distance_metric=settings.qdrant.DISTANCE_METRIC,
+            embedding_provider=embedding_provider,
         )
         logger.info(f"Initialized Qdrant storage in server mode: {settings.qdrant.url}")
     else:
@@ -54,6 +66,7 @@ async def create_storage_instance() -> MemoryStorage:
             collection_name=settings.qdrant.COLLECTION_NAME,
             quantization_enabled=settings.qdrant.quantization_enabled,
             distance_metric=settings.qdrant.DISTANCE_METRIC,
+            embedding_provider=embedding_provider,
         )
         logger.info(f"Initialized Qdrant storage in embedded mode: {settings.qdrant.storage_path}")
 

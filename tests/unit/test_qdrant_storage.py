@@ -490,3 +490,102 @@ class TestEmbeddingModelPrewarm:
         with patch("mcp_memory_service.storage.qdrant_storage.SentenceTransformer") as mock_st:
             storage._ensure_model_loaded()
             mock_st.assert_not_called()
+
+
+# =============================================================================
+# EmbeddingProvider Injection Tests
+# =============================================================================
+
+
+class TestEmbeddingProviderInjection:
+    """Tests for QdrantStorage with injected EmbeddingProvider."""
+
+    @pytest.fixture
+    def mock_provider(self):
+        """Create a mock provider that returns deterministic embeddings."""
+        from unittest.mock import AsyncMock, PropertyMock
+
+        from mcp_memory_service.embedding.protocol import EmbeddingProvider
+
+        provider = AsyncMock(spec=EmbeddingProvider)
+        provider.embed_batch = AsyncMock(return_value=[[0.1] * 768])
+        type(provider).dimensions = PropertyMock(return_value=768)
+        type(provider).model_name = PropertyMock(return_value="test-model")
+        return provider
+
+    @pytest.fixture
+    async def storage_with_provider(self, mock_provider):
+        """QdrantStorage wired with a mock provider, Qdrant in :memory: mode."""
+        storage = QdrantStorage(
+            embedding_model="test",
+            storage_path=":memory:",
+            embedding_provider=mock_provider,
+        )
+        await storage.initialize()
+        return storage
+
+    @pytest.mark.asyncio
+    async def test_store_uses_provider_with_passage(self, storage_with_provider, mock_provider):
+        """store() delegates to injected provider with prompt_name='passage'."""
+        memory = Memory(
+            content="test memory",
+            content_hash=generate_content_hash("test memory"),
+        )
+        await storage_with_provider.store(memory)
+        mock_provider.embed_batch.assert_any_await(["test memory"], prompt_name="passage")
+
+    @pytest.mark.asyncio
+    async def test_retrieve_uses_provider_with_query(self, storage_with_provider, mock_provider):
+        """retrieve() delegates to injected provider with prompt_name='query'."""
+        await storage_with_provider.retrieve("search text")
+        mock_provider.embed_batch.assert_any_await(["search text"], prompt_name="query")
+
+    @pytest.mark.asyncio
+    async def test_provider_bypasses_model_loading(self, mock_provider):
+        """When provider is injected, SentenceTransformer is never loaded."""
+        with patch("mcp_memory_service.storage.qdrant_storage.SentenceTransformer") as mock_st:
+            storage = QdrantStorage(
+                embedding_model="test",
+                storage_path=":memory:",
+                embedding_provider=mock_provider,
+            )
+            await storage.initialize()
+            await storage.retrieve("test")
+            mock_st.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_embeddings_use_provider(self, storage_with_provider, mock_provider):
+        """generate_embeddings_batch delegates to provider.embed_batch."""
+        from unittest.mock import AsyncMock
+
+        mock_provider.embed_batch = AsyncMock(return_value=[[0.1] * 768, [0.2] * 768])
+        result = await storage_with_provider.generate_embeddings_batch(["hello", "world"], prompt_name="passage")
+        assert len(result) == 2
+        mock_provider.embed_batch.assert_awaited_once_with(["hello", "world"], prompt_name="passage")
+
+    @pytest.mark.asyncio
+    async def test_initialize_gets_dimensions_from_provider(self, mock_provider):
+        """initialize() reads dimensions from provider, not from SentenceTransformer."""
+        with patch("mcp_memory_service.storage.qdrant_storage.SentenceTransformer") as mock_st:
+            storage = QdrantStorage(
+                embedding_model="test",
+                storage_path=":memory:",
+                embedding_provider=mock_provider,
+            )
+            await storage.initialize()
+            assert storage._vector_size == 768
+            mock_st.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ensure_model_loaded_is_noop_with_provider(self, mock_provider):
+        """_ensure_model_loaded() is a no-op when provider is injected."""
+        with patch("mcp_memory_service.storage.qdrant_storage.QdrantClient"):
+            storage = QdrantStorage(
+                embedding_model="test",
+                storage_path="/tmp/test",
+                embedding_provider=mock_provider,
+            )
+        with patch("mcp_memory_service.storage.qdrant_storage.SentenceTransformer") as mock_st:
+            storage._ensure_model_loaded()
+            mock_st.assert_not_called()
+        assert not hasattr(storage, "_embedding_model_instance")

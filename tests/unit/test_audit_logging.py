@@ -4,9 +4,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from mcp_memory_service.config import settings
 from mcp_memory_service.models.audit_log import AuditLog
 from mcp_memory_service.services.memory_service import MemoryService
 from mcp_memory_service.storage.base import MemoryStorage
+
+
+@pytest.fixture(autouse=True)
+def _enable_debug_tools(monkeypatch):
+    """Audit logs require debug tools to be enabled."""
+    monkeypatch.setattr(settings.debug, "expose_debug_tools", True)
 
 
 @pytest.fixture

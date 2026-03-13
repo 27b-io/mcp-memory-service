@@ -58,9 +58,9 @@ def assert_ranks_above(results: list[dict], higher_id: str, lower_id: str) -> No
     ids = [r["content_hash"] for r in results]
     assert higher_id in ids, f"{higher_id} not found in results"
     assert lower_id in ids, f"{lower_id} not found in results"
-    assert ids.index(higher_id) < ids.index(
-        lower_id
-    ), f"Expected {higher_id} (rank {ids.index(higher_id)}) above {lower_id} (rank {ids.index(lower_id)})"
+    assert ids.index(higher_id) < ids.index(lower_id), (
+        f"Expected {higher_id} (rank {ids.index(higher_id)}) above {lower_id} (rank {ids.index(lower_id)})"
+    )
 
 
 def get_themes(results: list[dict], k: int = 10) -> set[str]:
@@ -248,9 +248,9 @@ class TestBaselineSemantic:
             result = await service.retrieve_memories(query="xylophone concerto harmonica", page_size=10)
             scores = [m["similarity_score"] for m in result["memories"]]
             for i in range(len(scores) - 1):
-                assert (
-                    scores[i] >= scores[i + 1] - 1e-9
-                ), f"Vector-only: score at rank {i} ({scores[i]:.6f}) < score at rank {i + 1} ({scores[i + 1]:.6f})"
+                assert scores[i] >= scores[i + 1] - 1e-9, (
+                    f"Vector-only: score at rank {i} ({scores[i]:.6f}) < score at rank {i + 1} ({scores[i + 1]:.6f})"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -278,9 +278,9 @@ class TestTagMatching:
 
             top_ids = set(get_result_ids(memories, k=10))
             philosophy_hits = top_ids & PHILOSOPHY_IDS
-            assert (
-                len(philosophy_hits) >= 2
-            ), f"Expected >=2 philosophy-tagged results, got {len(philosophy_hits)}: {philosophy_hits}"
+            assert len(philosophy_hits) >= 2, (
+                f"Expected >=2 philosophy-tagged results, got {len(philosophy_hits)}: {philosophy_hits}"
+            )
 
     @pytest.mark.asyncio
     async def test_no_matching_tags_falls_back_to_vector(self, service):
@@ -317,9 +317,9 @@ class TestTagMatching:
             hybrid_result = await service.retrieve_memories(query=query, page_size=10)
             hybrid_ids = get_result_ids(hybrid_result["memories"], k=10)
 
-        assert (
-            vector_ids != hybrid_ids
-        ), "Hybrid RRF should produce different ordering than pure vector. If identical, tag matching had no effect."
+        assert vector_ids != hybrid_ids, (
+            "Hybrid RRF should produce different ordering than pure vector. If identical, tag matching had no effect."
+        )
 
     @pytest.mark.asyncio
     async def test_tag_only_results_have_base_score(self, service):
@@ -433,9 +433,9 @@ class TestTemporalDecay:
             expected_ratio = expected_factor_1d / expected_factor_90d
             actual_ratio = scores["decay_1d"] / scores["decay_90d"]
 
-            assert (
-                abs(actual_ratio - expected_ratio) / expected_ratio < 0.05
-            ), f"Decay ratio mismatch: actual={actual_ratio:.4f}, expected={expected_ratio:.4f}"
+            assert abs(actual_ratio - expected_ratio) / expected_ratio < 0.05, (
+                f"Decay ratio mismatch: actual={actual_ratio:.4f}, expected={expected_ratio:.4f}"
+            )
 
     @pytest.mark.asyncio
     async def test_decay_disabled_no_score_reduction(self, decay_storage_and_service):
@@ -456,9 +456,9 @@ class TestTemporalDecay:
 
             max_score = max(scores)
             min_score = min(scores)
-            assert (
-                max_score - min_score < 0.01
-            ), f"Score spread too large with decay disabled: max={max_score:.4f}, min={min_score:.4f}"
+            assert max_score - min_score < 0.01, (
+                f"Score spread too large with decay disabled: max={max_score:.4f}, min={min_score:.4f}"
+            )
 
     @pytest.mark.asyncio
     async def test_scores_valid_after_decay(self, decay_storage_and_service):
@@ -572,9 +572,9 @@ class TestSalienceBoost:
         delta_high = boosted_high - base_high
         relative_mid = delta_mid / base_mid
         relative_high = delta_high / base_high
-        assert (
-            relative_mid < relative_high
-        ), f"Mid relative boost ({relative_mid:.4f}) should be less than high relative boost ({relative_high:.4f})"
+        assert relative_mid < relative_high, (
+            f"Mid relative boost ({relative_mid:.4f}) should be less than high relative boost ({relative_high:.4f})"
+        )
 
     @pytest.mark.asyncio
     async def test_salience_disabled_no_effect_on_ranking(self, salience_storage_and_service):
@@ -592,9 +592,9 @@ class TestSalienceBoost:
             assert score_low is not None, "Low-salience Darwin memory not found"
             assert score_high is not None, "High-salience Darwin memory not found"
             # Both Darwin passages: similar content → similar scores when salience off
-            assert (
-                abs(score_low - score_high) < 0.10
-            ), f"Darwin pair score gap too large with salience off: low={score_low:.4f}, high={score_high:.4f}"
+            assert abs(score_low - score_high) < 0.10, (
+                f"Darwin pair score gap too large with salience off: low={score_low:.4f}, high={score_high:.4f}"
+            )
 
     @pytest.mark.asyncio
     async def test_salience_boost_weight_respected(self, salience_storage_and_service):
@@ -620,9 +620,9 @@ class TestSalienceBoost:
 
         assert score_015 is not None, "salience_high not found in weight=0.15 results"
         assert score_030 is not None, "salience_high not found in weight=0.30 results"
-        assert (
-            score_030 > score_015
-        ), f"boost_weight=0.30 score ({score_030:.4f}) should exceed boost_weight=0.15 score ({score_015:.4f})"
+        assert score_030 > score_015, (
+            f"boost_weight=0.30 score ({score_030:.4f}) should exceed boost_weight=0.15 score ({score_015:.4f})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -696,9 +696,9 @@ class TestQueryIntentFanout:
             multi_tags = get_themes(multi["memories"], k=10)
             single_tags = get_themes(single["memories"], k=10)
 
-            assert len(multi_tags) >= len(
-                single_tags
-            ), f"Multi-concept tags ({len(multi_tags)}) should >= single-concept ({len(single_tags)})"
+            assert len(multi_tags) >= len(single_tags), (
+                f"Multi-concept tags ({len(multi_tags)}) should >= single-concept ({len(single_tags)})"
+            )
 
     @pytest.mark.asyncio
     async def test_fanout_respects_min_similarity(self, service):

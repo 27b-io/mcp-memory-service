@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-FastAPI application for MCP Memory Service HTTP/SSE interface.
+FastAPI application for MCP Memory Service HTTP interface.
 
-Provides REST API and Server-Sent Events using Qdrant backend.
+Provides REST API using Qdrant backend.
 """
 
 import asyncio
@@ -34,14 +34,12 @@ from ..config import (
     CORS_ORIGINS,
 )
 from .api.analytics import router as analytics_router
-from .api.events import router as events_router
 from .api.health import router as health_router
 from .api.manage import router as manage_router
 from .api.mcp import router as mcp_router
 from .api.memories import router as memories_router
 from .api.search import router as search_router
 from .dependencies import set_storage
-from .sse import sse_manager
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +74,6 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Model pre-warming failed (non-fatal): {e}")
 
-        # Start SSE manager
-        await sse_manager.start()
-        logger.info("SSE Manager started")
-
     except Exception as e:
         logger.error(f"Failed to initialize storage: {e}")
         raise
@@ -88,10 +82,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down MCP Memory Service HTTP interface...")
-
-    # Stop SSE manager
-    await sse_manager.stop()
-    logger.info("SSE Manager stopped")
 
     # Idempotent — drains Hebbian write queue, closes graph + storage.
     # Safe to call even if unified_server already called it.
@@ -105,7 +95,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="MCP Memory Service",
-        description="HTTP REST API and SSE interface for semantic memory storage",
+        description="HTTP REST API interface for semantic memory storage",
         version=__version__,
         lifespan=lifespan,
         docs_url="/api/docs",
@@ -133,8 +123,6 @@ def create_app() -> FastAPI:
     logger.info(f"✓ Included manage router with {len(manage_router.routes)} routes")
     app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
     logger.info(f"✓ Included analytics router with {len(analytics_router.routes)} routes")
-    app.include_router(events_router, prefix="/api", tags=["events"])
-    logger.info(f"✓ Included events router with {len(events_router.routes)} routes")
 
     # Include MCP protocol router
     app.include_router(mcp_router, tags=["mcp-protocol"])
@@ -622,30 +610,6 @@ def create_app() -> FastAPI:
                                 <span class="method method-get">GET</span>
                                 <span class="endpoint-path">/api/search/similar/{hash}</span>
                                 <div class="endpoint-desc">Find memories similar to a specific one</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="endpoint-card">
-                        <div class="endpoint-header">
-                            <h3><span class="endpoint-icon">📡</span> Real-time Events</h3>
-                            <p class="endpoint-description">Server-Sent Events for live updates</p>
-                        </div>
-                        <div class="endpoint-list">
-                            <div class="endpoint-item" onclick="window.location.href='/api/events'">
-                                <span class="method method-get">GET</span>
-                                <span class="endpoint-path">/api/events</span>
-                                <div class="endpoint-desc">Subscribe to real-time memory events stream</div>
-                            </div>
-                            <div class="endpoint-item" onclick="window.location.href='/api/events/stats'">
-                                <span class="method method-get">GET</span>
-                                <span class="endpoint-path">/api/events/stats</span>
-                                <div class="endpoint-desc">View SSE connection statistics</div>
-                            </div>
-                            <div class="endpoint-item" onclick="window.location.href='/static/sse_test.html'">
-                                <span class="method method-get">GET</span>
-                                <span class="endpoint-path">/static/sse_test.html</span>
-                                <div class="endpoint-desc">Interactive SSE testing interface</div>
                             </div>
                         </div>
                     </div>

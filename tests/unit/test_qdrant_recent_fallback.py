@@ -49,6 +49,7 @@ def qdrant_storage():
         storage._circuit_open_until = None
         storage._failure_threshold = 5
         storage._circuit_timeout = 60
+        storage._embedding_provider = None
         return storage
 
 

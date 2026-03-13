@@ -11,7 +11,10 @@ import logging
 import time
 from collections import deque
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from ..embedding.protocol import EmbeddingProvider
 
 from ..config import (
     CONTENT_PRESERVE_BOUNDARIES,
@@ -60,7 +63,6 @@ logger = logging.getLogger(__name__)
 # CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
 # ---------------------------------------------------------------------------
 _storage_ref: Any = None
-_embed_fn: Any = None  # set in MemoryService.__init__
 
 try:
     import os
@@ -81,15 +83,6 @@ try:
     async def _cached_corpus_count() -> int:
         """Corpus size for adaptive alpha, cached 90s."""
         return await _storage_ref.count()
-
-    # Embedding cache — namespace includes model name to auto-invalidate on model change
-    _model_name = settings.storage.embedding_model.replace("/", "_")
-
-    @_cachekit_cache(ttl=300, namespace=f"mcp_memory_embed_{_model_name}", **_ck_kwargs)
-    async def _cached_embed(text: str) -> list[float]:
-        """Single-text embedding, cached 5min. Delegates to storage batch API."""
-        result = await _embed_fn([text])
-        return result[0]
 
     @_cachekit_cache(ttl=60, namespace="mcp_memory_keywords", **_ck_kwargs)
     async def _cached_extract_keywords(query: str) -> list[str]:
@@ -139,14 +132,20 @@ class MemoryService:
         graph_client: GraphClient | None = None,
         write_queue: HebbianWriteQueue | None = None,
         hooks: HookRegistry | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
     ):
         self.storage = storage
         self._graph = graph_client
         self._write_queue = write_queue
         self._hooks = hooks if hooks is not None else HookRegistry()
+        self._embedding_provider = embedding_provider
         self._three_tier: ThreeTierMemory | None = None
-        self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
-        self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
+        if settings.debug.expose_debug_tools:
+            self._search_logs: deque[SearchLog] | None = deque(maxlen=self._MAX_SEARCH_LOGS)
+            self._audit_logs: deque[AuditLog] | None = deque(maxlen=self._MAX_AUDIT_LOGS)
+        else:
+            self._search_logs = None
+            self._audit_logs = None
         self._init_three_tier()
 
         # Set module-level storage ref for CacheKit-cached functions
@@ -156,10 +155,6 @@ class MemoryService:
                 "MemoryService re-instantiated with a different storage backend; CacheKit caches will use the new storage."
             )
         _storage_ref = storage
-
-        # Set module-level embed function for CacheKit-cached embeddings
-        global _embed_fn  # noqa: PLW0603
-        _embed_fn = storage.generate_embeddings_batch
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -838,7 +833,8 @@ class MemoryService:
                 "sub_queries_count": sub_queries_count,
             },
         )
-        self._search_logs.append(log_entry)
+        if self._search_logs is not None:
+            self._search_logs.append(log_entry)
 
     def get_search_analytics(self, limit: int = 1000) -> dict[str, Any]:
         """
@@ -846,6 +842,8 @@ class MemoryService:
 
         Returns statistics about search patterns, performance, and popular queries.
         """
+        if self._search_logs is None:
+            return {"warning": "Analytics disabled (MCP_MEMORY_EXPOSE_DEBUG_TOOLS=false)", "logs": []}
         if not self._search_logs:
             return {
                 "total_searches": 0,
@@ -979,7 +977,8 @@ class MemoryService:
             error=error,
             metadata=metadata or {},
         )
-        self._audit_logs.append(log_entry)
+        if self._audit_logs is not None:
+            self._audit_logs.append(log_entry)
 
     def get_audit_trail(
         self,
@@ -1002,6 +1001,8 @@ class MemoryService:
         Returns:
             Dictionary with audit log entries and statistics
         """
+        if self._audit_logs is None:
+            return {"warning": "Audit trail disabled (MCP_MEMORY_EXPOSE_DEBUG_TOOLS=false)", "logs": []}
         if not self._audit_logs:
             return {
                 "total_operations": 0,
@@ -1074,33 +1075,15 @@ class MemoryService:
         return set(await self.storage.get_all_tags())
 
     async def _get_embeddings(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings, using per-text cache when available.
+        """Generate embeddings via the embedding provider (includes caching).
 
-        Cache hits are served from CacheKit (L1/L2). Misses fall through to
-        a single batched forward pass for efficiency.
+        When an EmbeddingProvider is injected (the normal path), caching is
+        handled transparently by the CachedEmbeddingProvider wrapper.
         """
-        if not _CACHEKIT_AVAILABLE or not texts:
-            return await self.storage.generate_embeddings_batch(texts)
-
-        results: list[list[float] | None] = [None] * len(texts)
-        miss_indices: list[int] = []
-
-        for i, text in enumerate(texts):
-            try:
-                results[i] = await _cached_embed(text)
-            except Exception:
-                # Cache infra broken — skip remaining texts, batch all misses
-                miss_indices.extend(range(i, len(texts)))
-                break
-
-        # Batch-embed all cache misses in one forward pass
-        if miss_indices:
-            miss_texts = [texts[i] for i in miss_indices]
-            miss_embeddings = await self.storage.generate_embeddings_batch(miss_texts)
-            for idx, emb in zip(miss_indices, miss_embeddings):
-                results[idx] = emb
-
-        return results  # type: ignore[return-value]
+        if self._embedding_provider is not None:
+            return await self._embedding_provider.embed_batch(texts)
+        # Backward compat: no provider injected
+        return await self.storage.generate_embeddings_batch(texts)
 
     async def _retrieve_vector_only(
         self,
@@ -3043,7 +3026,10 @@ class MemoryService:
 
             # Batch-embed all content in a single model forward pass
             contents = [m.content for m in memories]
-            embeddings = await self.storage.generate_embeddings_batch(contents)
+            if self._embedding_provider is not None:
+                embeddings = await self._embedding_provider.embed_batch(contents)
+            else:
+                embeddings = await self.storage.generate_embeddings_batch(contents)
 
             # Run the deduplication pipeline
             groups = build_duplicate_groups(

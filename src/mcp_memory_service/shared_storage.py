@@ -9,15 +9,20 @@ The storage is initialized once and reused by both servers, saving ~500MB RAM
 per additional server instance and avoiding race conditions.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from threading import Lock
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from .graph.client import GraphClient
 from .graph.factory import create_graph_layer
 from .graph.queue import HebbianWriteQueue
 from .storage.base import MemoryStorage
+
+if TYPE_CHECKING:
+    from .embedding.protocol import EmbeddingProvider
 from .storage.factory import create_storage_instance
 
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """Manages a singleton storage instance for shared access."""
 
-    _instance: Optional["StorageManager"] = None
+    _instance: StorageManager | None = None
     _lock: Lock = Lock()
 
     def __init__(self):
@@ -34,11 +39,12 @@ class StorageManager:
         self._storage: MemoryStorage | None = None
         self._graph_client: GraphClient | None = None
         self._write_queue: HebbianWriteQueue | None = None
+        self._embedding_provider: EmbeddingProvider | None = None
         self._initialization_lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
 
     @classmethod
-    def get_instance(cls) -> "StorageManager":
+    def get_instance(cls) -> StorageManager:
         """Get singleton instance of StorageManager.
 
         Thread-safe singleton pattern ensures only one instance exists.
@@ -74,8 +80,32 @@ class StorageManager:
 
             logger.info("Initializing shared storage instance...")
 
-            # Create storage using factory
-            self._storage = await create_storage_instance()
+            # Create embedding provider (shared between storage and service)
+            from .embedding.factory import create_embedding_provider
+
+            self._embedding_provider = create_embedding_provider()
+            logger.info(
+                "Embedding provider created: %s (model=%s)",
+                type(self._embedding_provider).__name__,
+                self._embedding_provider.model_name,
+            )
+
+            # Create storage using factory, passing the shared provider
+            self._storage = await create_storage_instance(
+                embedding_provider=self._embedding_provider,
+            )
+
+            # Verify embedding dimensions match storage collection
+            if hasattr(self._storage, "_vector_size") and self._storage._vector_size is not None:
+                provider_dims = self._embedding_provider.dimensions
+                storage_dims = self._storage._vector_size
+                if provider_dims != storage_dims:
+                    raise ValueError(
+                        f"Embedding provider dimensions ({provider_dims}) don't match "
+                        f"Qdrant collection dimensions ({storage_dims}). "
+                        f"Provider: {self._embedding_provider.model_name}, "
+                        f"Collection: {getattr(self._storage, 'collection_name', 'unknown')}"
+                    )
 
             # Initialize graph layer if enabled
             try:
@@ -105,6 +135,11 @@ class StorageManager:
         """Get the Hebbian write queue if graph layer is enabled."""
         return self._write_queue
 
+    @property
+    def embedding_provider(self) -> EmbeddingProvider | None:
+        """Get the shared embedding provider (created during initialization)."""
+        return self._embedding_provider
+
     async def close(self) -> None:
         """Close all managed instances.
 
@@ -132,6 +167,7 @@ class StorageManager:
                 logger.info("Closing shared storage instance...")
                 await self._storage.close()
                 self._storage = None
+                self._embedding_provider = None
                 self._initialized = False
                 logger.info("Shared storage closed successfully")
             except Exception as e:
@@ -188,3 +224,8 @@ def get_graph_client() -> GraphClient | None:
 def get_write_queue() -> HebbianWriteQueue | None:
     """Get the shared Hebbian write queue if graph layer is enabled."""
     return _manager.write_queue
+
+
+def get_embedding_provider() -> EmbeddingProvider | None:
+    """Get the shared embedding provider (created during storage initialization)."""
+    return _manager.embedding_provider
