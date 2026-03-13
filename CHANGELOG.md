@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.21.0](https://github.com/27b-io/mcp-memory-service/compare/v11.20.0...v11.21.0) (2026-03-13)
+
+
+### Features
+
+* extract embedding into pluggable EmbeddingProvider protocol ([#167](https://github.com/27b-io/mcp-memory-service/issues/167)) ([d6540bc](https://github.com/27b-io/mcp-memory-service/commit/d6540bc8808e0a97576c0ab93e3ee5f1d4c60d68))
+
 ## [11.20.0](https://github.com/27b-io/mcp-memory-service/compare/v11.19.0...v11.20.0) (2026-03-12)
 
 
