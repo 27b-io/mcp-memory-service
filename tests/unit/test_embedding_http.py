@@ -157,3 +157,31 @@ class TestOpenAICompatAdapter:
         assert result[0] == [0.1, 0.1, 0.1]
         assert result[1] == [0.2, 0.2, 0.2]
         assert result[2] == [0.3, 0.3, 0.3]
+
+    @pytest.mark.asyncio
+    async def test_batch_splitting(self):
+        """Texts exceeding max_batch are split into multiple POST requests."""
+        adapter = OpenAICompatAdapter(
+            base_url="http://localhost:8080",
+            model_name="test",
+            dimensions=3,
+            max_batch=2,
+        )
+
+        def make_response(n_items):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [{"embedding": [0.1] * 3, "index": i} for i in range(n_items)],
+                    "model": "test",
+                },
+                request=httpx.Request("POST", "test"),
+            )
+
+        with patch.object(adapter, "_client") as mock_client:
+            # 5 texts with max_batch=2 → 3 POST calls (2+2+1)
+            mock_client.post = AsyncMock(side_effect=[make_response(2), make_response(2), make_response(1)])
+            result = await adapter.embed_batch(["a", "b", "c", "d", "e"])
+
+        assert len(result) == 5
+        assert mock_client.post.call_count == 3
