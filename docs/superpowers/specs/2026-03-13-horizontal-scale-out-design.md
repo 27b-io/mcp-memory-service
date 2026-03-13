@@ -123,16 +123,25 @@ All via pydantic-settings (`EmbeddingSettings` class in `config.py`):
 MCP_EMBEDDING_PROVIDER=local          # local|openai_compat
 
 # Connection (for openai_compat provider)
-MCP_EMBEDDING_URL=http://tei:8080     # base URL of embedding server
+MCP_EMBEDDING_URL=http://tei:8080     # base URL — validated as AnyHttpUrl, WARNING logged for http://
 MCP_EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5  # reuses existing var
 MCP_EMBEDDING_TIMEOUT=30              # request timeout seconds
 MCP_EMBEDDING_MAX_BATCH=64            # max texts per request
+MCP_EMBEDDING_TLS_VERIFY=true         # TLS certificate verification (disable only for local dev)
 
 # For managed providers (future)
 MCP_EMBEDDING_API_KEY=                # SecretStr
 ```
 
 `MCP_EMBEDDING_PROVIDER=local` is the default. Existing deployments require zero config changes.
+
+### URL Validation
+
+`MCP_EMBEDDING_URL` is validated at startup via pydantic `AnyHttpUrl`:
+- Must be `http://` or `https://` scheme
+- Cloud metadata IPs (169.254.x.x) and link-local ranges blocked by default
+- `http://` scheme logs a WARNING: "Embedding service URL uses plaintext HTTP. Use HTTPS in production."
+- RFC 1918 ranges allowed (common for internal service mesh) but documented as requiring network isolation
 
 ## Provider Injection
 
@@ -159,9 +168,12 @@ A single `CachedEmbeddingProvider` instance is created by the factory and shared
 
 ### Readiness Probe
 
-API service readiness includes embedding provider health:
-- `LocalProvider`: model loaded = ready
-- `OpenAICompatAdapter`: `GET {base_url}/health` returns 200 = ready
+API service separates liveness from readiness:
+- **Liveness** (`/health`): local-only, never calls external services. Returns `{"status": "healthy"}` and status code. No diagnostic info.
+- **Readiness** (`/health/ready`): checks embedding provider reachability. Result cached 10s to prevent fan-out amplification.
+  - `LocalProvider`: model loaded = ready
+  - `OpenAICompatAdapter`: `GET {base_url}/health` returns 200 = ready
+- Detailed diagnostics (`/health/detailed`): behind authentication, includes version/uptime/backend info.
 
 ### Error Handling
 
@@ -208,7 +220,7 @@ CI builds both, tags: `ghcr.io/27b-io/mcp-memory-service:latest` (full), `ghcr.i
 
 ## Deployment Example
 
-Minimal two-service deployment with Docker Compose:
+Minimal two-service deployment with Docker Compose (**local development only — production requires TLS and Redis auth**):
 
 ```yaml
 services:
@@ -219,26 +231,26 @@ services:
       MCP_EMBEDDING_URL: http://tei:8080
       MCP_EMBEDDING_MODEL: nomic-ai/nomic-embed-text-v1.5
       MCP_QDRANT_URL: http://qdrant:6333
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
     ports:
       - "8000:8000"
 
   tei:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
     command: --model-id nomic-ai/nomic-embed-text-v1.5 --port 8080
-    ports:
-      - "8080:8080"
+    # No host port binding — internal only
 
   qdrant:
     image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
+    # No host port binding — internal only
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme}
+    # No host port binding — internal only
 ```
+
+**Security notes**: Only the API service port is exposed to the host. Backend services (TEI, Qdrant, Redis) communicate via Docker's internal network. Redis requires a password. For production: use `https://` URLs, TLS Redis (`rediss://`), and network policies.
 
 ## Migration Phases
 
