@@ -16,7 +16,7 @@ Extract embedding generation into a pluggable `EmbeddingProvider` protocol (port
 
 ## Architecture
 
-```
+```text
                     +--------------------------------------+
                     |          Load Balancer               |
                     +----------------+---------------------+
@@ -100,7 +100,7 @@ class CachedEmbeddingProvider:
         # Per-text: delegate to a CacheKit-decorated async helper
         # with (text, prompt_name) as explicit parameters so CacheKit
         # auto-includes both in the Blake2b key hash.
-        # Namespace: mcp_memory_embed_{model_name}_{dimensions}
+        # Namespace: mcp_memory_embed_{model_slug}  (dimensions omitted to avoid eager model load)
         # CacheKit key: ns:{namespace}:func:{qualname}:args:{blake2b(text, prompt_name)}
         #
         # CRITICAL: prompt_name must be a function parameter, not hardcoded.

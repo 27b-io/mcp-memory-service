@@ -6,7 +6,7 @@
 
 **Architecture:** Ports & adapters. `EmbeddingProvider` protocol with two adapters: `LocalProvider` (in-process SentenceTransformer, backward compat) and `OpenAICompatAdapter` (HTTP to TEI/vLLM/Ollama/OpenAI). `CachedEmbeddingProvider` decorator wraps either with CacheKit L1/L2. Single instance shared by both `QdrantStorage` and `MemoryService`.
 
-**Tech Stack:** Python 3.13, pydantic-settings, CacheKit, httpx (already a dependency), SentenceTransformer (LocalProvider only)
+**Tech Stack:** Python 3.12, pydantic-settings, CacheKit, httpx (already a dependency), SentenceTransformer (LocalProvider only)
 
 **Spec:** `docs/superpowers/specs/2026-03-13-horizontal-scale-out-design.md`
 
@@ -1405,7 +1405,7 @@ class CachedEmbeddingProvider:
 
         if _CACHEKIT_AVAILABLE:
             model_slug = inner.model_name.replace("/", "_")
-            namespace = f"mcp_memory_embed_{model_slug}_{inner.dimensions}"
+            namespace = f"mcp_memory_embed_{model_slug}"
 
             @_cachekit_cache(ttl=86400, namespace=namespace, **_ck_kwargs)
             async def _cached_single_embed(text: str, prompt_name: str = "query") -> list[float]:
@@ -1556,7 +1556,7 @@ Split into three stages:
 
 ```dockerfile
 # ── Base (shared) ──────────────────────────
-FROM python:3.13-slim AS base
+FROM python:3.12-slim AS base
 # uv, source copy, spaCy model download
 # Everything EXCEPT torch and sentence-transformers
 
