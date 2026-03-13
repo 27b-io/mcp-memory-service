@@ -861,6 +861,22 @@ class SummarySettings(BaseSettings):
             return "extractive"
 
 
+class EmbeddingSettings(BaseSettings):
+    """Embedding provider configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MCP_EMBEDDING_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+    )
+
+    provider: str = Field(default="local", description="Embedding provider type (local | openai_compat)")
+    url: str | None = Field(default=None, description="Base URL for HTTP embedding provider")
+    timeout: int = Field(default=30, description="Request timeout in seconds")
+    max_batch: int = Field(default=64, description="Max texts per batch request")
+    tls_verify: bool = Field(default=True, description="TLS certificate verification for HTTP provider")
+    api_key: SecretStr | None = Field(default=None, description="API key for managed providers")
+    prompt_name_map: dict[str, dict[str, str]] | None = Field(default=None, description="Custom prompt name mappings")
+
+
 # =============================================================================
 # Main Settings Class
 # =============================================================================
@@ -900,6 +916,7 @@ class Settings(BaseSettings):
     intent: QueryIntentSettings = Field(default_factory=QueryIntentSettings)
     semantic_tag: SemanticTagSettings = Field(default_factory=SemanticTagSettings)
     summary: SummarySettings = Field(default_factory=SummarySettings)
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
 
     @model_validator(mode="after")
     def validate_backend_requirements(self) -> "Settings":
