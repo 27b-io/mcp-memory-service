@@ -97,6 +97,11 @@ class CachedEmbeddingProvider:
     def __init__(self, inner: EmbeddingProvider): ...
 
     async def embed_batch(self, texts, prompt_name="query"):
+        # Cache key: (model_name, dimensions, prompt_name, text)
+        # prompt_name MUST be in the key — "query" and "passage" produce
+        # different vectors for the same text (instruction-tuned models
+        # prepend different prefixes). Without it, store() and retrieve()
+        # silently share cached vectors that don't match.
         # Per-text L1 check -> L2 check -> inner.embed_batch(misses)
         # Populate L1 + L2 on miss
 ```
