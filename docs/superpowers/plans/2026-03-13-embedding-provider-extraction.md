@@ -343,8 +343,6 @@ import threading
 
 import numpy as np
 
-from .protocol import EmbeddingProvider
-
 logger = logging.getLogger(__name__)
 
 # Module-level import for mockability. Absent in api Docker target.

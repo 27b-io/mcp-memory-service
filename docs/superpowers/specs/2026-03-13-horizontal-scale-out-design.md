@@ -202,7 +202,7 @@ Cold start cascade (both API and embedding service scaling from zero): adapter r
 ## Dockerfile: Single File, Multi-Stage
 
 ```dockerfile
-FROM python:3.13-slim AS base
+FROM python:3.12-slim AS base
 # Common: uv, source, spaCy model
 
 FROM base AS full
