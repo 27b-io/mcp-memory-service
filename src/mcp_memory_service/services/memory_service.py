@@ -11,7 +11,10 @@ import logging
 import time
 from collections import deque
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from ..embedding.protocol import EmbeddingProvider
 
 from ..config import (
     CONTENT_PRESERVE_BOUNDARIES,
@@ -139,11 +142,13 @@ class MemoryService:
         graph_client: GraphClient | None = None,
         write_queue: HebbianWriteQueue | None = None,
         hooks: HookRegistry | None = None,
+        embedding_provider: "EmbeddingProvider | None" = None,
     ):
         self.storage = storage
         self._graph = graph_client
         self._write_queue = write_queue
         self._hooks = hooks if hooks is not None else HookRegistry()
+        self._embedding_provider = embedding_provider
         self._three_tier: ThreeTierMemory | None = None
         self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
         self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
@@ -159,7 +164,10 @@ class MemoryService:
 
         # Set module-level embed function for CacheKit-cached embeddings
         global _embed_fn  # noqa: PLW0603
-        _embed_fn = storage.generate_embeddings_batch
+        if embedding_provider is not None:
+            _embed_fn = embedding_provider.embed_batch
+        else:
+            _embed_fn = storage.generate_embeddings_batch
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -1080,6 +1088,8 @@ class MemoryService:
         a single batched forward pass for efficiency.
         """
         if not _CACHEKIT_AVAILABLE or not texts:
+            if self._embedding_provider is not None:
+                return await self._embedding_provider.embed_batch(texts)
             return await self.storage.generate_embeddings_batch(texts)
 
         results: list[list[float] | None] = [None] * len(texts)
@@ -1096,7 +1106,10 @@ class MemoryService:
         # Batch-embed all cache misses in one forward pass
         if miss_indices:
             miss_texts = [texts[i] for i in miss_indices]
-            miss_embeddings = await self.storage.generate_embeddings_batch(miss_texts)
+            if self._embedding_provider is not None:
+                miss_embeddings = await self._embedding_provider.embed_batch(miss_texts)
+            else:
+                miss_embeddings = await self.storage.generate_embeddings_batch(miss_texts)
             for idx, emb in zip(miss_indices, miss_embeddings):
                 results[idx] = emb
 
@@ -3043,7 +3056,10 @@ class MemoryService:
 
             # Batch-embed all content in a single model forward pass
             contents = [m.content for m in memories]
-            embeddings = await self.storage.generate_embeddings_batch(contents)
+            if self._embedding_provider is not None:
+                embeddings = await self._embedding_provider.embed_batch(contents)
+            else:
+                embeddings = await self.storage.generate_embeddings_batch(contents)
 
             # Run the deduplication pipeline
             groups = build_duplicate_groups(

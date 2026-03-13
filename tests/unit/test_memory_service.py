@@ -1134,3 +1134,65 @@ class TestBatchTagOperation:
         assert result["success"] is False
         assert result["failed"] == 1
         assert result["results"][0]["error"] == "Memory not found"
+
+
+# =============================================================================
+# EmbeddingProvider Injection Tests
+# =============================================================================
+
+
+class TestEmbeddingProviderInjection:
+    """Tests for MemoryService with injected EmbeddingProvider."""
+
+    @pytest.fixture
+    def mock_provider(self):
+        from unittest.mock import PropertyMock
+
+        from mcp_memory_service.embedding.protocol import EmbeddingProvider
+
+        provider = AsyncMock(spec=EmbeddingProvider)
+        provider.embed_batch = AsyncMock(return_value=[[0.1] * 768])
+        type(provider).dimensions = PropertyMock(return_value=768)
+        type(provider).model_name = PropertyMock(return_value="test-model")
+        return provider
+
+    @pytest.fixture
+    def service_with_provider(self, mock_storage, mock_provider):
+        return MemoryService(storage=mock_storage, embedding_provider=mock_provider)
+
+    @pytest.mark.asyncio
+    async def test_get_embeddings_uses_provider(self, service_with_provider, mock_provider):
+        """_get_embeddings delegates to provider when injected."""
+        mock_provider.embed_batch.return_value = [[0.1] * 768, [0.2] * 768]
+        result = await service_with_provider._get_embeddings(["hello", "world"])
+        assert len(result) == 2
+        mock_provider.embed_batch.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_embed_fn_set_to_provider(self, mock_storage, mock_provider):
+        """Module-level _embed_fn points to provider.embed_batch when provider injected."""
+        from mcp_memory_service.services import memory_service as ms_module
+
+        MemoryService(storage=mock_storage, embedding_provider=mock_provider)
+        assert ms_module._embed_fn is mock_provider.embed_batch
+
+    @pytest.mark.asyncio
+    async def test_embed_fn_falls_back_to_storage(self, mock_storage):
+        """Module-level _embed_fn points to storage when no provider."""
+        from mcp_memory_service.services import memory_service as ms_module
+
+        MemoryService(storage=mock_storage)
+        assert ms_module._embed_fn is mock_storage.generate_embeddings_batch
+
+    @pytest.mark.asyncio
+    async def test_find_duplicates_uses_provider(self, service_with_provider, mock_storage, mock_provider):
+        """find_duplicates delegates embedding to provider when injected."""
+        m1 = Memory(content="aaa", content_hash="h1", tags=[])
+        m2 = Memory(content="bbb", content_hash="h2", tags=[])
+        mock_storage.get_all_memories = AsyncMock(return_value=[m1, m2])
+        mock_provider.embed_batch.return_value = [[0.1] * 768, [0.2] * 768]
+
+        result = await service_with_provider.find_duplicates()
+        assert result["success"] is True
+        mock_provider.embed_batch.assert_awaited_once()
+        mock_storage.generate_embeddings_batch.assert_not_awaited()
