@@ -97,14 +97,25 @@ class CachedEmbeddingProvider:
     def __init__(self, inner: EmbeddingProvider): ...
 
     async def embed_batch(self, texts, prompt_name="query"):
-        # Cache key: (model_name, dimensions, prompt_name, text)
-        # prompt_name MUST be in the key — "query" and "passage" produce
-        # different vectors for the same text (instruction-tuned models
-        # prepend different prefixes). Without it, store() and retrieve()
-        # silently share cached vectors that don't match.
+        # Per-text: delegate to a CacheKit-decorated async helper
+        # with (text, prompt_name) as explicit parameters so CacheKit
+        # auto-includes both in the Blake2b key hash.
+        # Namespace: mcp_memory_embed_{model_name}_{dimensions}
+        # CacheKit key: ns:{namespace}:func:{qualname}:args:{blake2b(text, prompt_name)}
+        #
+        # CRITICAL: prompt_name must be a function parameter, not hardcoded.
+        # "query" and "passage" produce different vectors for the same text
+        # (instruction-tuned models prepend different prefixes).
+        # The current _cached_embed(text) hardcodes prompt_name inside the
+        # function body — CacheKit can't see it, so query/passage share keys.
+        #
         # Per-text L1 check -> L2 check -> inner.embed_batch(misses)
         # Populate L1 + L2 on miss
 ```
+
+**CacheKit key generation**: Keys are auto-generated as `ns:{namespace}:func:{qualname}:args:{blake2b(args)}`. All function parameters are hashed. The namespace handles model/dimension isolation; the args hash handles text/prompt_name isolation. No manual key construction needed.
+
+**Known limitation**: `ainvalidate_cache()` no-ops on parameterized functions (cachekit-io/cachekit-py#59). No other open issues affect key generation or async correctness.
 
 - Consolidates caching from `memory_service.py._get_embeddings()` into the provider layer
 - Cache namespace includes `model_name` and `dimensions` (e.g., `mcp_memory_embed_nomic_embed_text_v1.5_768`) — model or dimension change = new namespace = automatic invalidation
