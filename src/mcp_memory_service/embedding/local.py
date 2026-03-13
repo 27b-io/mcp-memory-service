@@ -76,17 +76,20 @@ class LocalProvider:
         model = self._model
 
         # Try native prompt_name support (sentence-transformers >= 2.2.2)
-        try:
-            if hasattr(model, "prompts") and model.prompts:
+        if hasattr(model, "prompts") and model.prompts:
+            try:
                 result = model.encode(texts, prompt_name=prompt_name, convert_to_tensor=False)
-            else:
-                raise AttributeError("no prompts")
-        except (TypeError, AttributeError):
-            # Fallback: manual prefix for older sentence-transformers
+            except TypeError:
+                # prompt_name kwarg not supported by this version
+                prefix = self._get_manual_prefix(prompt_name)
+                if prefix:
+                    result = model.encode([f"{prefix}{t}" for t in texts], convert_to_tensor=False)
+                else:
+                    result = model.encode(texts, convert_to_tensor=False)
+        else:
             prefix = self._get_manual_prefix(prompt_name)
             if prefix:
-                prefixed = [f"{prefix}{t}" for t in texts]
-                result = model.encode(prefixed, convert_to_tensor=False)
+                result = model.encode([f"{prefix}{t}" for t in texts], convert_to_tensor=False)
             else:
                 result = model.encode(texts, convert_to_tensor=False)
 
