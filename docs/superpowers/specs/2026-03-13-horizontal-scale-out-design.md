@@ -84,7 +84,7 @@ Instruction-tuned models use different prefixes. The adapter owns translation:
 | E5 | `query:` | `passage:` |
 | OpenAI | (ignored) | (ignored) |
 
-Mapping lives in adapter config, not in the protocol.
+Mapping lives in adapter config, not in the protocol. Default mapping for `nomic-embed` is built-in. Custom mappings via `EmbeddingSettings.prompt_name_map: dict[str, dict[str, str]]` for other model families.
 
 ## Caching: CachedEmbeddingProvider Wrapper
 
@@ -112,6 +112,7 @@ class CachedEmbeddingProvider:
 - L2 (Redis): shared across all instances, survives restarts
 - Cold start: empty L1, warm L2 = first request costs one Redis RTT (~1ms), not embedding inference (~15ms)
 - Known limitation: `ainvalidate_cache()` no-ops on parameterized functions (cachekit-py#59). TTL convergence is the workaround. Acceptable for this use case.
+- Model change: new namespace means old L1 entries are orphaned but harmless — they stop being hit and evict on TTL or LRU. L2 (Redis) keys are namespaced, so old-model entries age out naturally.
 
 ## Configuration
 
@@ -135,11 +136,20 @@ MCP_EMBEDDING_API_KEY=                # SecretStr
 
 ## Provider Injection
 
-The `EmbeddingProvider` is injected via constructor into both `MemoryService` and `QdrantStorage`:
+A single `CachedEmbeddingProvider` instance is created by the factory and shared by both `MemoryService` and `QdrantStorage`. This ensures all embedding calls — regardless of origin — hit the cache.
 
-- **QdrantStorage**: Replaces internal `_ensure_model_loaded()`, `_generate_embedding()`, and `generate_embeddings_batch()`. Storage becomes pure storage — no model loading, no torch, no CUDA detection.
-- **MemoryService**: `_get_embeddings()` delegates to `self.embedding_provider.embed_batch()` instead of `self.storage.generate_embeddings_batch()`.
-- **Factory** (`embedding/factory.py`): Reads `MCP_EMBEDDING_PROVIDER`, instantiates the correct adapter, wraps in `CachedEmbeddingProvider`.
+- **Factory** (`embedding/factory.py`): Reads `MCP_EMBEDDING_PROVIDER`, instantiates the correct adapter, wraps in `CachedEmbeddingProvider`. Returns one instance.
+- **QdrantStorage**: Receives the `CachedEmbeddingProvider` via constructor. All internal embedding call sites are replaced:
+  - `store()` (line ~834): content embedding via `self._generate_embedding()` → `provider.embed_batch()`
+  - `retrieve()` (line ~944): query embedding via `self._generate_embedding()` → `provider.embed_batch()`
+  - `count_semantic_search()`: delegates to `retrieve()`, covered transitively
+  - `recall_memory()` (line ~1903): same pattern as `retrieve()`
+  - `index_new_tags()`: tag embedding generation → `provider.embed_batch()`
+  - `generate_embeddings_batch()`: removed entirely (was the public API for this)
+  - `_ensure_model_loaded()`, `_generate_embedding()`, `_embedding_model_instance`: deleted. `LocalProvider` owns model lifecycle.
+- **MemoryService**: Also receives the same `CachedEmbeddingProvider`. `_get_embeddings()` simplifies to `self.embedding_provider.embed_batch()` — caching is transparent inside the provider, no cache logic in the service layer.
+
+**Key decision**: Both layers share one `CachedEmbeddingProvider` instance. No double-caching. No cache bypass.
 
 ### Startup Checks
 
@@ -174,15 +184,15 @@ FROM base AS full
 FROM base AS api
 # No torch, no sentence-transformers
 # Thin image for scale-out with external embedding service.
-
-FROM ${MODE:-full} AS final
 ```
 
 ```bash
 docker build --target api  -t mcp-memory:api  .   # ~200MB, <2s start
 docker build --target full -t mcp-memory:full .   # ~2.5GB, ~15s start
-docker build .                                     # defaults to full
+docker build .                                     # defaults to full (last stage)
 ```
+
+Target selection uses `--target`. No build args needed. The `full` stage is last, making it the default when `--target` is omitted.
 
 CI builds both, tags: `ghcr.io/27b-io/mcp-memory-service:latest` (full), `ghcr.io/27b-io/mcp-memory-service:api` (thin).
 
@@ -190,8 +200,9 @@ CI builds both, tags: `ghcr.io/27b-io/mcp-memory-service:latest` (full), `ghcr.i
 
 | Component | Reason | Replacement |
 |-----------|--------|-------------|
-| SSE (`web/sse.py`, SSE routes, `SSEManager`) | Stateful (in-process connection dict), unused by MCP consumers | None. Clients use request/response. |
-| asyncio WriteQueue (`web/app.py`) | In-process state, blocks horizontal scaling | `asyncio.Semaphore(20)` for write backpressure |
+| SSE (`web/sse.py`, SSE routes, `SSEManager`) | Stateful (in-process connection dict), unused by MCP consumers. Breaks: events router, SSE test page, dashboard live stats. | None. Clients use request/response. Dashboard simplified to poll-based or removed. |
+| asyncio WriteQueue (`web/write_queue.py`) | In-process FIFO serialization, blocks horizontal scaling | `asyncio.Semaphore(20)` for concurrent write backpressure. Qdrant server mode handles write concurrency natively. `WriteQueue.get_stats()` replaced with semaphore counter in health endpoint. |
+| Diagnostic deques (`_search_logs`, `_audit_logs` in `MemoryService`) | Per-instance in-process state, unreliable under horizontal scaling | Gate behind `MCP_MEMORY_EXPOSE_DEBUG_TOOLS=true` with per-instance warning. Analytics endpoints become debug-only. |
 | `BaseStorage.generate_embeddings_batch()` | Coupling storage + embedding | `EmbeddingProvider` protocol |
 | torch/CUDA/device detection in storage | Moves to `LocalProvider` | `LocalProvider` owns model loading |
 
@@ -237,7 +248,14 @@ Each phase is a separate PR. All tests pass at every phase boundary.
 
 - Define `EmbeddingProvider` protocol in `embedding/protocol.py`
 - Move `_ensure_model_loaded()` + `model.encode()` from `QdrantStorage` into `LocalProvider`
-- Inject provider into `QdrantStorage` constructor — replace `_generate_embedding()` and `generate_embeddings_batch()` with `provider.embed_batch()` delegation
+- Inject provider into `QdrantStorage` constructor — replace ALL internal embedding call sites with `provider.embed_batch()` delegation:
+  - `store()`: content embedding
+  - `retrieve()`: query embedding
+  - `count_semantic_search()`: transitive via `retrieve()`
+  - `recall_memory()`: query embedding
+  - `index_new_tags()`: tag embedding
+  - `generate_embeddings_batch()`: removed
+  - `_ensure_model_loaded()`, `_generate_embedding()`, `_embedding_model_instance`: deleted (lifecycle moves to `LocalProvider`)
 - Inject provider into `MemoryService` — `_get_embeddings()` calls provider
 - Factory default: `LocalProvider`
 - `BaseStorage.generate_embeddings_batch()` deprecated (soft removal)
@@ -269,9 +287,10 @@ Each phase is a separate PR. All tests pass at every phase boundary.
 
 ### Phase 5: Remove Stateful Components
 
-- Delete `web/sse.py`, SSE routes, `SSEManager` (verify no consumers first)
-- Replace asyncio `WriteQueue` with `asyncio.Semaphore(20)`
-- Remove diagnostic deques or gate behind debug flag
+- Delete `web/sse.py`, SSE routes, `SSEManager` (verify access logs for consumers first; removal breaks events router, SSE test page, dashboard live stats)
+- Replace asyncio `WriteQueue` (`web/write_queue.py`) with `asyncio.Semaphore(20)`. Qdrant server mode handles concurrent writes natively. Replace `WriteQueue.get_stats()` with semaphore counter in health endpoint.
+- Gate `_search_logs` and `_audit_logs` deques behind `MCP_MEMORY_EXPOSE_DEBUG_TOOLS=true` with per-instance warning in analytics response
+- **Note**: `HebbianWriteQueue` (graph layer, Redis-backed) is NOT removed — it's already stateless via Redis CQRS.
 
 ### Phase 6: Managed Provider Adapters (Future)
 
@@ -288,7 +307,7 @@ Each phase is a separate PR. All tests pass at every phase boundary.
 ## Success Criteria
 
 1. `MCP_EMBEDDING_PROVIDER=local` behaves identically to current single-process deployment
-2. `MCP_EMBEDDING_PROVIDER=openai_compat` with TEI produces identical embeddings to local SentenceTransformer with same model
+2. `MCP_EMBEDDING_PROVIDER=openai_compat` with TEI produces embeddings within cosine similarity >0.999 of local SentenceTransformer with same model (floating-point determinism across runtimes is not guaranteed)
 3. API service image <300MB, cold start <3s
 4. All existing tests pass at every migration phase
 5. Docker Compose example boots and serves requests end-to-end
