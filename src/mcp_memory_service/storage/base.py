@@ -120,11 +120,22 @@ class MemoryStorage(ABC):
     async def generate_embeddings_batch(self, texts: list[str], prompt_name: str = "query") -> list[list[float]]:
         """Generate embeddings for multiple texts in a single batched forward pass.
 
+        .. deprecated::
+            Use ``EmbeddingProvider.embed_batch()`` instead. This method will be
+            removed once all callers migrate to the provider protocol.
+
         Args:
             texts: List of texts to embed
             prompt_name: Prompt prefix for instruction-tuned models
                          ("query" for search queries, "passage" for documents)
         """
+        import warnings
+
+        warnings.warn(
+            "generate_embeddings_batch is deprecated. Use EmbeddingProvider.embed_batch() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         raise NotImplementedError("Subclass must implement generate_embeddings_batch")
 
     async def search_similar_tags(self, query_embedding: list[float], threshold: float = 0.5, max_tags: int = 10) -> list[str]:
