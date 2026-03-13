@@ -29,10 +29,11 @@ def _clear_readiness_cache():
 
 
 @pytest.fixture
-def client():
+async def client():
     app = _make_app()
     transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
 
 
 class TestReadinessProbe:
