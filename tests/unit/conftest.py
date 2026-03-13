@@ -16,10 +16,9 @@ def _clear_cachekit_l1():
     def _clear():
         try:
             from cachekit.l1_cache import get_l1_cache_manager
-
-            get_l1_cache_manager().clear_all()
-        except Exception:  # noqa: BLE001
-            pass
+        except ImportError:
+            return
+        get_l1_cache_manager().clear_all()
 
     _clear()
     yield
