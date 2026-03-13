@@ -28,8 +28,27 @@ def create_embedding_provider(
         return LocalProvider(model_name=model_name)
 
     if provider_type == "openai_compat":
-        msg = "openai_compat provider not yet implemented (Task 2.1)"
-        raise NotImplementedError(msg)
+        from .http import OpenAICompatAdapter
+
+        base_url = str(kwargs.get("base_url", settings.embedding.url) or "")
+        if not base_url:
+            msg = "openai_compat provider requires MCP_EMBEDDING_URL or base_url parameter"
+            raise ValueError(msg)
+        if base_url.startswith("http://"):
+            logger.warning(
+                "Embedding service URL uses plaintext HTTP: %s. Consider using HTTPS for production deployments.",
+                base_url,
+            )
+
+        return OpenAICompatAdapter(
+            base_url=base_url,
+            model_name=str(kwargs.get("model_name", settings.storage.embedding_model)),
+            dimensions=int(kwargs.get("dimensions", 768)),  # type: ignore[arg-type]
+            timeout=settings.embedding.timeout,
+            max_batch=settings.embedding.max_batch,
+            api_key=settings.embedding.api_key,
+            tls_verify=settings.embedding.tls_verify,
+        )
 
     msg = f"Unknown embedding provider: {provider_type!r}. Valid: local, openai_compat"
     raise ValueError(msg)

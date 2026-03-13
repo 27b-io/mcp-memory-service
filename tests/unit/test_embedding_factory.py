@@ -63,11 +63,37 @@ class TestEmbeddingFactory:
         with pytest.raises(ValueError, match="Unknown embedding provider"):
             create_embedding_provider(provider="nonexistent")
 
-    def test_openai_compat_not_yet_implemented(self):
+    def test_openai_compat_requires_url(self):
         from mcp_memory_service.embedding.factory import create_embedding_provider
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ValueError, match="requires.*URL"):
             create_embedding_provider(provider="openai_compat")
+
+    def test_openai_compat_creates_adapter(self):
+        from mcp_memory_service.embedding.factory import create_embedding_provider
+        from mcp_memory_service.embedding.http import OpenAICompatAdapter
+
+        provider = create_embedding_provider(
+            provider="openai_compat",
+            base_url="http://localhost:8080",
+            model_name="test",
+            dimensions=768,
+        )
+        assert isinstance(provider, OpenAICompatAdapter)
+
+    def test_http_url_plaintext_warning(self, caplog):
+        import logging
+
+        from mcp_memory_service.embedding.factory import create_embedding_provider
+
+        with caplog.at_level(logging.WARNING):
+            create_embedding_provider(
+                provider="openai_compat",
+                base_url="http://localhost:8080",
+                model_name="test",
+                dimensions=768,
+            )
+        assert "plaintext HTTP" in caplog.text
 
     def test_explicit_model_name_override(self):
         from mcp_memory_service.embedding.factory import create_embedding_provider
