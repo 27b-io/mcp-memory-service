@@ -315,6 +315,7 @@ Each phase is a separate PR. All tests pass at every phase boundary.
 - **Pluggable storage protocol**: `BaseStorage` cleanup into a lean `StorageProvider` protocol is the right long-term direction but is a separate project. The embedding extraction will reveal where the storage boundary should be.
 - **gRPC transport**: Deferred. OpenAI-compat HTTP covers all current backends. gRPC adapter can be added later for latency-sensitive self-hosted deployments.
 - **Custom embedding server**: We use off-the-shelf servers (TEI, vLLM, Ollama). No custom embedding service Dockerfile.
+- **Rust rewrite / Cloudflare Workers**: The embedding extraction makes the thin API service a stateless proxy — ideal for Rust/WASM on Cloudflare Workers (128MB limit, no filesystem, pure IO). Ship the Python extraction first, prove the architecture, then evaluate a Rust port as a follow-up project. The `EmbeddingProvider` protocol and service boundaries designed here are forward-compatible with a Rust trait-based implementation.
 
 ## Success Criteria
 
