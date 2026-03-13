@@ -60,6 +60,12 @@ class CachedEmbeddingProvider:
     def model_name(self) -> str:
         return self._inner.model_name
 
+    async def health_check(self) -> bool:
+        """Delegate health_check to inner provider if available."""
+        if hasattr(self._inner, "health_check"):
+            return await self._inner.health_check()
+        return True
+
     async def embed_batch(
         self,
         texts: list[str],

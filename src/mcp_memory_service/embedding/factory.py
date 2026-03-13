@@ -58,7 +58,7 @@ def _create_inner_provider(
         return OpenAICompatAdapter(
             base_url=base_url,
             model_name=str(kwargs.get("model_name", settings.storage.embedding_model)),
-            dimensions=int(kwargs.get("dimensions", 768)),  # type: ignore[arg-type]
+            dimensions=int(kwargs.get("dimensions", settings.embedding.dimensions or 768)),  # type: ignore[arg-type]
             timeout=settings.embedding.timeout,
             max_batch=settings.embedding.max_batch,
             api_key=settings.embedding.api_key,
