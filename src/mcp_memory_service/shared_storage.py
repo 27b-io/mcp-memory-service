@@ -34,6 +34,7 @@ class StorageManager:
         self._storage: MemoryStorage | None = None
         self._graph_client: GraphClient | None = None
         self._write_queue: HebbianWriteQueue | None = None
+        self._embedding_provider: object | None = None
         self._initialization_lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
 
@@ -74,8 +75,20 @@ class StorageManager:
 
             logger.info("Initializing shared storage instance...")
 
-            # Create storage using factory
-            self._storage = await create_storage_instance()
+            # Create embedding provider (shared between storage and service)
+            from .embedding.factory import create_embedding_provider
+
+            self._embedding_provider = create_embedding_provider()
+            logger.info(
+                "Embedding provider created: %s (model=%s)",
+                type(self._embedding_provider).__name__,
+                self._embedding_provider.model_name,
+            )
+
+            # Create storage using factory, passing the shared provider
+            self._storage = await create_storage_instance(
+                embedding_provider=self._embedding_provider,
+            )
 
             # Initialize graph layer if enabled
             try:
@@ -104,6 +117,11 @@ class StorageManager:
     def write_queue(self) -> HebbianWriteQueue | None:
         """Get the Hebbian write queue if graph layer is enabled."""
         return self._write_queue
+
+    @property
+    def embedding_provider(self) -> object | None:
+        """Get the shared embedding provider (created during initialization)."""
+        return self._embedding_provider
 
     async def close(self) -> None:
         """Close all managed instances.
@@ -188,3 +206,8 @@ def get_graph_client() -> GraphClient | None:
 def get_write_queue() -> HebbianWriteQueue | None:
     """Get the shared Hebbian write queue if graph layer is enabled."""
     return _manager.write_queue
+
+
+def get_embedding_provider() -> object | None:
+    """Get the shared embedding provider (created during storage initialization)."""
+    return _manager.embedding_provider

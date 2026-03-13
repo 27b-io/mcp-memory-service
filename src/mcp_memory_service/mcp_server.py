@@ -93,12 +93,13 @@ async def mcp_server_lifespan(server: FastMCP) -> AsyncIterator[MCPServerContext
     storage = await get_shared_storage()
 
     # Initialize memory service with shared business logic
-    from .shared_storage import get_graph_client, get_write_queue
+    from .shared_storage import get_embedding_provider, get_graph_client, get_write_queue
 
     memory_service = MemoryService(
         storage,
         graph_client=get_graph_client(),
         write_queue=get_write_queue(),
+        embedding_provider=get_embedding_provider(),
     )
 
     try:

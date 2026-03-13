@@ -26,9 +26,14 @@ from .qdrant_storage import QdrantStorage
 logger = logging.getLogger(__name__)
 
 
-async def create_storage_instance() -> MemoryStorage:
+async def create_storage_instance(embedding_provider: object | None = None) -> MemoryStorage:
     """
     Create and initialize the Qdrant storage backend instance.
+
+    Args:
+        embedding_provider: Optional EmbeddingProvider to inject into the storage backend.
+            When set, QdrantStorage delegates embedding generation to this provider
+            instead of loading SentenceTransformer in-process.
 
     Returns:
         Initialized QdrantStorage instance
@@ -45,6 +50,7 @@ async def create_storage_instance() -> MemoryStorage:
             collection_name=settings.qdrant.COLLECTION_NAME,
             quantization_enabled=settings.qdrant.quantization_enabled,
             distance_metric=settings.qdrant.DISTANCE_METRIC,
+            embedding_provider=embedding_provider,
         )
         logger.info(f"Initialized Qdrant storage in server mode: {settings.qdrant.url}")
     else:
@@ -54,6 +60,7 @@ async def create_storage_instance() -> MemoryStorage:
             collection_name=settings.qdrant.COLLECTION_NAME,
             quantization_enabled=settings.qdrant.quantization_enabled,
             distance_metric=settings.qdrant.DISTANCE_METRIC,
+            embedding_provider=embedding_provider,
         )
         logger.info(f"Initialized Qdrant storage in embedded mode: {settings.qdrant.storage_path}")
 
