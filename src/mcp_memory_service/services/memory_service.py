@@ -140,8 +140,12 @@ class MemoryService:
         self._hooks = hooks if hooks is not None else HookRegistry()
         self._embedding_provider = embedding_provider
         self._three_tier: ThreeTierMemory | None = None
-        self._search_logs: deque[SearchLog] = deque(maxlen=self._MAX_SEARCH_LOGS)
-        self._audit_logs: deque[AuditLog] = deque(maxlen=self._MAX_AUDIT_LOGS)
+        if settings.debug.expose_debug_tools:
+            self._search_logs: deque[SearchLog] | None = deque(maxlen=self._MAX_SEARCH_LOGS)
+            self._audit_logs: deque[AuditLog] | None = deque(maxlen=self._MAX_AUDIT_LOGS)
+        else:
+            self._search_logs = None
+            self._audit_logs = None
         self._init_three_tier()
 
         # Set module-level storage ref for CacheKit-cached functions
@@ -829,7 +833,8 @@ class MemoryService:
                 "sub_queries_count": sub_queries_count,
             },
         )
-        self._search_logs.append(log_entry)
+        if self._search_logs is not None:
+            self._search_logs.append(log_entry)
 
     def get_search_analytics(self, limit: int = 1000) -> dict[str, Any]:
         """
@@ -837,6 +842,8 @@ class MemoryService:
 
         Returns statistics about search patterns, performance, and popular queries.
         """
+        if self._search_logs is None:
+            return {"warning": "Analytics disabled (MCP_MEMORY_EXPOSE_DEBUG_TOOLS=false)", "logs": []}
         if not self._search_logs:
             return {
                 "total_searches": 0,
@@ -970,7 +977,8 @@ class MemoryService:
             error=error,
             metadata=metadata or {},
         )
-        self._audit_logs.append(log_entry)
+        if self._audit_logs is not None:
+            self._audit_logs.append(log_entry)
 
     def get_audit_trail(
         self,
@@ -993,6 +1001,8 @@ class MemoryService:
         Returns:
             Dictionary with audit log entries and statistics
         """
+        if self._audit_logs is None:
+            return {"warning": "Audit trail disabled (MCP_MEMORY_EXPOSE_DEBUG_TOOLS=false)", "logs": []}
         if not self._audit_logs:
             return {
                 "total_operations": 0,
