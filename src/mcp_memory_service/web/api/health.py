@@ -29,7 +29,6 @@ from ... import __version__
 from ...config import OAUTH_ENABLED
 from ...storage.base import MemoryStorage
 from ..dependencies import get_storage
-from ..write_queue import write_queue
 
 # Try importing QdrantStorage for type checking
 try:
@@ -67,7 +66,6 @@ class HealthResponse(BaseModel):
     version: str
     timestamp: str
     uptime_seconds: float
-    write_queue: dict[str, Any] = None
 
 
 class DetailedHealthResponse(BaseModel):
@@ -140,7 +138,6 @@ async def health_check(storage: MemoryStorage = Depends(get_storage)):
                 "version": __version__,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "uptime_seconds": time.time() - _startup_time,
-                "write_queue": write_queue.get_stats(),
                 "backend": "qdrant",
                 "circuit_breaker": circuit_status,
                 "failure_count": failure_count,
@@ -168,7 +165,6 @@ async def health_check(storage: MemoryStorage = Depends(get_storage)):
         version=__version__,
         timestamp=datetime.now(UTC).isoformat(),
         uptime_seconds=time.time() - _startup_time,
-        write_queue=write_queue.get_stats(),
     )
 
 

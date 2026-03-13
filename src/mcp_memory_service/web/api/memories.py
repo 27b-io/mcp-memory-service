@@ -21,7 +21,7 @@ import logging
 import socket
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ...config import INCLUDE_HOSTNAME, OAUTH_ENABLED
@@ -29,7 +29,10 @@ from ...models.memory import Memory
 from ...services.memory_service import MemoryService
 from ...storage.base import MemoryStorage
 from ..dependencies import get_memory_service, get_storage
-from ..write_queue import write_queue
+
+# Concurrency control for write operations — limits parallel writes to prevent
+# storage contention without the complexity of a serialized queue/future system.
+_write_semaphore = asyncio.Semaphore(20)
 
 # OAuth authentication imports (conditional)
 if OAUTH_ENABLED or TYPE_CHECKING:
@@ -233,7 +236,6 @@ def memory_to_response(memory: Memory) -> MemoryResponse:
 async def store_memory(
     request: MemoryCreateRequest,
     http_request: Request,
-    background_tasks: BackgroundTasks,
     memory_service: MemoryService = Depends(get_memory_service),
     user: AuthenticationResult = Depends(require_write_access) if OAUTH_ENABLED else None,
 ):
@@ -241,8 +243,7 @@ async def store_memory(
     Store a new memory.
 
     Uses the MemoryService for consistent business logic including content processing,
-    hostname tagging, and metadata enrichment. Write operations are queued to prevent
-    contention from concurrent requests.
+    hostname tagging, and metadata enrichment. Write concurrency is bounded by semaphore.
     """
     try:
         # Resolve hostname for consistent tagging (logic stays in API layer, tagging in service)
@@ -259,22 +260,14 @@ async def store_memory(
             else:
                 client_hostname = socket.gethostname()
 
-        # Enqueue write operation to prevent contention
-        # Returns a Future that will contain the result when processed
-        result_future = await write_queue.enqueue(
-            memory_service.store_memory,
-            content=request.content,
-            tags=request.tags,
-            memory_type=request.memory_type,
-            metadata=request.metadata,
-            client_hostname=client_hostname,
-        )
-
-        # Trigger queue processor immediately (not as post-response background task)
-        asyncio.create_task(write_queue.process_queue())
-
-        # Wait for the result (queue processes concurrently)
-        result = await result_future
+        async with _write_semaphore:
+            result = await memory_service.store_memory(
+                content=request.content,
+                tags=request.tags,
+                memory_type=request.memory_type,
+                metadata=request.metadata,
+                client_hostname=client_hostname,
+            )
 
         if result["success"]:
             # Return appropriate response based on MemoryService result
@@ -476,13 +469,8 @@ async def batch_store_memories(
                 }
             )
 
-        # Enqueue the entire batch as a single write operation
-        result_future = await write_queue.enqueue(
-            memory_service.batch_store_memory,
-            memories=memories_input,
-        )
-        asyncio.create_task(write_queue.process_queue())
-        result = await result_future
+        async with _write_semaphore:
+            result = await memory_service.batch_store_memory(memories=memories_input)
 
         return BatchMemoryCreateResponse(
             success=result["success"],
@@ -547,12 +535,8 @@ async def batch_update_memories(
             for item in request.memories
         ]
 
-        result_future = await write_queue.enqueue(
-            memory_service.batch_update_memory,
-            updates=updates_input,
-        )
-        asyncio.create_task(write_queue.process_queue())
-        result = await result_future
+        async with _write_semaphore:
+            result = await memory_service.batch_update_memory(updates=updates_input)
 
         return BatchMemoryUpdateResponse(
             success=result["success"],
@@ -584,14 +568,12 @@ async def batch_tag_memories(
         raise HTTPException(status_code=422, detail="At least one of add_tags or remove_tags must be provided")
 
     try:
-        result_future = await write_queue.enqueue(
-            memory_service.batch_tag_operation,
-            content_hashes=request.content_hashes,
-            add_tags=request.add_tags,
-            remove_tags=request.remove_tags,
-        )
-        asyncio.create_task(write_queue.process_queue())
-        result = await result_future
+        async with _write_semaphore:
+            result = await memory_service.batch_tag_operation(
+                content_hashes=request.content_hashes,
+                add_tags=request.add_tags,
+                remove_tags=request.remove_tags,
+            )
 
         return BatchTagOperationResponse(
             success=result["success"],
