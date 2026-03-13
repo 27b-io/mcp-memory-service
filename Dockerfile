@@ -66,8 +66,10 @@ ARG EMBEDDING_MODEL=intfloat/e5-small-v2
 ARG CUDA_ENABLED=false
 
 # Install torch + sentence-transformers on top of the base venv.
-# All sentence-transformers transitive deps (huggingface-hub, transformers, numpy,
-# tokenizers, tqdm) are already installed from builder-base, so --no-deps is safe.
+# Most sentence-transformers transitive deps (huggingface-hub, transformers, numpy,
+# tokenizers, tqdm) are already installed from builder-base. However scikit-learn,
+# scipy, and pillow are ONLY reachable through sentence-transformers (pruned in base),
+# so they must be installed explicitly before --no-deps.
 # CPU builds: install CPU torch from pytorch index first.
 # CUDA builds: install CUDA torch from default PyPI.
 RUN if [ "$CUDA_ENABLED" = "false" ]; then \
@@ -75,6 +77,7 @@ RUN if [ "$CUDA_ENABLED" = "false" ]; then \
     else \
         uv pip install torch; \
     fi && \
+    uv pip install scikit-learn scipy pillow && \
     uv pip install --no-deps sentence-transformers
 
 # Pre-download embedding model (HuggingFace - reliable)
