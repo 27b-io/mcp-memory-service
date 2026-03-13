@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import psutil
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ... import __version__
@@ -94,8 +95,6 @@ async def health_check(storage: MemoryStorage = Depends(get_storage)):
     Returns 200 OK if healthy, 503 Service Unavailable if unhealthy.
     """
     import logging
-
-    from fastapi.responses import JSONResponse
 
     logger = logging.getLogger(__name__)
 
@@ -273,6 +272,56 @@ async def sync_status(
             "sync_supported": False,
             "status": {"in_progress": False, "total": 0, "completed": 0, "finished": True, "progress_percentage": 100},
         }
+
+
+# Module-level cache for readiness result
+_readiness_cache: dict[str, Any] = {"result": None, "expires_at": 0.0}
+_READINESS_TTL = 10.0  # seconds
+
+
+@router.get("/health/ready")
+async def readiness_check():
+    """Readiness probe for k8s. Checks embedding provider health.
+
+    Result is cached for 10 seconds to avoid hammering the embedding service.
+    """
+    now = time.time()
+
+    # Return cached result if fresh
+    if _readiness_cache["result"] is not None and now < _readiness_cache["expires_at"]:
+        cached = _readiness_cache["result"]
+        if cached.get("ready"):
+            return cached
+        return JSONResponse(status_code=503, content=cached)
+
+    from ...shared_storage import get_embedding_provider
+
+    provider = get_embedding_provider()
+    if provider is None:
+        # Don't cache negative results during startup
+        return JSONResponse(status_code=503, content={"ready": False, "reason": "Embedding provider not initialized"})
+
+    # Check if provider has health_check method (HTTP adapters do, local doesn't)
+    if hasattr(provider, "health_check") and callable(provider.health_check):
+        try:
+            is_healthy = await provider.health_check()
+            if is_healthy:
+                result = {"ready": True, "provider": type(provider).__name__}
+            else:
+                result = {"ready": False, "reason": "Embedding service unhealthy", "provider": type(provider).__name__}
+        except Exception as e:
+            result = {"ready": False, "reason": str(e), "provider": type(provider).__name__}
+    else:
+        # LocalProvider — always ready once model is loaded during init
+        result = {"ready": True, "provider": type(provider).__name__}
+
+    # Cache the result
+    _readiness_cache["result"] = result
+    _readiness_cache["expires_at"] = now + _READINESS_TTL
+
+    if result["ready"]:
+        return result
+    return JSONResponse(status_code=503, content=result)
 
 
 def format_uptime(seconds: float) -> str:
