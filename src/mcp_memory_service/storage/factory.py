@@ -18,15 +18,21 @@ Storage backend factory for the MCP Memory Service.
 Creates and initializes the Qdrant storage backend.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from .base import MemoryStorage
 from .qdrant_storage import QdrantStorage
 
+if TYPE_CHECKING:
+    from ..embedding.protocol import EmbeddingProvider
+
 logger = logging.getLogger(__name__)
 
 
-async def create_storage_instance(embedding_provider: object | None = None) -> MemoryStorage:
+async def create_storage_instance(embedding_provider: EmbeddingProvider | None = None) -> MemoryStorage:
     """
     Create and initialize the Qdrant storage backend instance.
 

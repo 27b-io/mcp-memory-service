@@ -9,15 +9,20 @@ The storage is initialized once and reused by both servers, saving ~500MB RAM
 per additional server instance and avoiding race conditions.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from threading import Lock
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from .graph.client import GraphClient
 from .graph.factory import create_graph_layer
 from .graph.queue import HebbianWriteQueue
 from .storage.base import MemoryStorage
+
+if TYPE_CHECKING:
+    from .embedding.protocol import EmbeddingProvider
 from .storage.factory import create_storage_instance
 
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """Manages a singleton storage instance for shared access."""
 
-    _instance: Optional["StorageManager"] = None
+    _instance: StorageManager | None = None
     _lock: Lock = Lock()
 
     def __init__(self):
@@ -34,12 +39,12 @@ class StorageManager:
         self._storage: MemoryStorage | None = None
         self._graph_client: GraphClient | None = None
         self._write_queue: HebbianWriteQueue | None = None
-        self._embedding_provider: object | None = None
+        self._embedding_provider: EmbeddingProvider | None = None
         self._initialization_lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
 
     @classmethod
-    def get_instance(cls) -> "StorageManager":
+    def get_instance(cls) -> StorageManager:
         """Get singleton instance of StorageManager.
 
         Thread-safe singleton pattern ensures only one instance exists.
@@ -119,7 +124,7 @@ class StorageManager:
         return self._write_queue
 
     @property
-    def embedding_provider(self) -> object | None:
+    def embedding_provider(self) -> EmbeddingProvider | None:
         """Get the shared embedding provider (created during initialization)."""
         return self._embedding_provider
 
@@ -150,6 +155,7 @@ class StorageManager:
                 logger.info("Closing shared storage instance...")
                 await self._storage.close()
                 self._storage = None
+                self._embedding_provider = None
                 self._initialized = False
                 logger.info("Shared storage closed successfully")
             except Exception as e:
@@ -208,6 +214,6 @@ def get_write_queue() -> HebbianWriteQueue | None:
     return _manager.write_queue
 
 
-def get_embedding_provider() -> object | None:
+def get_embedding_provider() -> EmbeddingProvider | None:
     """Get the shared embedding provider (created during storage initialization)."""
     return _manager.embedding_provider
