@@ -14,14 +14,12 @@ async def _clear_caches():
     try:
         from mcp_memory_service.services.memory_service import (
             _cached_corpus_count,
-            _cached_embed,
             _cached_extract_keywords,
             _cached_fetch_all_tags,
         )
 
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
-        await _cached_embed.ainvalidate_cache()
         await _cached_extract_keywords.ainvalidate_cache()
     except Exception:
         logger.debug("Cache invalidation failed during setup", exc_info=True)
@@ -29,14 +27,12 @@ async def _clear_caches():
     try:
         from mcp_memory_service.services.memory_service import (
             _cached_corpus_count,
-            _cached_embed,
             _cached_extract_keywords,
             _cached_fetch_all_tags,
         )
 
         await _cached_fetch_all_tags.ainvalidate_cache()
         await _cached_corpus_count.ainvalidate_cache()
-        await _cached_embed.ainvalidate_cache()
         await _cached_extract_keywords.ainvalidate_cache()
     except Exception:
         logger.debug("Cache invalidation failed during teardown", exc_info=True)
@@ -114,41 +110,6 @@ async def test_cached_corpus_count_delegates_to_storage():
         assert mock_storage.count.await_count == 1
     finally:
         mod._storage_ref = original
-
-
-@pytest.mark.asyncio
-async def test_cached_embed_delegates_to_embed_fn():
-    """_cached_embed should call the embed function and cache the result."""
-    import mcp_memory_service.services.memory_service as mod
-
-    mock_embed = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
-
-    original_fn = mod._embed_fn
-    mod._embed_fn = mock_embed
-    try:
-        from mcp_memory_service.services.memory_service import _cached_embed
-
-        await _cached_embed.ainvalidate_cache()
-        result = await _cached_embed("test query")
-        assert result == [0.1, 0.2, 0.3]
-        mock_embed.assert_awaited_with(["test query"])
-
-        # Second call should hit cache — embed fn must NOT be called again
-        result2 = await _cached_embed("test query")
-        assert result2 == [0.1, 0.2, 0.3]
-        assert mock_embed.await_count == 1
-    finally:
-        mod._embed_fn = original_fn
-
-
-@pytest.mark.asyncio
-async def test_embed_namespace_includes_model_name():
-    """Embedding cache namespace should include model name for safety on model changes."""
-    import mcp_memory_service.services.memory_service as mod
-
-    assert hasattr(mod, "_model_name"), "_model_name should exist at module level"
-    # Model name should be set from config
-    assert len(mod._model_name) > 0, "_model_name should be non-empty"
 
 
 @pytest.mark.asyncio

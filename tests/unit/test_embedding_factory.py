@@ -50,12 +50,14 @@ class TestEmbeddingSettings:
 class TestEmbeddingFactory:
     """Test create_embedding_provider factory."""
 
-    def test_default_creates_local_provider(self):
+    def test_default_creates_cached_local_provider(self):
+        from mcp_memory_service.embedding.cached import CachedEmbeddingProvider
         from mcp_memory_service.embedding.factory import create_embedding_provider
         from mcp_memory_service.embedding.local import LocalProvider
 
         provider = create_embedding_provider()
-        assert isinstance(provider, LocalProvider)
+        assert isinstance(provider, CachedEmbeddingProvider)
+        assert isinstance(provider._inner, LocalProvider)
 
     def test_unknown_provider_raises(self):
         from mcp_memory_service.embedding.factory import create_embedding_provider
@@ -69,7 +71,8 @@ class TestEmbeddingFactory:
         with pytest.raises(ValueError, match="requires.*URL"):
             create_embedding_provider(provider="openai_compat")
 
-    def test_openai_compat_creates_adapter(self):
+    def test_openai_compat_creates_cached_adapter(self):
+        from mcp_memory_service.embedding.cached import CachedEmbeddingProvider
         from mcp_memory_service.embedding.factory import create_embedding_provider
         from mcp_memory_service.embedding.http import OpenAICompatAdapter
 
@@ -79,7 +82,8 @@ class TestEmbeddingFactory:
             model_name="test",
             dimensions=768,
         )
-        assert isinstance(provider, OpenAICompatAdapter)
+        assert isinstance(provider, CachedEmbeddingProvider)
+        assert isinstance(provider._inner, OpenAICompatAdapter)
 
     def test_http_url_plaintext_warning(self, caplog):
         import logging
@@ -96,18 +100,28 @@ class TestEmbeddingFactory:
         assert "plaintext HTTP" in caplog.text
 
     def test_explicit_model_name_override(self):
+        from mcp_memory_service.embedding.cached import CachedEmbeddingProvider
         from mcp_memory_service.embedding.factory import create_embedding_provider
         from mcp_memory_service.embedding.local import LocalProvider
 
         provider = create_embedding_provider(model_name="intfloat/e5-small-v2")
-        assert isinstance(provider, LocalProvider)
+        assert isinstance(provider, CachedEmbeddingProvider)
+        assert isinstance(provider._inner, LocalProvider)
         assert provider.model_name == "intfloat/e5-small-v2"
 
     def test_factory_reads_default_model_from_config(self):
         from mcp_memory_service.config import settings
         from mcp_memory_service.embedding.factory import create_embedding_provider
-        from mcp_memory_service.embedding.local import LocalProvider
 
         provider = create_embedding_provider()
-        assert isinstance(provider, LocalProvider)
         assert provider.model_name == settings.storage.embedding_model
+
+    def test_inner_provider_skips_cache(self):
+        """_create_inner_provider returns unwrapped provider."""
+        from mcp_memory_service.embedding.cached import CachedEmbeddingProvider
+        from mcp_memory_service.embedding.factory import _create_inner_provider
+        from mcp_memory_service.embedding.local import LocalProvider
+
+        provider = _create_inner_provider()
+        assert isinstance(provider, LocalProvider)
+        assert not isinstance(provider, CachedEmbeddingProvider)

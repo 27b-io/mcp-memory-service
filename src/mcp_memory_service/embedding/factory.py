@@ -13,10 +13,25 @@ def create_embedding_provider(
 ) -> EmbeddingProvider:
     """Create an EmbeddingProvider based on configuration.
 
+    The returned provider is always wrapped in CachedEmbeddingProvider for
+    transparent L1/L2 embedding caching via CacheKit.
+
     Args:
         provider: Override provider type. Defaults to settings.embedding.provider.
         **kwargs: Override specific settings (model_name, base_url, dimensions, etc.)
     """
+    inner = _create_inner_provider(provider, **kwargs)
+
+    from .cached import CachedEmbeddingProvider
+
+    return CachedEmbeddingProvider(inner)
+
+
+def _create_inner_provider(
+    provider: str | None = None,
+    **kwargs: object,
+) -> EmbeddingProvider:
+    """Create the raw provider without caching."""
     from ..config import settings
 
     provider_type = provider or settings.embedding.provider

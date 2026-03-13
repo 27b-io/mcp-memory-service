@@ -63,7 +63,6 @@ logger = logging.getLogger(__name__)
 # CacheKit-backed caches (L1 in-process + L2 Redis when REDIS_URL is set)
 # ---------------------------------------------------------------------------
 _storage_ref: Any = None
-_embed_fn: Any = None  # set in MemoryService.__init__
 
 try:
     import os
@@ -84,15 +83,6 @@ try:
     async def _cached_corpus_count() -> int:
         """Corpus size for adaptive alpha, cached 90s."""
         return await _storage_ref.count()
-
-    # Embedding cache — namespace includes model name to auto-invalidate on model change
-    _model_name = settings.storage.embedding_model.replace("/", "_")
-
-    @_cachekit_cache(ttl=300, namespace=f"mcp_memory_embed_{_model_name}", **_ck_kwargs)
-    async def _cached_embed(text: str) -> list[float]:
-        """Single-text embedding, cached 5min. Delegates to storage batch API."""
-        result = await _embed_fn([text])
-        return result[0]
 
     @_cachekit_cache(ttl=60, namespace="mcp_memory_keywords", **_ck_kwargs)
     async def _cached_extract_keywords(query: str) -> list[str]:
@@ -161,13 +151,6 @@ class MemoryService:
                 "MemoryService re-instantiated with a different storage backend; CacheKit caches will use the new storage."
             )
         _storage_ref = storage
-
-        # Set module-level embed function for CacheKit-cached embeddings
-        global _embed_fn  # noqa: PLW0603
-        if embedding_provider is not None:
-            _embed_fn = embedding_provider.embed_batch
-        else:
-            _embed_fn = storage.generate_embeddings_batch
 
     def _init_three_tier(self) -> None:
         """Initialize three-tier memory if enabled in config.
@@ -1082,38 +1065,15 @@ class MemoryService:
         return set(await self.storage.get_all_tags())
 
     async def _get_embeddings(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings, using per-text cache when available.
+        """Generate embeddings via the embedding provider (includes caching).
 
-        Cache hits are served from CacheKit (L1/L2). Misses fall through to
-        a single batched forward pass for efficiency.
+        When an EmbeddingProvider is injected (the normal path), caching is
+        handled transparently by the CachedEmbeddingProvider wrapper.
         """
-        if not _CACHEKIT_AVAILABLE or not texts:
-            if self._embedding_provider is not None:
-                return await self._embedding_provider.embed_batch(texts)
-            return await self.storage.generate_embeddings_batch(texts)
-
-        results: list[list[float] | None] = [None] * len(texts)
-        miss_indices: list[int] = []
-
-        for i, text in enumerate(texts):
-            try:
-                results[i] = await _cached_embed(text)
-            except Exception:
-                # Cache infra broken — skip remaining texts, batch all misses
-                miss_indices.extend(range(i, len(texts)))
-                break
-
-        # Batch-embed all cache misses in one forward pass
-        if miss_indices:
-            miss_texts = [texts[i] for i in miss_indices]
-            if self._embedding_provider is not None:
-                miss_embeddings = await self._embedding_provider.embed_batch(miss_texts)
-            else:
-                miss_embeddings = await self.storage.generate_embeddings_batch(miss_texts)
-            for idx, emb in zip(miss_indices, miss_embeddings):
-                results[idx] = emb
-
-        return results  # type: ignore[return-value]
+        if self._embedding_provider is not None:
+            return await self._embedding_provider.embed_batch(texts)
+        # Backward compat: no provider injected
+        return await self.storage.generate_embeddings_batch(texts)
 
     async def _retrieve_vector_only(
         self,
