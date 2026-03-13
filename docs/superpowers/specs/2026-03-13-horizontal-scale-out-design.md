@@ -102,7 +102,7 @@ class CachedEmbeddingProvider:
 ```
 
 - Consolidates caching from `memory_service.py._get_embeddings()` into the provider layer
-- Cache namespace includes `model_name` — model change = new namespace = automatic invalidation
+- Cache namespace includes `model_name` and `dimensions` (e.g., `mcp_memory_embed_nomic_embed_text_v1.5_768`) — model or dimension change = new namespace = automatic invalidation
 - TTL: 86400s (24h). Embeddings are deterministic for a given model+text. Redis `maxmemory-policy allkeys-lru` handles eviction.
 - Existing CacheKit wiring for tags, corpus count, and keywords stays in `memory_service.py` (unchanged)
 
