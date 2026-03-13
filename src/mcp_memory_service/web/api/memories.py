@@ -445,7 +445,7 @@ async def batch_store_memories(
     Store multiple memories transactionally (max 100).
 
     All memories are stored or none are (rollback on partial failure).
-    The entire batch is enqueued as a single write operation to prevent queue exhaustion.
+    Writes are bounded by _write_semaphore to limit concurrent store operations.
     """
     try:
         # Resolve hostname once for the batch
