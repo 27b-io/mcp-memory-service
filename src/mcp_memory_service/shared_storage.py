@@ -95,6 +95,18 @@ class StorageManager:
                 embedding_provider=self._embedding_provider,
             )
 
+            # Verify embedding dimensions match storage collection
+            if hasattr(self._storage, "_vector_size") and self._storage._vector_size is not None:
+                provider_dims = self._embedding_provider.dimensions
+                storage_dims = self._storage._vector_size
+                if provider_dims != storage_dims:
+                    raise ValueError(
+                        f"Embedding provider dimensions ({provider_dims}) don't match "
+                        f"Qdrant collection dimensions ({storage_dims}). "
+                        f"Provider: {self._embedding_provider.model_name}, "
+                        f"Collection: {getattr(self._storage, 'collection_name', 'unknown')}"
+                    )
+
             # Initialize graph layer if enabled
             try:
                 graph_result = await create_graph_layer()

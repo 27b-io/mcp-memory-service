@@ -1,5 +1,8 @@
 """Tests for embedding provider factory and configuration."""
 
+import asyncio
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 
@@ -125,3 +128,81 @@ class TestEmbeddingFactory:
         provider = _create_inner_provider()
         assert isinstance(provider, LocalProvider)
         assert not isinstance(provider, CachedEmbeddingProvider)
+
+
+class TestDimensionCheck:
+    """Test embedding dimension mismatch detection at startup."""
+
+    @pytest.mark.asyncio
+    async def test_dimension_mismatch_fails_fast(self):
+        """Provider with wrong dimensions vs storage raises at startup."""
+        from mcp_memory_service.shared_storage import StorageManager
+
+        manager = StorageManager.__new__(StorageManager)
+        manager._storage = None
+        manager._graph_client = None
+        manager._write_queue = None
+        manager._embedding_provider = None
+        manager._initialization_lock = asyncio.Lock()
+        manager._initialized = False
+
+        # Mock provider with 384 dims
+        mock_provider = AsyncMock()
+        mock_provider.dimensions = 384
+        mock_provider.model_name = "test-model"
+
+        # Mock storage with 768 dims (mismatch!)
+        mock_storage = AsyncMock()
+        mock_storage._vector_size = 768
+        mock_storage.collection_name = "memories"
+        mock_storage.initialize = AsyncMock()
+
+        with (
+            patch(
+                "mcp_memory_service.embedding.factory.create_embedding_provider",
+                return_value=mock_provider,
+            ),
+            patch(
+                "mcp_memory_service.shared_storage.create_storage_instance",
+                return_value=mock_storage,
+            ),
+            patch("mcp_memory_service.shared_storage.create_graph_layer", return_value=None),
+        ):
+            with pytest.raises(ValueError, match="dimensions.*384.*don't match.*768"):
+                await manager.get_storage()
+
+    @pytest.mark.asyncio
+    async def test_dimension_match_succeeds(self):
+        """Matching dimensions proceed without error."""
+        from mcp_memory_service.shared_storage import StorageManager
+
+        manager = StorageManager.__new__(StorageManager)
+        manager._storage = None
+        manager._graph_client = None
+        manager._write_queue = None
+        manager._embedding_provider = None
+        manager._initialization_lock = asyncio.Lock()
+        manager._initialized = False
+
+        mock_provider = AsyncMock()
+        mock_provider.dimensions = 768
+        mock_provider.model_name = "test-model"
+
+        mock_storage = AsyncMock()
+        mock_storage._vector_size = 768
+        mock_storage.collection_name = "memories"
+        mock_storage.initialize = AsyncMock()
+
+        with (
+            patch(
+                "mcp_memory_service.embedding.factory.create_embedding_provider",
+                return_value=mock_provider,
+            ),
+            patch(
+                "mcp_memory_service.shared_storage.create_storage_instance",
+                return_value=mock_storage,
+            ),
+            patch("mcp_memory_service.shared_storage.create_graph_layer", return_value=None),
+        ):
+            result = await manager.get_storage()
+            assert result is mock_storage
