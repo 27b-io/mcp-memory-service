@@ -29,7 +29,6 @@ from ...models.memory import Memory
 from ...services.memory_service import MemoryService
 from ...storage.base import MemoryStorage
 from ..dependencies import get_memory_service, get_storage
-from ..sse import create_memory_deleted_event, create_memory_stored_event, sse_manager
 from ..write_queue import write_queue
 
 # OAuth authentication imports (conditional)
@@ -278,32 +277,6 @@ async def store_memory(
         result = await result_future
 
         if result["success"]:
-            # Broadcast SSE event for successful memory storage
-            try:
-                # Handle both single memory and chunked responses
-                if "memory" in result:
-                    memory_data = {
-                        "content_hash": result["memory"]["content_hash"],
-                        "content": result["memory"]["content"],
-                        "tags": result["memory"]["tags"],
-                        "memory_type": result["memory"]["memory_type"],
-                    }
-                else:
-                    # For chunked responses, use the first chunk's data
-                    first_memory = result["memories"][0]
-                    memory_data = {
-                        "content_hash": first_memory["content_hash"],
-                        "content": first_memory["content"],
-                        "tags": first_memory["tags"],
-                        "memory_type": first_memory["memory_type"],
-                    }
-
-                event = create_memory_stored_event(memory_data)
-                await sse_manager.broadcast_event(event)
-            except Exception as e:
-                # Don't fail the request if SSE broadcasting fails
-                logger.warning(f"Failed to broadcast memory_stored event: {e}")
-
             # Return appropriate response based on MemoryService result
             if "memory" in result:
                 # Single memory response
@@ -399,14 +372,6 @@ async def delete_memory(
     """
     try:
         success, message = await storage.delete(content_hash)
-
-        # Broadcast SSE event for memory deletion
-        try:
-            event = create_memory_deleted_event(content_hash, success)
-            await sse_manager.broadcast_event(event)
-        except Exception as e:
-            # Don't fail the request if SSE broadcasting fails
-            logger.warning(f"Failed to broadcast memory_deleted event: {e}")
 
         return MemoryDeleteResponse(success=success, message=message, content_hash=content_hash)
 
@@ -519,16 +484,6 @@ async def batch_store_memories(
         asyncio.create_task(write_queue.process_queue())
         result = await result_future
 
-        # Broadcast SSE events for each successfully created memory
-        if result["success"]:
-            for item in result["results"]:
-                if item["success"] and item.get("content_hash"):
-                    try:
-                        event = create_memory_stored_event({"content_hash": item["content_hash"]})
-                        await sse_manager.broadcast_event(event)
-                    except Exception as e:
-                        logger.warning(f"Failed to broadcast batch memory_stored event: {e}")
-
         return BatchMemoryCreateResponse(
             success=result["success"],
             created=result["created"],
@@ -557,15 +512,6 @@ async def batch_delete_memories(
     """
     try:
         result = await memory_service.batch_delete_memory(request.content_hashes)
-
-        # Broadcast SSE events for deletions
-        for item in result["results"]:
-            if item["success"] and item.get("content_hash"):
-                try:
-                    event = create_memory_deleted_event(item["content_hash"], success=True)
-                    await sse_manager.broadcast_event(event)
-                except Exception as e:
-                    logger.warning(f"Failed to broadcast batch memory_deleted event: {e}")
 
         return BatchMemoryDeleteResponse(
             success=result["success"],
