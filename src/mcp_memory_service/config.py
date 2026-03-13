@@ -24,6 +24,7 @@ import os
 import secrets
 import threading
 import time
+from typing import Literal
 
 from platformdirs import user_data_dir
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -868,10 +869,13 @@ class EmbeddingSettings(BaseSettings):
         env_prefix="MCP_EMBEDDING_", env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    provider: str = Field(default="local", description="Embedding provider type (local | openai_compat)")
+    provider: Literal["local", "openai_compat"] = Field(
+        default="local", description="Embedding provider type (local | openai_compat)"
+    )
     url: str | None = Field(default=None, description="Base URL for HTTP embedding provider")
-    timeout: int = Field(default=30, description="Request timeout in seconds")
-    max_batch: int = Field(default=64, description="Max texts per batch request")
+    timeout: int = Field(default=30, ge=1, le=300, description="Request timeout in seconds")
+    max_batch: int = Field(default=64, ge=1, le=1024, description="Max texts per batch request")
+    dimensions: int | None = Field(default=None, description="Embedding dimensions (auto-detected from model if None)")
     tls_verify: bool = Field(default=True, description="TLS certificate verification for HTTP provider")
     api_key: SecretStr | None = Field(default=None, description="API key for managed providers")
     prompt_name_map: dict[str, dict[str, str]] | None = Field(default=None, description="Custom prompt name mappings")
