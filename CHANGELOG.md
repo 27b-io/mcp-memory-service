@@ -8,6 +8,13 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.21.1](https://github.com/27b-io/mcp-memory-service/compare/v11.21.0...v11.21.1) (2026-03-14)
+
+
+### Bug Fixes
+
+* **docker:** publish slim image variant in release workflow ([#177](https://github.com/27b-io/mcp-memory-service/issues/177)) ([7f1de93](https://github.com/27b-io/mcp-memory-service/commit/7f1de93c504d493a6bcef19bddd03dcb982af745))
+
 ## [11.21.0](https://github.com/27b-io/mcp-memory-service/compare/v11.20.0...v11.21.0) (2026-03-13)
 
 
