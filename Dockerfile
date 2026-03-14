@@ -3,7 +3,7 @@
 #
 # Targets:
 #   full (default) - Backward-compatible, includes torch + sentence-transformers (~1.2GB)
-#   api            - Thin image, no torch/sentence-transformers (~200MB), uses HTTP embedding provider
+#   slim           - Thin image, no torch/sentence-transformers (~200MB), uses HTTP embedding provider
 #
 # Build args:
 #   CUDA_ENABLED=false (default) - CPU-only build for full target
@@ -89,9 +89,9 @@ RUN rm -rf /root/.cache/pip /root/.cache/uv && \
     find .venv -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
 # =============================================================================
-# Stage 3: api — thin runtime, no torch/sentence-transformers
+# Stage 3: slim — thin runtime, no torch/sentence-transformers
 # =============================================================================
-FROM python:3.12-slim AS api
+FROM python:3.12-slim AS slim
 
 WORKDIR /app
 

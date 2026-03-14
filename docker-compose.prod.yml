@@ -1,10 +1,11 @@
-# Development deployment: API + External Embedding + Qdrant
+# Production deployment: API + External Embedding + Qdrant
 #
-# This deploys the thin API image (no torch/sentence-transformers, ~200MB)
-# with a separate HuggingFace TEI embedding service and Qdrant backend.
+# Thin API image (no torch/sentence-transformers, ~200MB) with a separate
+# HuggingFace TEI embedding service and Qdrant backend. Each component
+# scales independently.
 #
 # Usage:
-#   docker compose -f docker-compose.dev.yml up
+#   docker compose -f docker-compose.prod.yml up
 #   curl http://localhost:8000/api/health
 #
 # The API service is the only publicly-exposed endpoint (port 8000).
@@ -60,7 +61,7 @@ services:
   api:
     build:
       context: .
-      target: api
+      target: slim
     # Only expose the API endpoint to host
     ports:
       - "8000:8000"
