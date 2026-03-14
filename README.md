@@ -318,7 +318,7 @@ src/mcp_memory_service/
 ### Running Tests
 
 ```bash
-# Full suite (869 tests)
+# Full suite
 uv run pytest tests/
 
 # Fast (skip slow integration tests)
