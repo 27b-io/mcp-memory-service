@@ -166,6 +166,40 @@ Fixed race condition in worker pool|bugfix,concurrency|{}|2026-01-14T09:00:00Z|2
 
 ~83% fewer tokens than equivalent JSON. The format spec is available as an MCP resource at `toon://format/documentation`.
 
+## Docker Image Variants
+
+The Dockerfile produces two targets:
+
+| Target | Size | Embedding | Use case |
+|--------|------|-----------|----------|
+| **full** (default) | ~1.2 GB | In-process SentenceTransformer | Single-node, `docker compose up` |
+| **slim** | ~200 MB | External (TEI/vLLM/Ollama) | Scale-out, separate embedding service |
+
+`docker build .` produces the `full` image (backward compatible). For the slim image:
+
+```bash
+# Build locally
+docker build --target slim -t mcp-memory:slim .
+
+# Or pull from GHCR
+docker pull ghcr.io/27b-io/mcp-memory-service:latest-slim
+```
+
+### Split Deployment (API + External Embedding)
+
+For production scale-out, use `docker-compose.prod.yml` which deploys a thin API container with a separate HuggingFace TEI embedding service:
+
+```bash
+docker compose -f docker-compose.prod.yml up
+```
+
+This gives you:
+- **api** — Thin MCP service (~200MB, <2s cold start, no GPU needed)
+- **embedding** — HuggingFace TEI serving the embedding model
+- **qdrant** — Vector database
+
+Only the API port (8000) is exposed to the host. Backend services communicate on the internal Docker network.
+
 ## Configuration
 
 All config via environment variables. Pydantic-settings under the hood — type-safe, validated, with sensible defaults.
@@ -179,6 +213,18 @@ All config via environment variables. Pydantic-settings under the hood — type-
 | `MCP_MEMORY_USE_ONNX` | `false` | ONNX runtime for CPU optimization |
 | `MCP_QDRANT_URL` | — | Remote Qdrant server (omit for embedded mode) |
 | `MCP_QDRANT_STORAGE_PATH` | Platform default | Local Qdrant data path |
+
+### Embedding Provider
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_EMBEDDING_PROVIDER` | `local` | `local` (in-process) or `openai_compat` (HTTP) |
+| `MCP_EMBEDDING_URL` | — | Base URL for HTTP embedding service (required for `openai_compat`) |
+| `MCP_EMBEDDING_TIMEOUT` | `30` | Request timeout in seconds (1-300) |
+| `MCP_EMBEDDING_MAX_BATCH` | `64` | Max texts per batch request (1-1024) |
+| `MCP_EMBEDDING_DIMENSIONS` | auto-detect | Override embedding dimensions |
+| `MCP_EMBEDDING_TLS_VERIFY` | `true` | TLS certificate verification for HTTP provider |
+| `MCP_EMBEDDING_API_KEY` | — | API key for managed embedding providers |
 
 ### Cognitive Features
 
@@ -241,6 +287,12 @@ src/mcp_memory_service/
 ├── memory_tiers.py            # Cowan's three-tier model
 ├── services/
 │   └── memory_service.py      # Core business logic
+├── embedding/
+│   ├── protocol.py            # EmbeddingProvider protocol
+│   ├── local.py               # In-process SentenceTransformer
+│   ├── http.py                # OpenAI-compatible HTTP adapter
+│   ├── cached.py              # CacheKit L1/L2 wrapper
+│   └── factory.py             # Provider factory
 ├── storage/
 │   ├── base.py                # Storage protocol (ABC)
 │   ├── qdrant_storage.py      # Qdrant backend
@@ -266,7 +318,7 @@ src/mcp_memory_service/
 ### Running Tests
 
 ```bash
-# Full suite (636 tests)
+# Full suite
 uv run pytest tests/
 
 # Fast (skip slow integration tests)

@@ -122,15 +122,15 @@ jobs:
             CUDA_ENABLED=false
           cache-from: type=registry,ref=ghcr.io/27b-io/mcp-memory-service:cache-cpu
 
-      - name: Build image (api variant)
+      - name: Build image (slim variant)
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
-          target: api
+          target: slim
           push: false
           load: true
-          tags: mcp-memory:test-api
-          cache-from: type=registry,ref=ghcr.io/27b-io/mcp-memory-service:cache-api
+          tags: mcp-memory:test-slim
+          cache-from: type=registry,ref=ghcr.io/27b-io/mcp-memory-service:cache-slim
 
       - name: Test container starts
         run: |
