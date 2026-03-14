@@ -77,7 +77,6 @@ The `docker-compose.yml` sets these for the memory service:
 ```yaml
 environment:
   # Storage
-  - MCP_MEMORY_STORAGE_BACKEND=qdrant
   - MCP_MEMORY_EMBEDDING_MODEL=intfloat/e5-small-v2
   - MCP_QDRANT_URL=http://qdrant:6333
 

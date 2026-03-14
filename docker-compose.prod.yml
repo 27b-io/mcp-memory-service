@@ -74,11 +74,10 @@ services:
       # Embedding configuration
       MCP_EMBEDDING_PROVIDER: openai_compat
       MCP_EMBEDDING_URL: http://embedding:8080
-      MCP_EMBEDDING_MODEL: nomic-ai/nomic-embed-text-v1.5
+      MCP_MEMORY_EMBEDDING_MODEL: nomic-ai/nomic-embed-text-v1.5
       MCP_EMBEDDING_DIMENSIONS: "768"
 
       # Storage backend
-      MCP_MEMORY_STORAGE_BACKEND: qdrant
       MCP_QDRANT_URL: http://qdrant:6333
 
       # HTTP server

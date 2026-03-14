@@ -214,8 +214,7 @@ All config via environment variables. Pydantic-settings under the hood — type-
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MCP_MEMORY_STORAGE_BACKEND` | `qdrant` | Storage backend |
-| `MCP_MEMORY_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | HuggingFace model (768-dim, 8K context) |
+| `MCP_MEMORY_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | HuggingFace model (768-dim, 8K context). Docker images default to `intfloat/e5-small-v2`. |
 | `MCP_MEMORY_USE_ONNX` | `false` | ONNX runtime for CPU optimization |
 | `MCP_QDRANT_URL` | — | Remote Qdrant server (omit for embedded mode) |
 | `MCP_QDRANT_STORAGE_PATH` | Platform default | Local Qdrant data path |
@@ -268,6 +267,15 @@ All config via environment variables. Pydantic-settings under the hood — type-
 | `MCP_HTTP_PORT` | `8000` | Listen port |
 | `MCP_HTTP_HOST` | `0.0.0.0` | Bind address |
 
+### Knowledge Graph (FalkorDB)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_FALKORDB_ENABLED` | `false` | Enable FalkorDB graph layer |
+| `MCP_FALKORDB_HOST` | `localhost` | FalkorDB host (Redis protocol) |
+| `MCP_FALKORDB_PORT` | `6379` | FalkorDB port |
+| `MCP_FALKORDB_PASSWORD` | — | FalkorDB/Redis password |
+
 ### Summary Generation
 
 | Variable | Default | Description |
@@ -288,8 +296,12 @@ Qdrant runs in embedded mode (zero config) or connects to a remote server via `M
 ```text
 src/mcp_memory_service/
 ├── mcp_server.py              # 9 MCP tools (+ optional three-tier)
+├── unified_server.py          # HTTP + MCP dual-mode server
 ├── config.py                  # Pydantic settings
 ├── memory_tiers.py            # Cowan's three-tier model
+├── cli/                       # CLI entry point
+├── web/                       # HTTP API layer (FastAPI)
+│   └── api/                   # Route modules
 ├── services/
 │   └── memory_service.py      # Core business logic
 ├── embedding/
@@ -308,7 +320,7 @@ src/mcp_memory_service/
 │   └── queue.py               # Async write queue
 ├── formatters/
 │   └── toon.py                # TOON encoder
-├── utils/
+├── utils/                     # Cognitive features + helpers
 │   ├── emotional_analysis.py  # Sentiment detection
 │   ├── interference.py        # Contradiction signals
 │   ├── salience.py            # Importance scoring
@@ -316,7 +328,7 @@ src/mcp_memory_service/
 │   ├── hybrid_search.py       # RRF + adaptive alpha
 │   ├── content_splitter.py    # Auto-chunking
 │   └── summariser.py          # LLM/extractive summaries
-└── models/
+└── models/                    # Pydantic v2 models
     └── memory.py              # Memory dataclass
 ```
 
@@ -342,7 +354,7 @@ uv run ruff format --check src/ tests/
 | intfloat/e5-small-v2 | 384 | Speed over accuracy |
 | intfloat/e5-base-v2 | 768 | Previous default |
 | intfloat/e5-large-v2 | 1024 | Best quality |
-| Snowflake/snowflake-arctic-embed-m-v2.0 | 768 | Alternative |
+| Snowflake/snowflake-arctic-embed-m-v2.0 | 768 | Recommended. Instruction-tuned, strong retrieval. |
 
 Switching models requires re-embedding existing memories.
 

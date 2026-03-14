@@ -67,7 +67,6 @@ services:
       - "8001:8001"  # MCP streamable-http
     environment:
       # Storage
-      - MCP_MEMORY_STORAGE_BACKEND=qdrant
       - MCP_MEMORY_EMBEDDING_MODEL=intfloat/e5-small-v2
       - MCP_QDRANT_URL=http://qdrant:6333
 
