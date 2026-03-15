@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-MCP Memory Service - Semantic memory server for Claude with SQLite-vec and Qdrant backends.
+MCP Memory Service - Semantic memory server for Claude with Qdrant vector search and FalkorDB knowledge graph.
 
 ## Quick Start
 
@@ -15,28 +15,44 @@ pytest tests/
 uv run memory status
 ```
 
-## Storage Backends
+## Storage Backend
 
 | Backend | Performance | Use Case |
 |---------|-------------|----------|
-| **SQLite-Vec** | 5ms read | Local dev, single-node (DEFAULT) |
-| **Qdrant** | 5ms read | Production, ARM64-optimized |
+| **Qdrant** | 5ms read | Embedded (default) or remote server |
 
-Backend selection via env: `MCP_MEMORY_STORAGE_BACKEND=sqlite_vec` (or `qdrant`)
+Remote Qdrant via env: `MCP_QDRANT_URL=http://your-qdrant:6333`
 
 ## Architecture
 
-```
+```text
 mcp_memory_service/
-├── mcp_server.py         # FastMCP 2.0 MCP protocol adapter
+├── mcp_server.py         # FastMCP 2.0 — 9 MCP tools
 ├── unified_server.py     # HTTP + MCP dual-mode server
 ├── services/
-│   └── memory_service.py # Core business logic
+│   └── memory_service.py # Core business logic (~3000 lines)
 ├── storage/
 │   ├── base.py           # MemoryStorage ABC
-│   ├── sqlite_vec.py     # SQLite-vec backend
-│   └── qdrant_storage.py # Qdrant backend
-├── config.py             # pydantic-settings configuration
+│   ├── qdrant_storage.py # Qdrant backend
+│   └── factory.py        # Backend factory
+├── graph/
+│   ├── client.py         # FalkorDB graph operations
+│   ├── schema.py         # Cypher schema
+│   └── queue.py          # Async write queue (CQRS)
+├── models/
+│   └── memory.py         # Pydantic v2 Memory model
+├── formatters/
+│   └── toon.py           # TOON pipe-delimited encoder
+├── utils/
+│   ├── emotional_analysis.py
+│   ├── interference.py
+│   ├── salience.py
+│   ├── spaced_repetition.py
+│   ├── hybrid_search.py
+│   ├── content_splitter.py
+│   ├── query_intent.py
+│   └── summariser.py
+├── config.py             # pydantic-settings (23 settings classes)
 └── cli/main.py           # CLI entry point
 ```
 
@@ -46,7 +62,7 @@ Default: `nomic-ai/nomic-embed-text-v1.5` (768-dim, 8K context, ~62 MTEB avg)
 
 | Model | Dims | Use Case |
 |-------|------|----------|
-| **nomic-ai/nomic-embed-text-v1.5** ⭐ | 768 | Default (best balance, 8K context) |
+| **nomic-ai/nomic-embed-text-v1.5** | 768 | Default (best balance, 8K context) |
 | **intfloat/e5-base-v2** | 768 | Alternative (shorter context) |
 | **intfloat/e5-small-v2** | 384 | Speed > accuracy |
 | **intfloat/e5-large-v2** | 1024 | Best quality |
@@ -54,17 +70,22 @@ Default: `nomic-ai/nomic-embed-text-v1.5` (768-dim, 8K context, ~62 MTEB avg)
 ## Environment Variables
 
 ```bash
-# Backend selection
-export MCP_MEMORY_STORAGE_BACKEND=sqlite_vec  # sqlite_vec|qdrant
+# Remote Qdrant (omit for embedded mode)
+export MCP_QDRANT_URL=http://qdrant:6333
 
 # HTTP server
+export MCP_TRANSPORT_MODE=streamable-http  # or stdio
+export MCP_SERVER_PORT=8001
 export MCP_HTTP_ENABLED=true
 export MCP_HTTP_PORT=8000
-export MCP_HTTP_HOST=0.0.0.0
+
+# Knowledge graph (optional)
+export MCP_FALKORDB_ENABLED=true
+export MCP_FALKORDB_HOST=localhost
+export MCP_FALKORDB_PORT=6379
 
 # Security
 export MCP_MEMORY_API_KEY="your-api-key"  # Optional API key auth
-export MCP_MEMORY_CORS_ORIGINS='[]'       # Default: no CORS
 
 # Debug
 export MCP_MEMORY_EXPOSE_DEBUG_TOOLS=false
@@ -72,7 +93,7 @@ export MCP_MEMORY_EXPOSE_DEBUG_TOOLS=false
 
 ## Development
 
-- Storage backends implement `BaseStorage` Protocol (structural typing)
+- Storage backends implement `MemoryStorage` ABC
 - All features require tests
 - Version updates: `__init__.py` → `pyproject.toml` → `uv lock`
 - Config uses pydantic-settings with thread-safe lazy loading
@@ -85,4 +106,5 @@ export MCP_MEMORY_EXPOSE_DEBUG_TOOLS=false
 
 ## Documentation
 
-- **Wiki**: https://github.com/doobidoo/mcp-memory-service/wiki
+- **Configuration reference**: `docs/configuration.md`
+- **Deployment guide**: `docs/deployment.md`

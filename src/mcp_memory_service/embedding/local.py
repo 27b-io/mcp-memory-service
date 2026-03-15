@@ -17,7 +17,7 @@ except ImportError:
 
 # Prompt name mappings for instruction-tuned models
 _PROMPT_PREFIXES: dict[str, dict[str, str]] = {
-    "query": {"nomic": "search_query: ", "e5": "query: "},
+    "query": {"nomic": "search_query: ", "e5": "query: ", "arctic": "query: "},
     "passage": {"nomic": "search_document: ", "e5": "passage: "},
 }
 

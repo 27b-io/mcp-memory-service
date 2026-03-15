@@ -61,9 +61,11 @@ uv run memory server
   Claude Desktop         │        MCP Memory Service       │
   Claude Code     ──MCP──│                                 │
   VS Code / Cursor       │  ┌───────────────────────────┐  │
-  Any MCP Client         │  │     5 MCP Tools            │  │
+  Any MCP Client         │  │     9 MCP Tools            │  │
                          │  │  store · search · delete   │  │
                          │  │  health · relation         │  │
+                         │  │  supersede · contradictions │  │
+                         │  │  find_dupes · merge_dupes  │  │
                          │  └─────────┬─────────────────┘  │
                          │            │                     │
                          │  ┌─────────▼─────────────────┐  │
@@ -88,7 +90,7 @@ Every memory stored gets vectorized, emotionally tagged, checked for contradicti
 
 ## MCP Tools
 
-Five tools. That's it. Down from 16 in earlier versions — because your LLM's context window isn't free real estate.
+Nine tools. Down from 16 in earlier versions — because your LLM's context window isn't free real estate.
 
 | Tool | What it does |
 |------|-------------|
@@ -97,6 +99,10 @@ Five tools. That's it. Down from 16 in earlier versions — because your LLM's c
 | **delete_memory** | Permanently remove a memory by content hash. |
 | **check_database_health** | Backend status, memory count, storage stats. |
 | **relation** | Create, query, or delete typed edges in the knowledge graph (RELATES_TO, PRECEDES, CONTRADICTS). |
+| **memory_supersede** | Mark a memory as superseded by a newer one. Old memory excluded from search, audit trail preserved. |
+| **memory_contradictions** | List unresolved contradiction pairs for review. |
+| **find_duplicates** | Scan memories for near-duplicates using embedding cosine similarity. Configurable threshold and canonical selection strategy. |
+| **merge_duplicates** | Supersede duplicate memories in favour of a canonical one. Non-destructive — originals kept for audit. |
 
 ### Search Modes
 
@@ -208,8 +214,7 @@ All config via environment variables. Pydantic-settings under the hood — type-
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MCP_MEMORY_STORAGE_BACKEND` | `qdrant` | `qdrant` or `sqlite_vec` |
-| `MCP_MEMORY_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | HuggingFace model (768-dim, 8K context) |
+| `MCP_MEMORY_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | HuggingFace model (768-dim, 8K context). Docker images default to `intfloat/e5-small-v2`. |
 | `MCP_MEMORY_USE_ONNX` | `false` | ONNX runtime for CPU optimization |
 | `MCP_QDRANT_URL` | — | Remote Qdrant server (omit for embedded mode) |
 | `MCP_QDRANT_STORAGE_PATH` | Platform default | Local Qdrant data path |
@@ -262,6 +267,15 @@ All config via environment variables. Pydantic-settings under the hood — type-
 | `MCP_HTTP_PORT` | `8000` | Listen port |
 | `MCP_HTTP_HOST` | `0.0.0.0` | Bind address |
 
+### Knowledge Graph (FalkorDB)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_FALKORDB_ENABLED` | `false` | Enable FalkorDB graph layer |
+| `MCP_FALKORDB_HOST` | `localhost` | FalkorDB host (Redis protocol) |
+| `MCP_FALKORDB_PORT` | `6379` | FalkorDB port |
+| `MCP_FALKORDB_PASSWORD` | — | FalkorDB/Redis password |
+
 ### Summary Generation
 
 | Variable | Default | Description |
@@ -273,18 +287,21 @@ All config via environment variables. Pydantic-settings under the hood — type-
 
 | Backend | Best for | Notes |
 |---------|----------|-------|
-| **Qdrant** | Production | HNSW index, scalar quantization option (32x memory savings), embedded or remote mode. Default. |
-| **SQLite-vec** | Lightweight / Docker | CPU-only, zero external dependencies. Docker images default to this via env var. |
+| **Qdrant** | All deployments | HNSW index, scalar quantization option, embedded or remote mode. Default and only backend. |
 
-Both implement the `MemoryStorage` protocol. Swap with one env var.
+Qdrant runs in embedded mode (zero config) or connects to a remote server via `MCP_QDRANT_URL`.
 
 ## Development
 
 ```text
 src/mcp_memory_service/
-├── mcp_server.py              # 5 MCP tools (+ optional three-tier)
+├── mcp_server.py              # 9 MCP tools (+ optional three-tier)
+├── unified_server.py          # HTTP + MCP dual-mode server
 ├── config.py                  # Pydantic settings
 ├── memory_tiers.py            # Cowan's three-tier model
+├── cli/                       # CLI entry point
+├── web/                       # HTTP API layer (FastAPI)
+│   └── api/                   # Route modules
 ├── services/
 │   └── memory_service.py      # Core business logic
 ├── embedding/
@@ -303,7 +320,7 @@ src/mcp_memory_service/
 │   └── queue.py               # Async write queue
 ├── formatters/
 │   └── toon.py                # TOON encoder
-├── utils/
+├── utils/                     # Cognitive features + helpers
 │   ├── emotional_analysis.py  # Sentiment detection
 │   ├── interference.py        # Contradiction signals
 │   ├── salience.py            # Importance scoring
@@ -311,7 +328,7 @@ src/mcp_memory_service/
 │   ├── hybrid_search.py       # RRF + adaptive alpha
 │   ├── content_splitter.py    # Auto-chunking
 │   └── summariser.py          # LLM/extractive summaries
-└── models/
+└── models/                    # Pydantic v2 models
     └── memory.py              # Memory dataclass
 ```
 
@@ -337,9 +354,9 @@ uv run ruff format --check src/ tests/
 | intfloat/e5-small-v2 | 384 | Speed over accuracy |
 | intfloat/e5-base-v2 | 768 | Previous default |
 | intfloat/e5-large-v2 | 1024 | Best quality |
-| Snowflake/snowflake-arctic-embed-m-v2.0 | 768 | Alternative |
+| Snowflake/snowflake-arctic-embed-m-v2.0 | 768 | Recommended. Instruction-tuned, strong retrieval. |
 
-Switching models requires re-embedding existing memories. There's a migration script for that: `scripts/migrate_embeddings.py`.
+Switching models requires re-embedding existing memories.
 
 ## License
 
