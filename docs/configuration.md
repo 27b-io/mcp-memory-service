@@ -313,7 +313,7 @@ Controls how the ~50-token memory summaries are generated. Defaults to extractiv
 | `MCP_SUMMARY_MAX_TOKENS` | `50` | Maximum output tokens for LLM-generated summaries (10–200) |
 | `MCP_SUMMARY_TIMEOUT_SECONDS` | `5.0` | HTTP timeout for LLM API calls (1.0–30.0) |
 
-**Auto-detect logic (`mode=null`):** Uses LLM mode if Anthropic API key is set or a non-default base URL is configured (proxy), or if Gemini API key is set. Otherwise falls back to extractive.
+**Auto-detect logic (`mode=null`):** Uses LLM mode if Anthropic API key is set or a non-default base URL is configured (proxy), or if Gemini API key is set. Otherwise, falls back to extractive.
 
 **Anthropic provider:**
 

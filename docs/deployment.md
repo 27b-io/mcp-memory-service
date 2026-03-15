@@ -8,7 +8,7 @@ Run with embedded Qdrant — no external dependencies:
 docker run -d \
   -p 8001:8001 \
   -v memory-data:/app/data \
-  -e MCP_TRANSPORT_MODE=http \
+  -e MCP_TRANSPORT_MODE=streamable-http \
   -e MCP_SERVER_PORT=8001 \
   ghcr.io/27b-io/mcp-memory-service:latest
 ```
@@ -149,9 +149,13 @@ spec:
         - containerPort: 8001
         env:
         - name: MCP_TRANSPORT_MODE
-          value: "http"
+          value: "streamable-http"
         - name: MCP_SERVER_PORT
           value: "8001"
+        - name: MCP_HTTP_ENABLED
+          value: "true"
+        - name: MCP_HTTP_PORT
+          value: "8000"
         - name: MCP_QDRANT_URL
           value: "http://qdrant:6333"
         livenessProbe:
@@ -186,7 +190,7 @@ Add to the container env:
 
 ### HTTP Health Endpoint
 
-```
+```text
 GET /api/health
 ```
 

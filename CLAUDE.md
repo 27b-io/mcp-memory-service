@@ -25,7 +25,7 @@ Remote Qdrant via env: `MCP_QDRANT_URL=http://your-qdrant:6333`
 
 ## Architecture
 
-```
+```text
 mcp_memory_service/
 ├── mcp_server.py         # FastMCP 2.0 — 9 MCP tools
 ├── unified_server.py     # HTTP + MCP dual-mode server
@@ -74,7 +74,7 @@ Default: `nomic-ai/nomic-embed-text-v1.5` (768-dim, 8K context, ~62 MTEB avg)
 export MCP_QDRANT_URL=http://qdrant:6333
 
 # HTTP server
-export MCP_TRANSPORT_MODE=http        # or streamable-http, stdio
+export MCP_TRANSPORT_MODE=streamable-http  # or stdio
 export MCP_SERVER_PORT=8001
 export MCP_HTTP_ENABLED=true
 export MCP_HTTP_PORT=8000

@@ -6,11 +6,11 @@ MCP Memory Service — semantic memory server with Qdrant vector search and Falk
 
 - **Repo**: 27b-io/mcp-memory-service (fork — PRs go here, not upstream doobidoo/)
 - **Stack**: Python 3.12, FastMCP 2.0, Qdrant, FalkorDB, pydantic-settings
-- **Entry**: `uv run memory server` (stdio) or Docker with `MCP_TRANSPORT_MODE=http`
+- **Entry**: `uv run memory server` (stdio) or Docker with `MCP_TRANSPORT_MODE=streamable-http`
 
 ## Architecture
 
-```
+```text
 src/mcp_memory_service/
 ├── mcp_server.py         # 9 MCP tools (FastMCP 2.0)
 ├── unified_server.py     # HTTP + MCP dual-mode server
