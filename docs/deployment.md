@@ -398,7 +398,7 @@ spec:
         - name: MCP_FALKORDB_ENABLED
           value: "true"
         - name: MCP_FALKORDB_HOST
-          value: "falkordb.default.svc.cluster.local"
+          value: "falkordb"  # Same namespace; use falkordb.<ns>.svc.cluster.local for cross-namespace
         - name: MCP_FALKORDB_PORT
           value: "6379"
 
