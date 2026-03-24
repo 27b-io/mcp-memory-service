@@ -123,6 +123,12 @@ MCP client config for stdio transport:
 
 ## Kubernetes (Recommended for Production)
 
+Create the namespace first (all manifests below target `mcp`):
+
+```bash
+kubectl create namespace mcp
+```
+
 The recommended production pattern uses three components:
 
 | Component | Image | Steady-state RAM | Purpose |
