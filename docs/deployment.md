@@ -394,13 +394,13 @@ spec:
         - name: MCP_SERVER_PORT
           value: "8001"
 
-        # FalkorDB graph layer (optional)
+        # FalkorDB graph layer (optional — see note below)
         - name: MCP_FALKORDB_ENABLED
-          value: "true"
-        - name: MCP_FALKORDB_HOST
-          value: "falkordb"  # Same namespace; use falkordb.<ns>.svc.cluster.local for cross-namespace
-        - name: MCP_FALKORDB_PORT
-          value: "6379"
+          value: "false"
+        # - name: MCP_FALKORDB_HOST
+        #   value: "falkordb"  # Same namespace; use falkordb.<ns>.svc.cluster.local for cross-namespace
+        # - name: MCP_FALKORDB_PORT
+        #   value: "6379"
 
         # Workers
         - name: MCP_HTTP_WORKERS
@@ -605,7 +605,7 @@ spec:
       port: 443
 ```
 
-If using FalkorDB, add an egress rule to `mcp-memory-policy` for the FalkorDB service (TCP 6379).
+If using FalkorDB, set `MCP_FALKORDB_ENABLED=true` and uncomment the host/port env vars in the mcp-memory manifest, then add an egress rule to `mcp-memory-policy` for the FalkorDB service (TCP 6379).
 
 Deploy network policies **before** the services that need egress — otherwise pods start with default-deny and fail connectivity checks.
 
