@@ -50,7 +50,7 @@ Both paths are created with write-permission validation on startup.
 | `MCP_MEMORY_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Sentence-transformers model for embedding generation |
 | `MCP_MEMORY_USE_ONNX` | `false` | Use ONNX runtime for embeddings (PyTorch-free) |
 
-**Available embedding models:**
+**Available embedding models (local provider):**
 
 | Model | Dims | Notes |
 |-------|------|-------|
@@ -58,6 +58,31 @@ Both paths are created with write-permission validation on startup.
 | `intfloat/e5-base-v2` | 768 | Alternative, shorter context |
 | `intfloat/e5-small-v2` | 384 | Speed over accuracy |
 | `intfloat/e5-large-v2` | 1024 | Best quality |
+
+### Embedding Provider (`MCP_EMBEDDING_` prefix)
+
+Controls how embeddings are generated. Default is `local` (in-process via sentence-transformers). Set to `openai_compat` for external providers like TEI, vLLM, or any OpenAI-compatible `/v1/embeddings` endpoint.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_EMBEDDING_PROVIDER` | `local` | Provider type: `local` (in-process) or `openai_compat` (external HTTP) |
+| `MCP_EMBEDDING_URL` | `null` | Base URL for HTTP provider (e.g., `http://tei:80`). Required when provider is `openai_compat`. |
+| `MCP_EMBEDDING_DIMENSIONS` | auto-detected | Vector dimensions. Auto-detected for local provider; must be set explicitly for `openai_compat`. |
+| `MCP_EMBEDDING_TIMEOUT` | `30` | Request timeout in seconds (1–300) |
+| `MCP_EMBEDDING_MAX_BATCH` | `64` | Max texts per batch request (1–1024) |
+| `MCP_EMBEDDING_TLS_VERIFY` | `true` | TLS certificate verification for HTTP provider |
+| `MCP_EMBEDDING_API_KEY` | `null` | **Sensitive.** API key for managed embedding providers |
+
+**Example: TEI (HuggingFace Text Embeddings Inference):**
+
+```bash
+MCP_EMBEDDING_PROVIDER=openai_compat
+MCP_EMBEDDING_URL=http://tei:80
+MCP_EMBEDDING_DIMENSIONS=1024
+MCP_MEMORY_EMBEDDING_MODEL=Snowflake/snowflake-arctic-embed-l-v2.0
+```
+
+See the [Kubernetes deployment guide](deployment.md#tei-text-embeddings-inference) for TEI configuration and tuning.
 
 ### Content Limits (`MCP_` prefix)
 
@@ -120,13 +145,13 @@ Qdrant is the sole storage backend. It runs embedded by default — no external 
 |----------|---------|-------------|
 | `MCP_QDRANT_URL` | `null` | Qdrant server URL (e.g., `http://localhost:6333`). Set to use network mode instead of embedded. |
 | `MCP_QDRANT_STORAGE_PATH` | `<base_dir>/qdrant` | Embedded mode storage directory. Created with `0o700` permissions. Ignored in network mode. |
+| `MCP_QDRANT_COLLECTION_NAME` | `memories` | Qdrant collection name. Change when using a different embedding model/dimension to avoid conflicts. |
 | `MCP_QDRANT_QUANTIZATION_ENABLED` | `false` | Enable scalar quantization (~32x memory savings, ~10% slower retrieval) |
 
-**Internal constants (not configurable):** The following are hardcoded and listed for reference only.
+**Internal constants (not configurable):**
 
 | Constant | Value | Notes |
 |----------|-------|-------|
-| Collection name | `memories` | Fixed collection name |
 | Distance metric | `Cosine` | |
 | HNSW M | `16` | Edges per node — balanced quality/speed |
 | HNSW ef_construct | `100` | Build-time quality |
