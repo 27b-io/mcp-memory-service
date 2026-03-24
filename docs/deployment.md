@@ -357,7 +357,7 @@ spec:
     spec:
       containers:
       - name: mcp-memory
-        image: ghcr.io/27b-io/mcp-memory-service:11.21.1-slim
+        image: ghcr.io/27b-io/mcp-memory-service:vX.Y.Z-slim
         ports:
         - containerPort: 8000
           name: http-api
@@ -383,9 +383,9 @@ spec:
         # HTTP server
         - name: MCP_HTTP_ENABLED
           value: "true"
-        - name: MCP_API_PORT
+        - name: MCP_HTTP_PORT
           value: "8000"
-        - name: MCP_SERVER_HOST
+        - name: MCP_HTTP_HOST
           value: "0.0.0.0"
 
         # MCP protocol
@@ -538,7 +538,15 @@ spec:
   - Ingress
   - Egress
   ingress:
-  - ports:
+  - from:
+    # Tighten this to match your ingress controller or consumer pods.
+    # Example: only allow from pods in the same namespace:
+    - podSelector: {}
+    # Or restrict to a specific namespace:
+    # - namespaceSelector:
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: your-namespace
+    ports:
     - protocol: TCP
       port: 8000
     - protocol: TCP
