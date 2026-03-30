@@ -51,69 +51,24 @@ services:
     networks:
       - mcp-memory
 
-  # HuggingFace Text Embeddings Inference (TEI)
-  # Serves embeddings via OpenAI-compatible API
-  tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
-    container_name: mcp-memory-tei
-    command:
-      - --model-id
-      - Snowflake/snowflake-arctic-embed-l-v2.0
-      - --port
-      - "80"
-      - --tokenization-workers
-      - "4"
-      - --max-batch-tokens
-      - "2048"
-    volumes:
-      - tei-data:/data
-    environment:
-      - HF_HOME=/data
-      - OMP_NUM_THREADS=2
-      - RAYON_NUM_THREADS=2
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:80/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 12G
-        reservations:
-          cpus: "1"
-          memory: 4G
-    networks:
-      - mcp-memory
-
-  # MCP Memory Service (slim — external embedding via TEI)
+  # Unified MCP Memory Service (HTTP + MCP)
   mcp-memory:
     build:
       context: .
-      dockerfile: Dockerfile.slim
+      dockerfile: Dockerfile
     container_name: mcp-memory-unified
     depends_on:
       qdrant:
         condition: service_healthy
       falkordb:
         condition: service_healthy
-      tei:
-        condition: service_healthy
     ports:
       - "8000:8000"  # HTTP API + dashboard
       - "8001:8001"  # MCP streamable-http
     environment:
       # Storage
+      - MCP_MEMORY_EMBEDDING_MODEL=intfloat/e5-small-v2
       - MCP_QDRANT_URL=http://qdrant:6333
-
-      # External embedding via TEI (1024-dim arctic-embed-l-v2.0)
-      - MCP_EMBEDDING_PROVIDER=openai_compat
-      - MCP_EMBEDDING_URL=http://tei:80
-      - MCP_EMBEDDING_DIMENSIONS=1024
-      - MCP_MEMORY_EMBEDDING_MODEL=Snowflake/snowflake-arctic-embed-l-v2.0
 
       # FalkorDB graph layer
       - MCP_FALKORDB_ENABLED=true
@@ -154,8 +109,6 @@ volumes:
   qdrant-data:
     driver: local
   falkordb-data:
-    driver: local
-  tei-data:
     driver: local
   mcp-memory-backups:
     driver: local
