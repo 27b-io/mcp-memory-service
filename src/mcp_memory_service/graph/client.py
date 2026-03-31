@@ -138,12 +138,12 @@ class GraphClient:
         max_hops = min(max_hops, 3)  # Cap at 3 hops per acceptance criteria
 
         result = await self._graph.query(
-            "MATCH (src:Memory {content_hash: $hash})"
-            f"-[e:HEBBIAN*1..{max_hops}]->(dst:Memory) "
-            "WHERE ALL(r IN e WHERE r.weight >= $min_w) "
-            "WITH dst, e, length(e) AS hops "
+            "MATCH p=(src:Memory {content_hash: $hash})"
+            f"-[:HEBBIAN*1..{max_hops}]->(dst:Memory) "
+            "WITH dst, relationships(p) AS rels, length(p) AS hops "
+            "WHERE ALL(r IN rels WHERE r.weight >= $min_w) "
             "RETURN DISTINCT dst.content_hash AS hash, "
-            "reduce(w = 1.0, r IN e | w * r.weight) AS path_weight, "
+            "reduce(w = 1.0, r IN rels | w * r.weight) AS path_weight, "
             "hops "
             "ORDER BY path_weight DESC "
             "LIMIT $lim",
@@ -183,14 +183,14 @@ class GraphClient:
         max_hops = min(max_hops, 3)
 
         result = await self._graph.query(
-            "MATCH (src:Memory)-"
-            f"[e:HEBBIAN*1..{max_hops}]->"
+            "MATCH p=(src:Memory)-"
+            f"[:HEBBIAN*1..{max_hops}]->"
             "(dst:Memory) "
             "WHERE src.content_hash IN $seeds "
             "AND NOT dst.content_hash IN $seeds "
             "WITH dst.content_hash AS hash, "
-            "reduce(w = 1.0, r IN e | w * r.weight) AS path_weight, "
-            "length(e) AS hops "
+            "reduce(w = 1.0, r IN relationships(p) | w * r.weight) AS path_weight, "
+            "length(p) AS hops "
             "RETURN hash, path_weight, hops",
             params={"seeds": seed_hashes},
         )
