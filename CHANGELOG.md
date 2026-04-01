@@ -8,6 +8,14 @@ For older releases, see [CHANGELOG-HISTORIC.md](./CHANGELOG-HISTORIC.md).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11.21.2](https://github.com/27b-io/mcp-memory-service/compare/v11.21.1...v11.21.2) (2026-04-01)
+
+
+### Bug Fixes
+
+* **graph:** FalkorDB path type mismatch in Hebbian queries ([#179](https://github.com/27b-io/mcp-memory-service/issues/179)) ([72f55e2](https://github.com/27b-io/mcp-memory-service/commit/72f55e2218f59cf5d03d09e8a9f30a9f3e02b83d))
+* use slim image with external TEI for docker-compose ([#181](https://github.com/27b-io/mcp-memory-service/issues/181)) ([017bdd7](https://github.com/27b-io/mcp-memory-service/commit/017bdd7b42d522dc69823684b8b5b5a47087e51f))
+
 ## [11.21.1](https://github.com/27b-io/mcp-memory-service/compare/v11.21.0...v11.21.1) (2026-03-14)
 
 
