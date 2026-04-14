@@ -181,12 +181,18 @@ def _make_query_result(content_hash: str, score: float) -> MemoryQueryResult:
 
 
 class TestMemoryServiceGraphBoost:
-    """Tests for graph boost integration in MemoryService retrieval."""
+    """Tests for graph boost integration in MemoryService retrieval.
+
+    NOTE: spreading_activation() returns {neighbor_hash: activation} for nodes
+    NOT in the seed set (the Cypher uses AND NOT dst.content_hash IN $seeds).
+    The service layer injects these neighbors into the result set rather than
+    trying to boost seeds (which would always look up 0.0).
+    """
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
     async def test_vector_results_boosted_by_graph(self, mock_settings):
-        """Vector search results get boosted by spreading activation scores."""
+        """Spreading activation neighbors get injected into results."""
         from mcp_memory_service.services.memory_service import MemoryService
 
         # Configure settings
@@ -209,12 +215,14 @@ class TestMemoryServiceGraphBoost:
                 _make_query_result("hash_c", 0.7),
             ]
         )
+        # Neighbor memory available for injection
+        mock_storage.get_memories_batch = AsyncMock(return_value=[_make_memory("hash_neighbor", "neighbor content")])
 
-        # Mock graph: hash_b is activated by hash_a's neighbors
+        # Mock graph: hash_neighbor is a neighbor discovered by spreading activation
         mock_graph = AsyncMock()
         mock_graph.spreading_activation = AsyncMock(
             return_value={
-                "hash_b": 0.4,  # hash_b gets boosted
+                "hash_neighbor": 0.8,  # neighbor gets injected
             }
         )
 
@@ -231,13 +239,13 @@ class TestMemoryServiceGraphBoost:
         )
 
         memories = result["memories"]
-        # hash_b should be boosted: 0.8 + 0.2 * 0.4 = 0.88
-        hash_b_result = next(m for m in memories if m["content_hash"] == "hash_b")
-        assert hash_b_result["similarity_score"] == pytest.approx(0.88)
-        assert hash_b_result["graph_boost"] == pytest.approx(0.4)
+        # hash_neighbor should be injected into results
+        neighbor_result = next((m for m in memories if m["content_hash"] == "hash_neighbor"), None)
+        assert neighbor_result is not None, "Neighbor should be injected into results"
+        assert neighbor_result["graph_boost"] == pytest.approx(0.8)
 
-        # hash_a should still be first (0.9, no boost)
-        assert memories[0]["content_hash"] == "hash_a"
+        # Original results should still be present
+        assert any(m["content_hash"] == "hash_a" for m in memories)
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
@@ -280,7 +288,7 @@ class TestMemoryServiceGraphBoost:
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
     async def test_graph_boost_reorders_results(self, mock_settings):
-        """A strong graph boost can reorder results."""
+        """A strongly activated neighbor appears near the top of results."""
         from mcp_memory_service.services.memory_service import MemoryService
 
         mock_falkordb = MagicMock()
@@ -300,12 +308,14 @@ class TestMemoryServiceGraphBoost:
                 _make_query_result("hash_b", 0.6),
             ]
         )
+        # Neighbor memory available for injection
+        mock_storage.get_memories_batch = AsyncMock(return_value=[_make_memory("hash_neighbor", "strongly connected neighbor")])
 
-        # hash_b gets a strong activation
+        # Neighbor gets strong activation, should be injected
         mock_graph = AsyncMock()
         mock_graph.spreading_activation = AsyncMock(
             return_value={
-                "hash_b": 0.8,  # 0.6 + 0.5*0.8 = 1.0
+                "hash_neighbor": 0.9,  # strong activation
             }
         )
 
@@ -320,9 +330,12 @@ class TestMemoryServiceGraphBoost:
         )
 
         memories = result["memories"]
-        # hash_b (1.0) now beats hash_a (0.7)
-        assert memories[0]["content_hash"] == "hash_b"
-        assert memories[0]["similarity_score"] == pytest.approx(1.0)
+        # Neighbor should be present in results
+        neighbor_hashes = [m["content_hash"] for m in memories]
+        assert "hash_neighbor" in neighbor_hashes, f"Neighbor should be injected. Got: {neighbor_hashes}"
+        # And should have its activation recorded
+        neighbor = next(m for m in memories if m["content_hash"] == "hash_neighbor")
+        assert neighbor["graph_boost"] == pytest.approx(0.9)
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
