@@ -333,9 +333,12 @@ class TestMemoryServiceGraphBoost:
         # Neighbor should be present in results
         neighbor_hashes = [m["content_hash"] for m in memories]
         assert "hash_neighbor" in neighbor_hashes, f"Neighbor should be injected. Got: {neighbor_hashes}"
-        # And should have its activation recorded
+        # Activation recorded
         neighbor = next(m for m in memories if m["content_hash"] == "hash_neighbor")
         assert neighbor["graph_boost"] == pytest.approx(0.9)
+        # Neighbor (display_score=max(0.6, 0.9)=0.9) beats both seeds (0.7, 0.6)
+        assert memories[0]["content_hash"] == "hash_neighbor"
+        assert memories[0]["similarity_score"] > memories[1]["similarity_score"]
 
     @pytest.mark.asyncio
     @patch("mcp_memory_service.services.memory_service.settings")
