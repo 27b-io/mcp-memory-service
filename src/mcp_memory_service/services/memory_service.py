@@ -1134,16 +1134,36 @@ class MemoryService:
                 result_hashes.append(item.content_hash)
                 result_memories.append(item)
 
-        # Apply spreading activation boost from graph layer
+        # Graph injection: fetch spreading-activation neighbors not already
+        # in results and splice them in.  spreading_activation() returns
+        # {neighbor_hash: activation} for nodes NOT in the seed set, so we
+        # fetch those memories and inject them rather than trying to boost
+        # seeds (which would always look up 0.0).
         graph_boosts = await self._compute_graph_boosts(result_hashes)
         if graph_boosts:
-            boost_weight = settings.falkordb.spreading_activation_boost
-            for result in results:
-                activation = graph_boosts.get(result["content_hash"], 0.0)
-                if activation > 0:
-                    result["similarity_score"] = result.get("similarity_score", 0.0) + boost_weight * activation
-                    result["graph_boost"] = activation
-            results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+            fused_set = set(result_hashes)
+            inject_candidates = sorted(
+                ((h, s) for h, s in graph_boosts.items() if h not in fused_set),
+                key=lambda x: x[1],
+                reverse=True,
+            )[:10]
+            if inject_candidates:
+                neighbor_hashes = [h for h, _ in inject_candidates]
+                try:
+                    neighbors = await self.storage.get_memories_batch(neighbor_hashes)
+                    min_existing = min((r.get("similarity_score", 0.0) for r in results), default=0.1)
+                    for memory in neighbors:
+                        activation = graph_boosts.get(memory.content_hash, 0.0)
+                        display_score = max(min_existing, activation)
+                        mem_dict = self._format_memory_response(memory)
+                        mem_dict["similarity_score"] = display_score
+                        mem_dict["graph_boost"] = activation
+                        results.append(mem_dict)
+                        result_hashes.append(memory.content_hash)
+                        result_memories.append(memory)
+                    results.sort(key=lambda r: r.get("similarity_score", 0.0), reverse=True)
+                except Exception as e:
+                    logger.warning(f"Graph injection fetch failed (non-fatal): {e}")
 
         # Apply Hebbian co-access boost (within-result mutual edges)
         hebbian_boosts = await self._compute_hebbian_boosts(result_hashes)
@@ -1814,19 +1834,13 @@ class MemoryService:
 
             # Boost stages below operate on and re-sort by cosine display scores,
             # not RRF rank. RRF determines initial ordering; boosts refine from there.
-            # Apply spreading activation boost from graph layer
+            #
+            # NOTE: Spreading activation boost was previously here but was dead code —
+            # _compute_graph_boosts returns {neighbor_hash: activation} for nodes NOT
+            # in the seed set, but the boost loop iterated over seeds (which are
+            # excluded from the result).  Graph injection above (_inject_graph_neighbors)
+            # is the correct mechanism: it fetches and splices neighbor memories.
             all_hashes = [m.content_hash for m, _, _ in combined]
-            graph_boosts = await self._compute_graph_boosts(all_hashes)
-            if graph_boosts:
-                boost_weight = settings.falkordb.spreading_activation_boost
-                boosted = []
-                for memory, score, debug_info in combined:
-                    activation = graph_boosts.get(memory.content_hash, 0.0)
-                    if activation > 0:
-                        score += boost_weight * activation
-                        debug_info = {**debug_info, "graph_boost": activation}
-                    boosted.append((memory, score, debug_info))
-                combined = sorted(boosted, key=lambda x: x[1], reverse=True)
 
             # Apply Hebbian co-access boost (within-result mutual edges)
             hebbian_boosts = await self._compute_hebbian_boosts(all_hashes)
